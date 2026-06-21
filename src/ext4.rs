@@ -12,14 +12,22 @@
 //! `ext3grep` technique), and for any whose inode is now deleted but still has a
 //! readable block map, recovers the file with its original name and path.
 //!
+//! ## Journal (jbd2) recovery
+//!
+//! ext4 usually *zeroes* the inode's extent tree on deletion, leaving the live
+//! inode present but unusable. The filesystem journal (inode 8) often still
+//! holds an **older copy of that inode-table block** from before the delete,
+//! with the extents intact. This backend scans the jbd2 journal, collects the
+//! journaled copies of inode-table blocks, and when a deleted file's live inode
+//! has no usable block map it recovers the data from the journaled inode.
+//!
 //! ## What this cannot do
 //!
-//! If the inode's extent tree was zeroed on deletion, or the inode has been
-//! reused, the file's contents cannot be found from metadata alone — that needs
-//! journal (`jbd2`) recovery, which is out of scope. Fall back to `scan`
-//! (carving) in that case.
+//! If neither the live inode nor any journaled copy has an intact block map (the
+//! journal wrapped around, or the inode was reused), the contents cannot be
+//! found from metadata alone — fall back to `scan` (carving).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -39,8 +47,19 @@ const MODE_FMT: u16 = 0xF000;
 const MODE_DIR: u16 = 0x4000;
 const MODE_REG: u16 = 0x8000;
 const ROOT_INODE: u32 = 2;
+const DEFAULT_JOURNAL_INODE: u32 = 8;
 const MAX_DIR_DEPTH: usize = 64;
 const MAX_EXTENT_DEPTH: usize = 6;
+
+// jbd2 journal constants (all on-disk journal fields are big-endian).
+const JBD2_MAGIC: u32 = 0xC03B_3998;
+const JBD2_DESCRIPTOR_BLOCK: u32 = 1;
+const JBD2_FLAG_SAME_UUID: u32 = 0x02;
+const JBD2_FLAG_LAST_TAG: u32 = 0x08;
+const JBD2_INCOMPAT_64BIT: u32 = 0x02;
+const JBD2_INCOMPAT_CSUM_V3: u32 = 0x10;
+/// Cap on journal blocks scanned, to bound work on a corrupt journal.
+const MAX_JOURNAL_BLOCKS: u64 = 1 << 21;
 
 /// A parsed ext2/3/4 volume.
 pub struct Volume {
@@ -51,6 +70,8 @@ pub struct Volume {
     inodes_per_group: u32,
     filetype_dirents: bool,
     total_blocks: u64,
+    /// Inode number of the journal (`s_journal_inum`, usually 8).
+    journal_inum: u32,
     /// Block number of each group's inode table.
     inode_tables: Vec<u64>,
 }
@@ -117,6 +138,15 @@ impl Volume {
             bail!("invalid ext superblock geometry");
         }
 
+        let journal_inum = {
+            let n = u32::from_le_bytes([sb[0xE0], sb[0xE1], sb[0xE2], sb[0xE3]]);
+            if n == 0 {
+                DEFAULT_JOURNAL_INODE
+            } else {
+                n
+            }
+        };
+
         let group_count = inodes_count.div_ceil(inodes_per_group) as u64;
         // The group descriptor table follows the superblock block.
         let gdt_block = first_data_block + 1;
@@ -148,6 +178,7 @@ impl Volume {
             inodes_per_group,
             filetype_dirents: feature_incompat & INCOMPAT_FILETYPE != 0,
             total_blocks,
+            journal_inum,
             inode_tables,
         })
     }
@@ -193,28 +224,155 @@ impl Volume {
         let mut found: BTreeMap<u32, (PathBuf, u64)> = BTreeMap::new();
         self.walk(src, &mut found)?;
 
+        // Journaled copies of inode-table blocks let us recover files whose live
+        // inode had its extent tree zeroed on deletion. Best effort: an empty
+        // map just means we rely on the live inode.
+        let journal = self.build_journal_map(src).unwrap_or_default();
+
         let mut stats = RecoverStats::default();
-        for (ino, (rel, size)) in found {
+        let volume_bytes = self.total_blocks * self.block_size;
+        for (ino, (rel, _hint)) in found {
+            // Prefer the live inode if it still has a usable block map; else fall
+            // back to a journaled copy that does.
+            let inode = match self.choose_inode(src, &journal, ino) {
+                Some(i) => i,
+                None => {
+                    // Record the size hint so it still shows up as skipped.
+                    stats.record_skipped(rel, 0);
+                    continue;
+                }
+            };
+            let size = reg_size(&inode);
             if size < opts.min_size {
+                continue;
+            }
+            if size == 0 || size > volume_bytes {
+                stats.record_skipped(rel, size);
                 continue;
             }
             if opts.dry_run {
                 stats.record_recovered(rel, size);
                 continue;
             }
-            let inode = match self.read_inode(src, ino) {
-                Ok(Some(i)) => i,
-                _ => {
-                    stats.record_skipped(rel, size);
-                    continue;
-                }
-            };
             match self.write_file(src, out_dir, &rel, &inode, size) {
                 Ok(written) if written > 0 => stats.record_recovered(rel, size),
                 _ => stats.record_skipped(rel, size),
             }
         }
         Ok(stats)
+    }
+
+    /// Pick the inode bytes to recover from: the live inode if it still has a
+    /// usable block map, otherwise a journaled copy that does.
+    fn choose_inode(
+        &self,
+        src: &Source,
+        journal: &HashMap<u64, Vec<Vec<u8>>>,
+        ino: u32,
+    ) -> Option<Vec<u8>> {
+        if let Ok(Some(live)) = self.read_inode(src, ino) {
+            if inode_has_blockmap(&live) {
+                return Some(live);
+            }
+        }
+        self.journaled_inode(journal, ino)
+    }
+
+    /// Look up a journaled copy of inode `ino` whose block map survived.
+    fn journaled_inode(&self, journal: &HashMap<u64, Vec<Vec<u8>>>, ino: u32) -> Option<Vec<u8>> {
+        if ino == 0 {
+            return None;
+        }
+        let group = ((ino - 1) / self.inodes_per_group) as usize;
+        let index = ((ino - 1) % self.inodes_per_group) as u64;
+        let table = *self.inode_tables.get(group)?;
+        let byte = table * self.block_size + index * self.inode_size;
+        let fs_block = byte / self.block_size;
+        let within = (byte % self.block_size) as usize;
+        let copies = journal.get(&fs_block)?;
+        for copy in copies {
+            if within + self.inode_size as usize <= copy.len() {
+                let inode = copy[within..within + self.inode_size as usize].to_vec();
+                if inode_has_blockmap(&inode) {
+                    return Some(inode);
+                }
+            }
+        }
+        None
+    }
+
+    /// Block ranges (start, count) covering every group's inode table.
+    fn inode_table_ranges(&self) -> Vec<(u64, u64)> {
+        let blocks_per_table =
+            (self.inodes_per_group as u64 * self.inode_size).div_ceil(self.block_size);
+        self.inode_tables
+            .iter()
+            .map(|&start| (start, blocks_per_table))
+            .collect()
+    }
+
+    /// Scan the jbd2 journal and collect journaled copies of inode-table blocks,
+    /// keyed by filesystem block number (a block may have several copies).
+    fn build_journal_map(&self, src: &Source) -> Result<HashMap<u64, Vec<Vec<u8>>>> {
+        let mut map: HashMap<u64, Vec<Vec<u8>>> = HashMap::new();
+
+        // The journal is itself a file; its live inode must be readable.
+        let jinode = match self.read_inode(src, self.journal_inum)? {
+            Some(i) if inode_has_blockmap(&i) => i,
+            _ => return Ok(map),
+        };
+        let jsize = reg_size(&jinode);
+        if jsize == 0 {
+            return Ok(map);
+        }
+        let n_blocks = jsize.div_ceil(self.block_size);
+        let jblocks = self.map_blocks(src, &jinode, n_blocks)?;
+        if jblocks.is_empty() {
+            return Ok(map);
+        }
+
+        // Journal superblock (first journal block), all fields big-endian.
+        let sb = self.read_block(src, jblocks[0])?;
+        if sb.len() < 0x2C || be32(&sb, 0) != JBD2_MAGIC {
+            return Ok(map); // not a jbd2 journal
+        }
+        let feature_incompat = be32(&sb, 0x28);
+        let csum_v3 = feature_incompat & JBD2_INCOMPAT_CSUM_V3 != 0;
+        let is_64bit = feature_incompat & JBD2_INCOMPAT_64BIT != 0;
+        let maxlen = (be32(&sb, 0x10) as u64).min(n_blocks);
+        let first = be32(&sb, 0x14) as u64;
+
+        let ranges = self.inode_table_ranges();
+        let interesting = |blk: u64| ranges.iter().any(|&(s, c)| blk >= s && blk < s + c);
+
+        let mut ji = first.max(1);
+        let mut steps = 0u64;
+        while ji < maxlen && (ji as usize) < jblocks.len() && steps < MAX_JOURNAL_BLOCKS {
+            steps += 1;
+            let block = self.read_block(src, jblocks[ji as usize])?;
+            if block.len() < 12 || be32(&block, 0) != JBD2_MAGIC {
+                ji += 1;
+                continue;
+            }
+            if be32(&block, 4) != JBD2_DESCRIPTOR_BLOCK {
+                ji += 1; // commit / revoke / superblock
+                continue;
+            }
+            // Tags name the filesystem blocks of the data blocks that follow.
+            let tags = parse_journal_tags(&block, csum_v3, is_64bit);
+            for (k, &blocknr) in tags.iter().enumerate() {
+                let data_ji = ji + 1 + k as u64;
+                if (data_ji as usize) >= jblocks.len() {
+                    break;
+                }
+                if interesting(blocknr) {
+                    let content = self.read_block(src, jblocks[data_ji as usize])?;
+                    map.entry(blocknr).or_default().push(content);
+                }
+            }
+            ji += 1 + tags.len() as u64;
+        }
+        Ok(map)
     }
 
     /// Walk live directories from root, collecting deleted regular files keyed
@@ -547,6 +705,82 @@ fn reg_size(inode: &[u8]) -> u64 {
 
 fn round8(n: usize) -> usize {
     n.div_ceil(8) * 8
+}
+
+/// Read a big-endian u32 at `off` (journal fields are big-endian); 0 if short.
+fn be32(buf: &[u8], off: usize) -> u32 {
+    match buf.get(off..off + 4) {
+        Some(b) => u32::from_be_bytes([b[0], b[1], b[2], b[3]]),
+        None => 0,
+    }
+}
+
+/// Does this inode still have a usable block map (extent tree or block
+/// pointers)? Deletion on ext4 zeroes the extent tree, leaving the inode
+/// present but unusable — in which case a journaled copy may still be intact.
+fn inode_has_blockmap(inode: &[u8]) -> bool {
+    if inode.len() < 0x28 + 60 {
+        return false;
+    }
+    let i_block = &inode[0x28..0x28 + 60];
+    if inode_flags(inode) & FLAG_EXTENTS != 0 {
+        u16::from_le_bytes([i_block[0], i_block[1]]) == EXTENT_MAGIC
+    } else {
+        i_block.iter().any(|&b| b != 0)
+    }
+}
+
+/// Parse a journal descriptor block's tags into the filesystem block numbers of
+/// the data blocks that follow it.
+fn parse_journal_tags(block: &[u8], csum_v3: bool, is_64bit: bool) -> Vec<u64> {
+    let mut tags = Vec::new();
+    let mut pos = 12; // after the 12-byte journal block header
+    loop {
+        if csum_v3 {
+            // journal_block_tag3_t: blocknr, flags, blocknr_high, checksum (BE).
+            if pos + 16 > block.len() {
+                break;
+            }
+            let lo = be32(block, pos) as u64;
+            let flags = be32(block, pos + 4);
+            let hi = be32(block, pos + 8) as u64;
+            pos += 16;
+            tags.push((hi << 32) | lo);
+            if flags & JBD2_FLAG_SAME_UUID == 0 {
+                pos += 16; // UUID follows
+            }
+            if flags & JBD2_FLAG_LAST_TAG != 0 {
+                break;
+            }
+        } else {
+            // journal_block_tag_t: blocknr(4), checksum(2), flags(2), [hi(4)].
+            if pos + 8 > block.len() {
+                break;
+            }
+            let lo = be32(block, pos) as u64;
+            let flags = u16::from_be_bytes([block[pos + 6], block[pos + 7]]) as u32;
+            pos += 8;
+            let mut blocknr = lo;
+            if is_64bit {
+                if pos + 4 > block.len() {
+                    break;
+                }
+                blocknr |= (be32(block, pos) as u64) << 32;
+                pos += 4;
+            }
+            tags.push(blocknr);
+            if flags & JBD2_FLAG_SAME_UUID == 0 {
+                pos += 16;
+            }
+            if flags & JBD2_FLAG_LAST_TAG != 0 {
+                break;
+            }
+        }
+        if pos >= block.len() || tags.len() > 100_000 {
+            break;
+        }
+    }
+    tags
 }
 
 fn sanitize_component(name: &str) -> String {
