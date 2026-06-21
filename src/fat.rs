@@ -611,3 +611,59 @@ fn unique_path(out_dir: &Path, rel: &Path) -> PathBuf {
     }
     unreachable!()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lfn_slot(seq: u8, chars: &str) -> [u8; 32] {
+        let mut e = [0u8; 32];
+        e[0] = seq;
+        e[11] = ATTR_LFN;
+        let mut units: Vec<u16> = chars.encode_utf16().collect();
+        units.push(0x0000);
+        while units.len() < 13 {
+            units.push(0xFFFF);
+        }
+        let ranges = [1usize..11, 14..26, 28..32];
+        let mut k = 0;
+        for r in ranges {
+            for pair in e[r].chunks_exact_mut(2) {
+                pair.copy_from_slice(&units[k].to_le_bytes());
+                k += 1;
+            }
+        }
+        e
+    }
+
+    #[test]
+    fn short_name_live_and_deleted() {
+        let mut slot = [0u8; 32];
+        slot[0..8].copy_from_slice(b"PHOTO   ");
+        slot[8..11].copy_from_slice(b"JPG");
+        assert_eq!(short_name(&slot, false), "PHOTO.JPG");
+
+        let mut del = slot;
+        del[0] = DELETED_MARKER;
+        // The lost first character is shown as '_'.
+        assert_eq!(short_name(&del, true), "_HOTO.JPG");
+    }
+
+    #[test]
+    fn short_name_no_extension() {
+        let mut slot = [0u8; 32];
+        slot[0..8].copy_from_slice(b"README  ");
+        slot[8..11].copy_from_slice(b"   ");
+        assert_eq!(short_name(&slot, false), "README");
+    }
+
+    #[test]
+    fn lfn_extraction_and_assembly() {
+        let slot = lfn_slot(0x41, "photo.dat");
+        assert_eq!(extract_lfn_chars(&slot), "photo.dat");
+
+        // Parts are collected highest-sequence-first; assembly reverses them.
+        let parts = vec!["world".to_string(), "hello".to_string()];
+        assert_eq!(assemble_lfn(&parts), "helloworld");
+    }
+}
