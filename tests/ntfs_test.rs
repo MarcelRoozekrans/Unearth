@@ -196,7 +196,13 @@ fn recovers_deleted_ntfs_files() {
     assert_eq!(volumes[0].fs_label(), "NTFS");
 
     let vol = ntfs::Volume::parse(&source, 0).unwrap();
-    let stats = vol.recover_deleted(&source, &out_dir, 0).unwrap();
+    let stats = vol
+        .recover_deleted(
+            &source,
+            &out_dir,
+            &filerecovery::recover::RecoverOptions::default(),
+        )
+        .unwrap();
     assert_eq!(stats.recovered, 3, "report.txt, photo.jpg, Docs/notes.txt");
 
     assert_eq!(std::fs::read(out_dir.join("report.txt")).unwrap(), report);

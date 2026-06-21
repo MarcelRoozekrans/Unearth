@@ -5,12 +5,30 @@
 //! [`crate::ntfs`], or [`crate::ext4`]), so the `undelete` command can treat
 //! every supported filesystem the same way.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
 use crate::source::Source;
 use crate::{exfat, ext4, fat, ntfs};
+
+/// Options controlling a recovery run.
+#[derive(Clone, Copy, Default)]
+pub struct RecoverOptions {
+    /// Ignore deleted files smaller than this many bytes.
+    pub min_size: u64,
+    /// Report what would be recovered without writing any files.
+    pub dry_run: bool,
+}
+
+/// One file the recovery considered, for reporting.
+pub struct RecoveredFile {
+    /// Path relative to the volume root.
+    pub path: PathBuf,
+    pub size: u64,
+    /// Whether the data was successfully recovered (false = skipped/corrupt).
+    pub recovered: bool,
+}
 
 /// Outcome of recovering deleted files from one volume.
 #[derive(Default)]
@@ -19,6 +37,31 @@ pub struct RecoverStats {
     pub bytes_recovered: u64,
     /// Entries that looked deleted but failed validation (bad cluster/size).
     pub skipped: u64,
+    /// Per-file records (populated for the recovery report).
+    pub files: Vec<RecoveredFile>,
+}
+
+impl RecoverStats {
+    /// Record a successfully recovered file.
+    pub fn record_recovered(&mut self, path: PathBuf, size: u64) {
+        self.recovered += 1;
+        self.bytes_recovered += size;
+        self.files.push(RecoveredFile {
+            path,
+            size,
+            recovered: true,
+        });
+    }
+
+    /// Record a deleted entry that could not be recovered.
+    pub fn record_skipped(&mut self, path: PathBuf, size: u64) {
+        self.skipped += 1;
+        self.files.push(RecoveredFile {
+            path,
+            size,
+            recovered: false,
+        });
+    }
 }
 
 /// A detected, recoverable volume of a known filesystem type.
@@ -55,13 +98,13 @@ impl Volume {
         &self,
         src: &Source,
         out_dir: &Path,
-        min_size: u64,
+        opts: &RecoverOptions,
     ) -> Result<RecoverStats> {
         match self {
-            Volume::Fat(v) => v.recover_deleted(src, out_dir, min_size as u32),
-            Volume::Exfat(v) => v.recover_deleted(src, out_dir, min_size),
-            Volume::Ntfs(v) => v.recover_deleted(src, out_dir, min_size),
-            Volume::Ext(v) => v.recover_deleted(src, out_dir, min_size),
+            Volume::Fat(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Exfat(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Ntfs(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Ext(v) => v.recover_deleted(src, out_dir, opts),
         }
     }
 }

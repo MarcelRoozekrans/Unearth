@@ -107,7 +107,13 @@ fn recovers_deleted_fat_file_with_long_name() {
     assert_eq!(volumes.len(), 1);
     assert_eq!(volumes[0].fat_type, fat::FatType::Fat12);
 
-    let stats = volumes[0].recover_deleted(&source, &out_dir, 0).unwrap();
+    let stats = volumes[0]
+        .recover_deleted(
+            &source,
+            &out_dir,
+            &filerecovery::recover::RecoverOptions::default(),
+        )
+        .unwrap();
     assert_eq!(stats.recovered, 1, "should recover the deleted file");
 
     // The long name should be reconstructed exactly, with original contents.
@@ -146,7 +152,13 @@ fn skips_short_name_first_char() {
 
     let source = Source::open(&img_path).unwrap();
     let volumes = fat::detect_volumes(&source).unwrap();
-    let stats = volumes[0].recover_deleted(&source, &out_dir, 0).unwrap();
+    let stats = volumes[0]
+        .recover_deleted(
+            &source,
+            &out_dir,
+            &filerecovery::recover::RecoverOptions::default(),
+        )
+        .unwrap();
     assert_eq!(stats.recovered, 1);
 
     // First char unknown -> "_OTES.TXT".

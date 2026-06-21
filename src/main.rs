@@ -93,12 +93,23 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
     };
     eprintln!("Found {} volume(s).", volumes.len());
 
-    std::fs::create_dir_all(&args.output)
-        .map_err(|e| anyhow::anyhow!("creating output dir {}: {e}", args.output.display()))?;
+    let opts = recover::RecoverOptions {
+        min_size: args.min_size,
+        dry_run: args.dry_run,
+    };
+    if args.dry_run {
+        eprintln!("Dry run: no files will be written.");
+    } else {
+        std::fs::create_dir_all(&args.output)
+            .map_err(|e| anyhow::anyhow!("creating output dir {}: {e}", args.output.display()))?;
+    }
 
     let mut total_recovered = 0u64;
     let mut total_bytes = 0u64;
     let mut total_skipped = 0u64;
+    // Report rows: (filesystem, volume offset, relative path, size, recovered).
+    let mut report_rows: Vec<(String, u64, String, u64, bool)> = Vec::new();
+
     for (i, vol) in volumes.iter().enumerate() {
         // Keep each volume's output separate to avoid path collisions.
         let out = if volumes.len() > 1 {
@@ -112,20 +123,94 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
             vol.offset(),
             out.display()
         );
-        let stats = vol.recover_deleted(&source, &out, args.min_size)?;
+        let stats = vol.recover_deleted(&source, &out, &opts)?;
         total_recovered += stats.recovered;
         total_bytes += stats.bytes_recovered;
         total_skipped += stats.skipped;
+
+        let label = vol.fs_label();
+        let offset = vol.offset();
+        for f in &stats.files {
+            report_rows.push((
+                label.clone(),
+                offset,
+                f.path.to_string_lossy().into_owned(),
+                f.size,
+                f.recovered,
+            ));
+        }
+    }
+
+    if let Some(report_path) = &args.report {
+        write_report(report_path, &report_rows)?;
+        eprintln!("Report written to {}", report_path.display());
     }
 
     eprintln!();
+    let verb = if args.dry_run {
+        "Would recover"
+    } else {
+        "Recovered"
+    };
     println!(
-        "Done. Recovered {} deleted file(s), {} ({} skipped as unrecoverable).",
+        "Done. {verb} {} deleted file(s), {} ({} skipped as unrecoverable).",
         total_recovered,
         human_bytes(total_bytes),
         total_skipped
     );
     Ok(())
+}
+
+/// Write a recovery report as CSV, or JSON when the path ends in `.json`.
+fn write_report(path: &std::path::Path, rows: &[(String, u64, String, u64, bool)]) -> Result<()> {
+    let is_json = path
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+    let mut out = String::new();
+    if is_json {
+        out.push_str("[\n");
+        for (i, (fs, off, p, size, rec)) in rows.iter().enumerate() {
+            let comma = if i + 1 < rows.len() { "," } else { "" };
+            out.push_str(&format!(
+                "  {{\"filesystem\": \"{}\", \"volume_offset\": {}, \"path\": \"{}\", \"size\": {}, \"recovered\": {}}}{}\n",
+                json_escape(fs),
+                off,
+                json_escape(p),
+                size,
+                rec,
+                comma
+            ));
+        }
+        out.push_str("]\n");
+    } else {
+        out.push_str("filesystem,volume_offset,path,size,recovered\n");
+        for (fs, off, p, size, rec) in rows {
+            out.push_str(&format!(
+                "{},{},{},{},{}\n",
+                fs,
+                off,
+                csv_escape(p),
+                size,
+                rec
+            ));
+        }
+    }
+    std::fs::write(path, out)
+        .map_err(|e| anyhow::anyhow!("writing report {}: {e}", path.display()))?;
+    Ok(())
+}
+
+fn csv_escape(s: &str) -> String {
+    if s.contains([',', '"', '\n']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+fn json_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// indicatif-backed progress sink.

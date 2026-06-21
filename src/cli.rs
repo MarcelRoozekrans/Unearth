@@ -50,6 +50,15 @@ pub struct UndeleteArgs {
     /// Ignore deleted files smaller than this many bytes.
     #[arg(long, value_name = "BYTES", default_value_t = 0)]
     pub min_size: u64,
+
+    /// List what would be recovered without writing any files.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Write a report of recovered files to this path. The format is chosen by
+    /// extension: `.json` for JSON, otherwise CSV.
+    #[arg(long, value_name = "FILE")]
+    pub report: Option<PathBuf>,
 }
 
 #[derive(Parser)]

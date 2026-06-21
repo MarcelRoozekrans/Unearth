@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use crate::recover::RecoverStats;
+use crate::recover::{RecoverOptions, RecoverStats};
 use crate::source::Source;
 
 /// FAT variants, distinguished by cluster count per the Microsoft spec.
@@ -274,7 +274,7 @@ impl Volume {
         &self,
         src: &Source,
         out_dir: &Path,
-        min_size: u32,
+        opts: &RecoverOptions,
     ) -> Result<RecoverStats> {
         let mut deleted = Vec::new();
         self.walk(src, &mut deleted)?;
@@ -283,26 +283,27 @@ impl Volume {
         let volume_end = self.offset + self.total_sectors as u64 * self.bytes_per_sector as u64;
 
         for df in deleted {
-            if df.size < min_size {
+            if (df.size as u64) < opts.min_size {
                 continue;
             }
             // Validate before trusting the entry's cluster/size fields.
             if df.size == 0 || df.start_cluster < 2 || df.start_cluster > self.max_valid_cluster() {
-                stats.skipped += 1;
+                stats.record_skipped(df.path.clone(), df.size as u64);
                 continue;
             }
             let start = self.cluster_offset(df.start_cluster);
             if start + df.size as u64 > volume_end {
-                stats.skipped += 1;
+                stats.record_skipped(df.path.clone(), df.size as u64);
                 continue;
             }
 
+            if opts.dry_run {
+                stats.record_recovered(df.path.clone(), df.size as u64);
+                continue;
+            }
             match self.write_file(src, out_dir, &df) {
-                Ok(written) => {
-                    stats.recovered += 1;
-                    stats.bytes_recovered += written;
-                }
-                Err(_) => stats.skipped += 1,
+                Ok(_) => stats.record_recovered(df.path.clone(), df.size as u64),
+                Err(_) => stats.record_skipped(df.path.clone(), df.size as u64),
             }
         }
         Ok(stats)

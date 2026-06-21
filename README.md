@@ -123,7 +123,18 @@ partition table). Override the location with `--offset <BYTES>` if needed.
 -o, --output <DIR>     Where to write recovered files (default: ./recovered)
     --offset <BYTES>   Byte offset of the volume (default: auto-detect)
     --min-size <BYTES> Skip deleted files smaller than this
+    --dry-run          List what would be recovered without writing any files
+    --report <FILE>    Write a report of what was found (.json => JSON, else CSV)
 ```
+
+Preview what is recoverable, and save a manifest, without touching the output:
+
+```sh
+filerecovery undelete card.img --dry-run --report found.csv
+```
+
+The report lists one row per deleted file: filesystem, volume offset, path,
+size, and whether the data was successfully recovered.
 
 ### Carve a disk image (filesystem-agnostic)
 
