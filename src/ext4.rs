@@ -498,6 +498,10 @@ impl Volume {
         let mut out = fs::File::create(&target)?;
         out.write_all(&data)?;
         out.flush().ok();
+        // Restore timestamps from the inode (Unix seconds).
+        let mtime = crate::times::from_unix(inode_mtime(inode));
+        let atime = crate::times::from_unix(inode_atime(inode));
+        crate::times::apply(&out, mtime, atime);
         Ok(data.len() as u64)
     }
 }
@@ -515,6 +519,12 @@ fn inode_links(inode: &[u8]) -> u16 {
 }
 fn inode_dtime(inode: &[u8]) -> u32 {
     u32::from_le_bytes([inode[0x14], inode[0x15], inode[0x16], inode[0x17]])
+}
+fn inode_atime(inode: &[u8]) -> u32 {
+    u32::from_le_bytes([inode[0x08], inode[0x09], inode[0x0A], inode[0x0B]])
+}
+fn inode_mtime(inode: &[u8]) -> u32 {
+    u32::from_le_bytes([inode[0x10], inode[0x11], inode[0x12], inode[0x13]])
 }
 fn inode_flags(inode: &[u8]) -> u32 {
     u32::from_le_bytes([inode[0x20], inode[0x21], inode[0x22], inode[0x23]])

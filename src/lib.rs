@@ -45,3 +45,4 @@ pub mod ntfs;
 pub mod recover;
 pub mod signatures;
 pub mod source;
+pub mod times;

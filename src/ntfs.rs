@@ -44,6 +44,7 @@ pub struct Volume {
     record_count: u64,
 }
 
+const ATTR_STANDARD_INFO: u32 = 0x10;
 const ATTR_FILE_NAME: u32 = 0x30;
 const ATTR_DATA: u32 = 0x80;
 const ATTR_END: u32 = 0xFFFF_FFFF;
@@ -178,8 +179,9 @@ impl Volume {
                 continue;
             }
 
+            let times = (parsed.mtime, parsed.atime);
             let rel = self.resolve_path(src, parent, &name);
-            match self.write_file(src, out_dir, &rel, &data) {
+            match self.write_file(src, out_dir, &rel, &data, times) {
                 Ok(written) if written > 0 || data.size == 0 => {
                     stats.recovered += 1;
                     stats.bytes_recovered += written;
@@ -191,7 +193,14 @@ impl Volume {
     }
 
     /// Write a recovered file's data (resident inline, or from cluster runs).
-    fn write_file(&self, src: &Source, out_dir: &Path, rel: &Path, data: &DataAttr) -> Result<u64> {
+    fn write_file(
+        &self,
+        src: &Source,
+        out_dir: &Path,
+        rel: &Path,
+        data: &DataAttr,
+        times: (Option<std::time::SystemTime>, Option<std::time::SystemTime>),
+    ) -> Result<u64> {
         let target = unique_path(out_dir, rel);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
@@ -199,11 +208,10 @@ impl Volume {
         let mut out =
             fs::File::create(&target).with_context(|| format!("creating {}", target.display()))?;
 
-        match &data.kind {
+        let written = match &data.kind {
             DataKind::Resident(bytes) => {
                 out.write_all(bytes)?;
-                out.flush().ok();
-                Ok(bytes.len() as u64)
+                bytes.len() as u64
             }
             DataKind::NonResident(runs) => {
                 let mut remaining = data.size;
@@ -247,10 +255,12 @@ impl Volume {
                     written += take;
                     remaining -= take;
                 }
-                out.flush().ok();
-                Ok(written)
+                written
             }
-        }
+        };
+        out.flush().ok();
+        crate::times::apply(&out, times.0, times.1);
+        Ok(written)
     }
 
     /// Resolve a deleted file's path by climbing parent directory records.
@@ -290,6 +300,9 @@ struct ParsedRecord {
     /// Best file name and its parent reference.
     file_name: Option<(String, u64)>,
     data: Option<DataAttr>,
+    /// Modified / accessed times from `$STANDARD_INFORMATION`, if present.
+    mtime: Option<std::time::SystemTime>,
+    atime: Option<std::time::SystemTime>,
 }
 
 struct DataAttr {
@@ -308,6 +321,8 @@ fn parse_record(rec: &[u8]) -> Option<ParsedRecord> {
     let mut offset = first_attr;
     let mut best_name: Option<(String, u64, u8)> = None; // (name, parent, namespace)
     let mut data: Option<DataAttr> = None;
+    let mut mtime = None;
+    let mut atime = None;
 
     while offset + 8 <= rec.len() {
         let attr_type = u32::from_le_bytes([
@@ -331,7 +346,27 @@ fn parse_record(rec: &[u8]) -> Option<ParsedRecord> {
         let non_resident = rec[offset + 8] != 0;
         let name_length = rec[offset + 9] as usize;
 
-        if attr_type == ATTR_FILE_NAME && !non_resident {
+        if attr_type == ATTR_STANDARD_INFO && !non_resident {
+            // $STANDARD_INFORMATION holds the authoritative timestamps.
+            let content_off = u16::from_le_bytes([rec[offset + 20], rec[offset + 21]]) as usize;
+            let base = offset + content_off;
+            if base + 0x20 <= offset + attr_len {
+                let read_ft = |o: usize| {
+                    u64::from_le_bytes([
+                        rec[o],
+                        rec[o + 1],
+                        rec[o + 2],
+                        rec[o + 3],
+                        rec[o + 4],
+                        rec[o + 5],
+                        rec[o + 6],
+                        rec[o + 7],
+                    ])
+                };
+                mtime = crate::times::from_filetime(read_ft(base + 0x08));
+                atime = crate::times::from_filetime(read_ft(base + 0x18));
+            }
+        } else if attr_type == ATTR_FILE_NAME && !non_resident {
             if let Some((name, parent, namespace)) =
                 parse_file_name(&rec[offset..offset + attr_len])
             {
@@ -355,6 +390,8 @@ fn parse_record(rec: &[u8]) -> Option<ParsedRecord> {
     Some(ParsedRecord {
         file_name: best_name.map(|(n, p, _)| (n, p)),
         data,
+        mtime,
+        atime,
     })
 }
 
