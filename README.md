@@ -4,10 +4,10 @@ Recover deleted files from SD cards, USB sticks, hard drives, and disk images.
 
 `filerecovery` offers two complementary recovery strategies:
 
-| Command    | Strategy                     | Restores names? | Works after format? |
-|------------|------------------------------|-----------------|---------------------|
-| `undelete` | Filesystem-aware (FAT/exFAT) | **Yes**         | No (needs metadata) |
-| `scan`     | Signature carving            | No              | **Yes**             |
+| Command    | Strategy                          | Restores names? | Works after format? |
+|------------|-----------------------------------|-----------------|---------------------|
+| `undelete` | Filesystem-aware (FAT/exFAT/NTFS) | **Yes**         | No (needs metadata) |
+| `scan`     | Signature carving                 | No              | **Yes**             |
 
 **Use `undelete` first** if the filesystem is still intact (e.g. you just
 deleted a file): it reads the directory entries that survive deletion and
@@ -20,10 +20,10 @@ its partition table is gone.
 
 ## How each strategy works
 
-### `undelete` — filesystem-aware recovery (FAT12/16/32 and exFAT)
+### `undelete` — filesystem-aware recovery (FAT12/16/32, exFAT, NTFS)
 
 The filesystem type is auto-detected (bare volume or MBR partition table), and
-both FAT and exFAT are handled by the same `undelete` command.
+FAT, exFAT, and NTFS are all handled by the same `undelete` command.
 
 **FAT.** When a file is deleted, only the first byte of its 32-byte directory
 entry is overwritten (with `0xE5`) and its cluster chain is freed. The entry
@@ -36,12 +36,19 @@ Deletion only clears the *InUse* bit on each directory entry, so the **entire
 name and metadata survive** — nothing is lost. exFAT also records whether a file
 is stored contiguously, which makes contiguous deleted files recover cleanly.
 
-In both cases `filerecovery` reads the surviving directory entries, recovers
+**NTFS** (Windows drives). Every file is described by a record in the Master
+File Table (MFT). Deletion just clears the record's *in-use* flag; the name and
+the `$DATA` **data runs** survive. Because NTFS records the full run list,
+recovery here reconstructs **fragmented** files correctly — not just contiguous
+ones — and small files stored inline in the MFT come back directly. Original
+folder paths are rebuilt by following each record's parent reference.
+
+For FAT/exFAT, `filerecovery` reads the surviving directory entries and recovers
 each file under the **contiguous-allocation** assumption (the common case for
 cameras/SD cards; exFAT additionally follows the FAT for files flagged as
-fragmented), and restores them to their original folder paths.
+fragmented), then restores them to their original folder paths.
 
-> NTFS and ext4 are not yet supported by `undelete` — use `scan` for those.
+> ext4 is not yet supported by `undelete` — use `scan` for it.
 
 ### `scan` — signature-based file carving
 
@@ -86,12 +93,12 @@ cargo build --release
 filerecovery <COMMAND>
 
 Commands:
-  undelete    Recover deleted files from FAT/exFAT (keeps names/paths)
+  undelete    Recover deleted files from FAT/exFAT/NTFS (keeps names/paths)
   scan        Carve files from a device or image by signature
   list-types  List the file types this build can recover
 ```
 
-### Undelete from a FAT/exFAT card/image (keeps original names)
+### Undelete from a FAT/exFAT/NTFS card/image (keeps original names)
 
 ```sh
 filerecovery undelete card.img -o recovered
@@ -182,19 +189,22 @@ thumbnail embedded in a larger JPEG) are skipped to avoid duplicates; pass
 
 Common to both strategies:
 
-- **Fragmented files** are not reassembled. Recovery assumes a file occupies one
-  contiguous run of bytes. Heavily fragmented files may be truncated or
-  recovered with trailing garbage.
+- **Fragmentation:** carving and FAT/exFAT undelete assume a file occupies one
+  contiguous run of bytes, so heavily fragmented files may be truncated or have
+  trailing garbage. (NTFS undelete is the exception — it stores explicit cluster
+  runs and reassembles fragmented files.)
 - A file is only recoverable while its data blocks have not been **overwritten**;
   partially overwritten files come back partially corrupt.
 
 `undelete` specifics:
 
-- Supports **FAT12/16/32** and **exFAT** (NTFS and ext4 are planned).
+- Supports **FAT12/16/32**, **exFAT**, and **NTFS** (ext4 is planned).
 - File **timestamps** are not yet restored (names, paths, and contents are).
 - FAT only: if a deleted file had no long name, the first character of its short
-  (8.3) name is lost to the deletion marker and is shown as `_`. exFAT preserves
-  the full name.
+  (8.3) name is lost to the deletion marker and is shown as `_`. exFAT and NTFS
+  preserve the full name.
+- NTFS reconstructs fragmented files (it stores explicit cluster runs); FAT and
+  exFAT assume contiguous data, so badly fragmented files may be partial there.
 
 `scan` (carving) specifics:
 
