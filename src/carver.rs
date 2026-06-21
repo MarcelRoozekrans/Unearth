@@ -68,6 +68,9 @@ pub fn carve(
     // Detected file starts below this offset are skipped (already inside a
     // recovered file). Disabled when `allow_nested` is set.
     let mut skip_until = 0u64;
+    // Scratch buffers reused across files to avoid per-file allocations.
+    let mut footer_buf: Vec<u8> = Vec::new();
+    let mut copy_buf: Vec<u8> = Vec::new();
 
     progress.begin(scan_end - scan_start);
 
@@ -96,9 +99,19 @@ pub fn carve(
                 let valid_start = magic_abs >= sig.magic_offset;
 
                 if valid_start && (opts.allow_nested || file_start >= skip_until) {
-                    if let Some(len) = file_length(source, sig, file_start, scan_end)? {
+                    if let Some(len) =
+                        file_length(source, sig, file_start, scan_end, &mut footer_buf)?
+                    {
                         if len >= opts.min_size {
-                            write_file(source, sig, file_start, len, opts, &mut stats)?;
+                            write_file(
+                                source,
+                                sig,
+                                file_start,
+                                len,
+                                opts,
+                                &mut stats,
+                                &mut copy_buf,
+                            )?;
                             if !opts.allow_nested {
                                 skip_until = file_start + len;
                             }
@@ -133,12 +146,13 @@ fn file_length(
     sig: &Signature,
     file_start: u64,
     scan_end: u64,
+    footer_buf: &mut Vec<u8>,
 ) -> Result<Option<u64>> {
     let limit = (file_start + sig.max_size).min(scan_end);
     match sig.extent {
-        Extent::Footer { marker, trailing } => {
-            Ok(find_footer(source, file_start, marker, trailing, limit)?)
-        }
+        Extent::Footer { marker, trailing } => Ok(find_footer(
+            source, file_start, marker, trailing, limit, footer_buf,
+        )?),
         Extent::HeaderSizeLe32 { offset } => {
             let mut hdr = [0u8; 4];
             let need = offset + 4;
@@ -209,10 +223,18 @@ fn find_footer(
     marker: &[u8],
     trailing: u64,
     limit: u64,
+    buf: &mut Vec<u8>,
 ) -> Result<Option<u64>> {
     let window = 1024 * 1024usize;
     let overlap = marker.len().saturating_sub(1);
-    let mut buf = vec![0u8; window + overlap];
+    // Size the (reused) scratch buffer to the search region, capped at the
+    // window. Reusing it across files avoids a per-header allocation.
+    let cap = (window + overlap)
+        .min((limit - file_start) as usize)
+        .max(marker.len());
+    if buf.len() < cap {
+        buf.resize(cap, 0);
+    }
 
     // Start the search just past the header so a magic that is itself a prefix
     // of the marker cannot match at offset 0.
@@ -305,6 +327,7 @@ fn write_file(
     len: u64,
     opts: &CarveOptions,
     stats: &mut CarveStats,
+    buf: &mut Vec<u8>,
 ) -> Result<()> {
     let name = format!(
         "{:08}_{:#016x}.{}",
@@ -316,9 +339,13 @@ fn write_file(
 
     let mut remaining = len;
     let mut pos = file_start;
-    let mut buf = vec![0u8; COPY_CHUNK];
+    // Reused copy buffer, grown to the file size but capped at COPY_CHUNK.
+    let buf_len = (len as usize).clamp(1, COPY_CHUNK);
+    if buf.len() < buf_len {
+        buf.resize(buf_len, 0);
+    }
     while remaining > 0 {
-        let want = (remaining as usize).min(COPY_CHUNK);
+        let want = (remaining as usize).min(buf_len);
         let n = source.read_at(pos, &mut buf[..want])?;
         if n == 0 {
             break;

@@ -21,6 +21,12 @@ path = "src/lib.rs"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 indicatif = "0.17"
+# Optional heap profiler (dotMemory-style allocation reports). Enable with
+# `--features dhat-heap` when running the `heap_profile` example.
+dhat = { version = "0.3", optional = true }
+
+[features]
+dhat-heap = ["dep:dhat"]
 
 [dev-dependencies]
 tempfile = "3"
@@ -28,3 +34,8 @@ tempfile = "3"
 [profile.release]
 lto = true
 codegen-units = 1
+
+# Allow the profiling example to see useful symbols/line info under release.
+[profile.profiling]
+inherits = "release"
+debug = 1
