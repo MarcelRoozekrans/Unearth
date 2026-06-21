@@ -9,7 +9,7 @@ use std::path::Path;
 use anyhow::{bail, Result};
 
 use crate::source::Source;
-use crate::{exfat, fat};
+use crate::{exfat, fat, ntfs};
 
 /// Outcome of recovering deleted files from one volume.
 #[derive(Default)]
@@ -24,6 +24,7 @@ pub struct RecoverStats {
 pub enum Volume {
     Fat(fat::Volume),
     Exfat(exfat::Volume),
+    Ntfs(ntfs::Volume),
 }
 
 impl Volume {
@@ -32,6 +33,7 @@ impl Volume {
         match self {
             Volume::Fat(v) => v.offset,
             Volume::Exfat(v) => v.offset,
+            Volume::Ntfs(v) => v.offset,
         }
     }
 
@@ -40,6 +42,7 @@ impl Volume {
         match self {
             Volume::Fat(v) => format!("{:?}", v.fat_type),
             Volume::Exfat(_) => "exFAT".to_string(),
+            Volume::Ntfs(_) => "NTFS".to_string(),
         }
     }
 
@@ -53,6 +56,7 @@ impl Volume {
         match self {
             Volume::Fat(v) => v.recover_deleted(src, out_dir, min_size as u32),
             Volume::Exfat(v) => v.recover_deleted(src, out_dir, min_size),
+            Volume::Ntfs(v) => v.recover_deleted(src, out_dir, min_size),
         }
     }
 }
@@ -69,6 +73,11 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     if exfat::is_exfat_vbr(&sector0) {
         if let Ok(v) = exfat::Volume::parse(src, 0) {
             return Ok(vec![Volume::Exfat(v)]);
+        }
+    }
+    if ntfs::is_ntfs_vbr(&sector0) {
+        if let Ok(v) = ntfs::Volume::parse(src, 0) {
+            return Ok(vec![Volume::Ntfs(v)]);
         }
     }
     if fat::looks_like_fat_vbr(&sector0) {
@@ -94,20 +103,24 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
             }
             let offset = lba_start as u64 * 512;
 
-            // Type 0x07 covers both exFAT and NTFS; parsing verifies the
-            // signature, so NTFS partitions are skipped cleanly.
+            // Type 0x07 covers both exFAT and NTFS; the signature check inside
+            // each parser decides which (or neither).
             if ptype == 0x07 {
                 if let Ok(v) = exfat::Volume::parse(src, offset) {
                     volumes.push(Volume::Exfat(v));
+                } else if let Ok(v) = ntfs::Volume::parse(src, offset) {
+                    volumes.push(Volume::Ntfs(v));
                 }
             } else if fat::is_fat_partition_type(ptype) {
                 if let Ok(v) = fat::Volume::parse(src, offset) {
                     volumes.push(Volume::Fat(v));
                 }
             } else {
-                // Unknown type: try both, signature checks decide.
+                // Unknown type: try each, signature checks decide.
                 if let Ok(v) = exfat::Volume::parse(src, offset) {
                     volumes.push(Volume::Exfat(v));
+                } else if let Ok(v) = ntfs::Volume::parse(src, offset) {
+                    volumes.push(Volume::Ntfs(v));
                 } else if let Ok(v) = fat::Volume::parse(src, offset) {
                     volumes.push(Volume::Fat(v));
                 }
@@ -116,15 +129,18 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT or exFAT volume found (NTFS/ext4 are not yet supported)");
+        bail!("no FAT, exFAT, or NTFS volume found (ext4 is not yet supported)");
     }
     Ok(volumes)
 }
 
-/// Parse a single volume at an explicit byte offset, trying exFAT then FAT.
+/// Parse a single volume at an explicit byte offset, trying each backend.
 pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     if let Ok(v) = exfat::Volume::parse(src, offset) {
         return Ok(Volume::Exfat(v));
+    }
+    if let Ok(v) = ntfs::Volume::parse(src, offset) {
+        return Ok(Volume::Ntfs(v));
     }
     let v = fat::Volume::parse(src, offset)?;
     Ok(Volume::Fat(v))

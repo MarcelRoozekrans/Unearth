@@ -3,11 +3,11 @@
 //!
 //! Two complementary strategies are provided:
 //!
-//! * [`fat`] / [`exfat`] — **filesystem-aware** recovery for FAT12/16/32 and
-//!   exFAT. Reads the directory entries that survive deletion to restore files
-//!   with their original names, paths, and sizes. Use this when the filesystem
-//!   metadata is still intact (e.g. a file was just deleted). The [`recover`]
-//!   module auto-detects which one applies.
+//! * [`fat`] / [`exfat`] / [`ntfs`] — **filesystem-aware** recovery for
+//!   FAT12/16/32, exFAT, and NTFS. Reads the directory/MFT entries that survive
+//!   deletion to restore files with their original names, paths, and sizes. Use
+//!   this when the filesystem metadata is still intact (e.g. a file was just
+//!   deleted). The [`recover`] module auto-detects which one applies.
 //! * [`carver`] — **filesystem-agnostic** signature carving. Scans the raw
 //!   bytes of a device for known file signatures and reconstructs each file's
 //!   extent. Recovers data even after a quick format or partition-table loss,
@@ -39,6 +39,7 @@
 pub mod carver;
 pub mod exfat;
 pub mod fat;
+pub mod ntfs;
 pub mod recover;
 pub mod signatures;
 pub mod source;
