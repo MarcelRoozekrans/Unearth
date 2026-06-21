@@ -1,12 +1,43 @@
 # filerecovery
 
-Recover deleted files from SD cards, USB sticks, hard drives, and disk images
-using **signature-based file carving**.
+Recover deleted files from SD cards, USB sticks, hard drives, and disk images.
 
-Instead of parsing a specific filesystem (FAT32 / exFAT / NTFS / ext4),
-`filerecovery` scans the raw bytes of a device for known file *signatures*
-(magic numbers) and reconstructs each file's extent. Because it ignores the
-filesystem entirely, it can recover data even after:
+`filerecovery` offers two complementary recovery strategies:
+
+| Command    | Strategy                  | Restores names? | Works after format? |
+|------------|---------------------------|-----------------|---------------------|
+| `undelete` | Filesystem-aware (FAT)    | **Yes**         | No (needs metadata) |
+| `scan`     | Signature carving         | No              | **Yes**             |
+
+**Use `undelete` first** if the filesystem is still intact (e.g. you just
+deleted a file): it reads the FAT directory entries that survive deletion and
+restores files with their **original names, folder paths, and sizes**. Fall
+back to `scan` (carving) when the filesystem itself is damaged, formatted, or
+its partition table is gone.
+
+> These are the same general techniques used by tools like *PhotoRec*,
+> *foremost*, *scalpel*, and *testdisk*.
+
+## How each strategy works
+
+### `undelete` — filesystem-aware recovery (FAT12/16/32)
+
+When a file is deleted on FAT, only the first byte of its 32-byte directory
+entry is overwritten (with `0xE5`) and its cluster chain is freed. The entry
+still records the original name (including the VFAT long name), starting
+cluster, and size. `filerecovery` reads those entries, assumes the data was
+stored **contiguously** (the common case for cameras/SD cards), and restores
+each deleted file to its original path. Whole-disk images with an MBR partition
+table are auto-detected, as are bare FAT volumes.
+
+> NTFS, ext4, and exFAT are not yet supported by `undelete` — use `scan` for
+> those.
+
+### `scan` — signature-based file carving
+
+Carving ignores the filesystem and scans the raw bytes of the device for known
+file *signatures* (magic numbers), reconstructing each file's extent. Because
+it does not depend on filesystem metadata, it recovers data even after:
 
 - a file was deleted (the data blocks usually remain until overwritten),
 - the card/drive was **quick-formatted**,
@@ -15,9 +46,6 @@ filesystem entirely, it can recover data even after:
 The trade-off is that carving cannot restore original **filenames** or
 directory structure — recovered files are named by their type and the byte
 offset where they were found.
-
-> This is the same general technique used by tools like *PhotoRec*, *foremost*,
-> and *scalpel*.
 
 ## Safety
 
@@ -48,30 +76,49 @@ cargo build --release
 filerecovery <COMMAND>
 
 Commands:
-  scan        Scan a device or image and recover files
+  undelete    Recover deleted files from a FAT filesystem (keeps names/paths)
+  scan        Carve files from a device or image by signature
   list-types  List the file types this build can recover
 ```
 
-### Scan a disk image
+### Undelete from a FAT card/image (keeps original names)
+
+```sh
+filerecovery undelete card.img -o recovered
+sudo filerecovery undelete /dev/mmcblk0 -o recovered   # SD card, needs root
+```
+
+The FAT volume is auto-detected (bare volume or MBR partition table). Override
+with `--offset <BYTES>` if needed.
+
+`undelete` options:
+
+```text
+-o, --output <DIR>     Where to write recovered files (default: ./recovered)
+    --offset <BYTES>   Byte offset of the FAT volume (default: auto-detect)
+    --min-size <BYTES> Skip deleted files smaller than this
+```
+
+### Carve a disk image (filesystem-agnostic)
 
 ```sh
 filerecovery scan card.img -o recovered
 ```
 
-### Scan a block device (needs root to read it)
+### Carve a block device (needs root to read it)
 
 ```sh
 sudo filerecovery scan /dev/mmcblk0 -o recovered     # SD card
 sudo filerecovery scan /dev/sdb     -o recovered     # USB stick / disk
 ```
 
-### Recover only specific types
+### Carve only specific types
 
 ```sh
 filerecovery scan card.img -o recovered --type jpg --type png
 ```
 
-### Useful options
+`scan` options:
 
 ```text
 -o, --output <DIR>     Where to write recovered files (default: ./recovered)
@@ -84,7 +131,7 @@ filerecovery scan card.img -o recovered --type jpg --type png
 -q, --quiet            Hide the progress bar
 ```
 
-## Supported file types
+## Supported file types (`scan` / carving)
 
 | Ext  | Type                                              | How the end is found        |
 |------|---------------------------------------------------|-----------------------------|
@@ -105,7 +152,7 @@ Append a `Signature` to the `SIGNATURES` table in
 header plus one of the existing extent strategies (`Footer`,
 `HeaderSizeLe32`, or `Mp4Atoms`).
 
-## How it works
+## How carving works
 
 1. **Scan.** The device is read sequentially in 8 MiB chunks. Each chunk is
    searched for any registered header magic, with a small carry-over window so
@@ -123,12 +170,25 @@ thumbnail embedded in a larger JPEG) are skipped to avoid duplicates; pass
 
 ## Limitations
 
-- **Fragmented files** are not reassembled. Carving assumes a file occupies one
+Common to both strategies:
+
+- **Fragmented files** are not reassembled. Recovery assumes a file occupies one
   contiguous run of bytes. Heavily fragmented files may be truncated or
   recovered with trailing garbage.
-- Original **filenames, timestamps, and folders** are not recovered.
-- Some recovered files may be partially corrupt if they were partially
-  overwritten before recovery.
+- A file is only recoverable while its data blocks have not been **overwritten**;
+  partially overwritten files come back partially corrupt.
+
+`undelete` (FAT) specifics:
+
+- Only **FAT12/16/32** is supported so far (NTFS, ext4, and exFAT are planned).
+- File **timestamps** are not yet restored (names, paths, and contents are).
+- If a deleted file had no long name, the first character of its short (8.3)
+  name is lost to the deletion marker and is shown as `_`.
+
+`scan` (carving) specifics:
+
+- Original filenames, timestamps, and folders are not recovered — files are
+  named by type and offset.
 
 ## Testing
 

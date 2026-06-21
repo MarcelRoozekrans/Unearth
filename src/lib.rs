@@ -1,13 +1,20 @@
 //! `filerecovery` — recover deleted files from SD cards, hard drives, and disk
-//! images using signature-based file carving.
+//! images.
 //!
-//! The library is filesystem-agnostic: instead of parsing FAT/NTFS/ext
-//! directory structures, it scans the raw bytes of a device for known file
-//! signatures and reconstructs each file's extent. This recovers data even
-//! after a quick format or partition-table loss, at the cost of not restoring
-//! original filenames.
+//! Two complementary strategies are provided:
 //!
-//! # Example
+//! * [`fat`] — **filesystem-aware** recovery for FAT12/16/32. Reads the
+//!   directory entries that survive deletion to restore files with their
+//!   original names, paths, and sizes. Use this when the filesystem metadata is
+//!   still intact (e.g. a file was just deleted).
+//! * [`carver`] — **filesystem-agnostic** signature carving. Scans the raw
+//!   bytes of a device for known file signatures and reconstructs each file's
+//!   extent. Recovers data even after a quick format or partition-table loss,
+//!   at the cost of not restoring original filenames.
+//!
+//! Both read the source strictly read-only (see [`source::Source`]).
+//!
+//! # Example (carving)
 //!
 //! ```no_run
 //! use std::path::PathBuf;
@@ -29,5 +36,6 @@
 //! ```
 
 pub mod carver;
+pub mod fat;
 pub mod signatures;
 pub mod source;

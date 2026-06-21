@@ -1,0 +1,155 @@
+//! Integration test: build a minimal FAT12 volume by hand, "delete" a file in
+//! it, and verify filesystem-aware recovery restores its name and contents.
+
+use std::path::PathBuf;
+
+use filerecovery::fat;
+use filerecovery::source::Source;
+
+const BPS: usize = 512; // bytes per sector
+const SPC: usize = 1; // sectors per cluster
+const RESERVED: usize = 1; // boot sector only
+const NUM_FATS: usize = 1;
+const FAT_SECTORS: usize = 1;
+const ROOT_ENTRIES: usize = 16; // 16 * 32 = 512 bytes => 1 sector
+const TOTAL_SECTORS: usize = 103; // keeps cluster count < 4085 => FAT12
+
+const ROOT_DIR_SECTOR: usize = RESERVED + NUM_FATS * FAT_SECTORS; // sector 2
+const FIRST_DATA_SECTOR: usize = ROOT_DIR_SECTOR + 1; // sector 3 (root dir is 1 sector)
+
+fn cluster_sector(cluster: usize) -> usize {
+    FIRST_DATA_SECTOR + (cluster - 2) * SPC
+}
+
+/// Write the BPB fields a FAT12 boot sector needs for our parser.
+fn write_bpb(img: &mut [u8]) {
+    img[0] = 0xEB; // jump
+    img[1] = 0x3C;
+    img[2] = 0x90;
+    img[11..13].copy_from_slice(&(BPS as u16).to_le_bytes());
+    img[13] = SPC as u8;
+    img[14..16].copy_from_slice(&(RESERVED as u16).to_le_bytes());
+    img[16] = NUM_FATS as u8;
+    img[17..19].copy_from_slice(&(ROOT_ENTRIES as u16).to_le_bytes());
+    img[19..21].copy_from_slice(&(TOTAL_SECTORS as u16).to_le_bytes());
+    img[22..24].copy_from_slice(&(FAT_SECTORS as u16).to_le_bytes());
+    img[510] = 0x55;
+    img[511] = 0xAA;
+}
+
+/// Build a deleted short 8.3 entry. `name8` and `ext3` must be pre-padded.
+fn deleted_short_entry(name8: &[u8; 8], ext3: &[u8; 3], cluster: u16, size: u32) -> [u8; 32] {
+    let mut e = [0u8; 32];
+    e[0..8].copy_from_slice(name8);
+    e[8..11].copy_from_slice(ext3);
+    e[0] = 0xE5; // deletion marker overwrites the first name byte
+    e[11] = 0x00; // attributes: a normal file
+    e[20..22].copy_from_slice(&0u16.to_le_bytes()); // cluster high
+    e[26..28].copy_from_slice(&cluster.to_le_bytes()); // cluster low
+    e[28..32].copy_from_slice(&size.to_le_bytes());
+    e
+}
+
+/// Build a (deleted) LFN entry carrying up to 13 UTF-16 chars.
+fn deleted_lfn_entry(seq: u8, chars: &str) -> [u8; 32] {
+    let mut e = [0u8; 32];
+    e[0] = seq; // caller passes 0xE5 to mark deleted
+    e[11] = 0x0F; // LFN attribute
+    e[13] = 0x00; // checksum (ignored for deleted entries)
+
+    let mut units: Vec<u16> = chars.encode_utf16().collect();
+    units.push(0x0000); // terminator
+    while units.len() < 13 {
+        units.push(0xFFFF); // padding
+    }
+    let ranges = [1usize..11, 14..26, 28..32];
+    let mut k = 0;
+    for r in ranges {
+        for pair in e[r].chunks_exact_mut(2) {
+            pair.copy_from_slice(&units[k].to_le_bytes());
+            k += 1;
+        }
+    }
+    e
+}
+
+#[test]
+fn recovers_deleted_fat_file_with_long_name() {
+    let mut img = vec![0u8; TOTAL_SECTORS * BPS];
+    write_bpb(&mut img);
+
+    // Deleted file "photo.dat", 600 bytes, contiguous starting at cluster 3.
+    let payload: Vec<u8> = (0..600u32).map(|i| (i % 251) as u8).collect();
+    let start_cluster = 3usize;
+    let data_off = cluster_sector(start_cluster) * BPS;
+    img[data_off..data_off + payload.len()].copy_from_slice(&payload);
+
+    // Root directory: an LFN entry followed by the deleted short entry.
+    let root_off = ROOT_DIR_SECTOR * BPS;
+    let lfn = deleted_lfn_entry(0xE5, "photo.dat");
+    let short = deleted_short_entry(
+        b"PHOTO   ",
+        b"DAT",
+        start_cluster as u16,
+        payload.len() as u32,
+    );
+    img[root_off..root_off + 32].copy_from_slice(&lfn);
+    img[root_off + 32..root_off + 64].copy_from_slice(&short);
+
+    // Write the image and run recovery.
+    let tmp = tempfile::tempdir().unwrap();
+    let img_path: PathBuf = tmp.path().join("card.img");
+    std::fs::write(&img_path, &img).unwrap();
+    let out_dir = tmp.path().join("out");
+
+    let source = Source::open(&img_path).unwrap();
+    let volumes = fat::detect_volumes(&source).unwrap();
+    assert_eq!(volumes.len(), 1);
+    assert_eq!(volumes[0].fat_type, fat::FatType::Fat12);
+
+    let stats = volumes[0].recover_deleted(&source, &out_dir, 0).unwrap();
+    assert_eq!(stats.recovered, 1, "should recover the deleted file");
+
+    // The long name should be reconstructed exactly, with original contents.
+    let recovered = std::fs::read(out_dir.join("photo.dat")).unwrap();
+    assert_eq!(
+        recovered, payload,
+        "recovered bytes must match the original"
+    );
+}
+
+#[test]
+fn skips_short_name_first_char() {
+    // Same as above but with no LFN entry: the leading char is lost to the
+    // deletion marker, so the recovered name uses '_' in its place.
+    let mut img = vec![0u8; TOTAL_SECTORS * BPS];
+    write_bpb(&mut img);
+
+    let payload: Vec<u8> = (0..100u32).map(|i| i as u8).collect();
+    let start_cluster = 2usize;
+    let data_off = cluster_sector(start_cluster) * BPS;
+    img[data_off..data_off + payload.len()].copy_from_slice(&payload);
+
+    let root_off = ROOT_DIR_SECTOR * BPS;
+    let short = deleted_short_entry(
+        b"NOTES   ",
+        b"TXT",
+        start_cluster as u16,
+        payload.len() as u32,
+    );
+    img[root_off..root_off + 32].copy_from_slice(&short);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let img_path = tmp.path().join("card.img");
+    std::fs::write(&img_path, &img).unwrap();
+    let out_dir = tmp.path().join("out");
+
+    let source = Source::open(&img_path).unwrap();
+    let volumes = fat::detect_volumes(&source).unwrap();
+    let stats = volumes[0].recover_deleted(&source, &out_dir, 0).unwrap();
+    assert_eq!(stats.recovered, 1);
+
+    // First char unknown -> "_OTES.TXT".
+    let recovered = std::fs::read(out_dir.join("_OTES.TXT")).unwrap();
+    assert_eq!(recovered, payload);
+}
