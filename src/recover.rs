@@ -83,6 +83,16 @@ impl Volume {
         }
     }
 
+    /// Total size of the volume in bytes.
+    pub fn size(&self) -> u64 {
+        match self {
+            Volume::Fat(v) => v.size(),
+            Volume::Exfat(v) => v.size(),
+            Volume::Ntfs(v) => v.size(),
+            Volume::Ext(v) => v.size(),
+        }
+    }
+
     /// Short human-readable filesystem label, e.g. `"FAT16"` or `"exFAT"`.
     pub fn fs_label(&self) -> String {
         match self {

@@ -105,8 +105,28 @@ filerecovery <COMMAND>
 Commands:
   undelete    Recover deleted files from FAT/exFAT/NTFS/ext (keeps names/paths)
   scan        Carve files from a device or image by signature
+  info        Show the partition / filesystem layout of a source
   list-types  List the file types this build can recover
 ```
+
+### Inspect the layout of a disk or image
+
+```sh
+filerecovery info disk.img
+filerecovery info disk.img --deleted   # also count recoverable deleted files
+```
+
+Example output:
+
+```text
+Detected 1 volume(s):
+
+  #   FS         OFFSET         SIZE       DELETED
+  -   --         ------         ----       -------
+  0   ext2/3/4   17408          32.00 KiB  1
+```
+
+The `OFFSET` column is handy if you ever need to pass `--offset` to `undelete`.
 
 ### Undelete from a FAT/exFAT/NTFS/ext card/image (keeps original names)
 

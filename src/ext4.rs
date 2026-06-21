@@ -178,6 +178,11 @@ impl Volume {
         Ok(Some(buf))
     }
 
+    /// Total size of the volume in bytes.
+    pub fn size(&self) -> u64 {
+        self.total_blocks * self.block_size
+    }
+
     /// Recover all deleted files into `out_dir`.
     pub fn recover_deleted(
         &self,

@@ -38,6 +38,8 @@ pub struct Volume {
     bytes_per_sector: u64,
     cluster_size: u64,
     record_size: u64,
+    /// Total volume size in bytes.
+    volume_size: u64,
     /// Data runs of `$MFT` itself.
     mft_runs: Runs,
     /// Number of records in the MFT.
@@ -85,6 +87,11 @@ impl Volume {
         }
         let cluster_size = bytes_per_sector * sectors_per_cluster;
 
+        let total_sectors = u64::from_le_bytes([
+            boot[40], boot[41], boot[42], boot[43], boot[44], boot[45], boot[46], boot[47],
+        ]);
+        let volume_size = total_sectors * bytes_per_sector;
+
         let mft_cluster = u64::from_le_bytes([
             boot[48], boot[49], boot[50], boot[51], boot[52], boot[53], boot[54], boot[55],
         ]);
@@ -118,6 +125,7 @@ impl Volume {
             bytes_per_sector,
             cluster_size,
             record_size,
+            volume_size,
             mft_runs,
             record_count,
         })
@@ -142,6 +150,11 @@ impl Volume {
             return Ok(None);
         }
         Ok(Some(rec))
+    }
+
+    /// Total size of the volume in bytes.
+    pub fn size(&self) -> u64 {
+        self.volume_size
     }
 
     /// Recover all deleted files into `out_dir`.
