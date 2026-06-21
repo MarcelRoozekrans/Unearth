@@ -31,6 +31,7 @@
 //!     min_size: 0,
 //!     max_files: None,
 //!     allow_nested: false,
+//!     validate: true,
 //!     progress: false,
 //! };
 //! let stats = carver::carve(&src, &sigs, &opts, &carver::NoProgress).unwrap();
@@ -46,3 +47,4 @@ pub mod recover;
 pub mod signatures;
 pub mod source;
 pub mod times;
+pub mod validate;

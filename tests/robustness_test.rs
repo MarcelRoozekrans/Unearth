@@ -36,6 +36,7 @@ fn run_all(src: &Source, out_dir: &Path) {
         min_size: 0,
         max_files: Some(50),
         allow_nested: false,
+        validate: true,
         progress: false,
     };
     let _ = carver::carve(src, &sigs, &opts, &NoProgress);

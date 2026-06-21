@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 
 use crate::signatures::{Extent, Signature, SignatureIndex};
 use crate::source::Source;
+use crate::validate::{self, HEADER_LEN};
 
 /// How much of the source we read per scan iteration.
 const SCAN_CHUNK: usize = 8 * 1024 * 1024; // 8 MiB
@@ -29,6 +30,9 @@ pub struct CarveOptions {
     /// Find files even when nested inside another carved file (e.g. a JPEG
     /// thumbnail inside a JPEG). Off by default to avoid duplicates.
     pub allow_nested: bool,
+    /// Reject candidates whose header fails a structural check, cutting the
+    /// false positives that coincidental magic bytes produce. On by default.
+    pub validate: bool,
     /// Report progress to stderr.
     pub progress: bool,
 }
@@ -39,6 +43,8 @@ pub struct CarveStats {
     pub bytes_scanned: u64,
     pub files_recovered: u64,
     pub bytes_recovered: u64,
+    /// Candidates dropped because their header failed structural validation.
+    pub rejected: u64,
     /// Recovered-file count per extension.
     pub per_type: std::collections::BTreeMap<&'static str, u64>,
 }
@@ -103,22 +109,26 @@ pub fn carve(
                         file_length(source, sig, file_start, scan_end, &mut footer_buf)?
                     {
                         if len >= opts.min_size {
-                            write_file(
-                                source,
-                                sig,
-                                file_start,
-                                len,
-                                opts,
-                                &mut stats,
-                                &mut copy_buf,
-                            )?;
-                            if !opts.allow_nested {
-                                skip_until = file_start + len;
-                            }
-                            if let Some(max) = opts.max_files {
-                                if stats.files_recovered >= max {
-                                    progress.finish(stats.bytes_scanned);
-                                    return Ok(stats);
+                            if opts.validate && !passes_validation(source, sig, file_start, len)? {
+                                stats.rejected += 1;
+                            } else {
+                                write_file(
+                                    source,
+                                    sig,
+                                    file_start,
+                                    len,
+                                    opts,
+                                    &mut stats,
+                                    &mut copy_buf,
+                                )?;
+                                if !opts.allow_nested {
+                                    skip_until = file_start + len;
+                                }
+                                if let Some(max) = opts.max_files {
+                                    if stats.files_recovered >= max {
+                                        progress.finish(stats.bytes_scanned);
+                                        return Ok(stats);
+                                    }
                                 }
                             }
                         }
@@ -317,6 +327,16 @@ fn mp4_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     } else {
         Ok(None)
     }
+}
+
+/// Read the candidate's header and ask the type's validator whether it looks
+/// like a real file. A short read (file smaller than the header window) just
+/// means the validator sees fewer bytes and tends to abstain.
+fn passes_validation(source: &Source, sig: &Signature, file_start: u64, len: u64) -> Result<bool> {
+    let mut hdr = [0u8; HEADER_LEN];
+    let take = (len as usize).min(HEADER_LEN);
+    let n = source.read_at(file_start, &mut hdr[..take])?;
+    Ok(validate::validate(sig, &hdr[..n]).accept())
 }
 
 /// Stream `len` bytes from the source at `file_start` into a new output file.

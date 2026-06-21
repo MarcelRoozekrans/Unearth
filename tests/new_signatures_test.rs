@@ -34,6 +34,13 @@ fn make_sqlite(page_size: u16, page_count: u32) -> Vec<u8> {
     let mut v = vec![0u8; total];
     v[0..16].copy_from_slice(b"SQLite format 3\0");
     v[16..18].copy_from_slice(&page_size.to_be_bytes()); // big-endian
+                                                         // Fixed header fields the validator checks (file format versions and the
+                                                         // payload-fraction constants).
+    v[18] = 1; // write version (legacy)
+    v[19] = 1; // read version (legacy)
+    v[21] = 64; // max embedded payload fraction
+    v[22] = 32; // min embedded payload fraction
+    v[23] = 32; // leaf payload fraction
     v[28..32].copy_from_slice(&page_count.to_be_bytes());
     // Fill the body so a byte-for-byte comparison is meaningful.
     for (i, b) in v.iter_mut().enumerate().skip(100) {
@@ -106,6 +113,7 @@ fn recovers_new_signature_types() {
         min_size: 0,
         max_files: None,
         allow_nested: false,
+        validate: true,
         progress: false,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
