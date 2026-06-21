@@ -243,7 +243,9 @@ impl Volume {
             DataKind::NonResident(runs) => {
                 let mut remaining = data.size;
                 let mut written = 0u64;
-                let mut buf = vec![0u8; 1024 * 1024];
+                // Size the copy buffer to the file, capped at 1 MiB.
+                let buf_len = (data.size as usize).clamp(1, 1024 * 1024);
+                let mut buf = vec![0u8; buf_len];
                 for &(lcn, count) in runs {
                     if remaining == 0 {
                         break;
@@ -578,20 +580,15 @@ fn read_runs_range(
         match lcn {
             None => out.resize(out.len() + take as usize, 0), // sparse
             Some(l) if l >= 0 => {
-                let mut pos = vol_offset
+                // Read straight into the output buffer (no per-call temp).
+                let disk = vol_offset
                     .saturating_add((l as u64).saturating_mul(cluster_size))
                     .saturating_add(skip);
-                let mut left = take;
-                let mut buf = vec![0u8; 1024 * 1024];
-                while left > 0 {
-                    let want = (left as usize).min(buf.len());
-                    let n = src.read_at(pos, &mut buf[..want])?;
-                    if n == 0 {
-                        break;
-                    }
-                    out.extend_from_slice(&buf[..n]);
-                    pos += n as u64;
-                    left -= n as u64;
+                let base = out.len();
+                out.resize(base + take as usize, 0);
+                let n = src.read_at(disk, &mut out[base..])?;
+                if (n as u64) < take {
+                    out.truncate(base + n); // short read at end of source
                 }
             }
             Some(_) => break,

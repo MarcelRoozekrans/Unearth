@@ -103,7 +103,30 @@ fn main() {
             let s = v
                 .recover_deleted(&esrc, &tmp.path().join("eout"), &RecoverOptions::default())
                 .unwrap();
-            eprintln!("undelete: {} file(s) from {}", s.recovered, v.fs_label());
+            eprintln!(
+                "undelete (ext): {} file(s) from {}",
+                s.recovered,
+                v.fs_label()
+            );
+        }
+    }
+
+    // NTFS undelete over a multi-record MFT: stresses the per-record read path.
+    let ntfs = build_ntfs_volume(90);
+    let ntfs_path = tmp.path().join("ntfs.img");
+    std::fs::write(&ntfs_path, &ntfs).unwrap();
+    let nsrc = Source::open(&ntfs_path).unwrap();
+    let t = Instant::now();
+    if let Ok(vols) = recover::detect(&nsrc) {
+        for v in &vols {
+            let s = v
+                .recover_deleted(&nsrc, &tmp.path().join("nout"), &RecoverOptions::default())
+                .unwrap();
+            eprintln!(
+                "undelete (ntfs): {} file(s) in {:.1} ms",
+                s.recovered,
+                t.elapsed().as_secs_f64() * 1000.0
+            );
         }
     }
 }
@@ -157,4 +180,119 @@ fn build_ext_volume(unit: &[u8]) -> Vec<u8> {
     de(12, 2, (BS - 12) as u16, "..", 2);
     de(28, 11, 24, "recovered.bin", 1);
     v
+}
+
+// --- minimal NTFS volume with many deleted files -------------------------
+
+fn build_ntfs_volume(deleted_files: usize) -> Vec<u8> {
+    const BPS: usize = 512;
+    const CLUSTER: usize = 512; // spc = 1
+    const RECORD: usize = 1024; // 2 sectors per record
+    const MFT_CLUSTER: usize = 4;
+    let mft_records = deleted_files + 32;
+    let total_clusters = MFT_CLUSTER + mft_records * (RECORD / CLUSTER) + 16;
+
+    let mut img = vec![0u8; total_clusters * CLUSTER];
+    // Boot sector.
+    img[3..11].copy_from_slice(b"NTFS    ");
+    img[11..13].copy_from_slice(&(BPS as u16).to_le_bytes());
+    img[13] = 1;
+    img[40..48].copy_from_slice(&(total_clusters as u64).to_le_bytes());
+    img[48..56].copy_from_slice(&(MFT_CLUSTER as u64).to_le_bytes());
+    img[64] = (-10i8) as u8; // 1024-byte records
+    img[510] = 0x55;
+    img[511] = 0xAA;
+
+    let mft_byte = |rec: usize| MFT_CLUSTER * CLUSTER + rec * RECORD;
+
+    let pad8 = |mut a: Vec<u8>| {
+        while a.len() % 8 != 0 {
+            a.push(0);
+        }
+        a
+    };
+    let filename_attr = |name: &str, parent: u64| {
+        let units: Vec<u16> = name.encode_utf16().collect();
+        let mut content = vec![0u8; 0x42 + units.len() * 2];
+        content[0..8].copy_from_slice(&parent.to_le_bytes());
+        content[0x40] = units.len() as u8;
+        content[0x41] = 1;
+        for (i, &u) in units.iter().enumerate() {
+            content[0x42 + i * 2..0x42 + i * 2 + 2].copy_from_slice(&u.to_le_bytes());
+        }
+        let mut attr = vec![0u8; 24];
+        attr[0..4].copy_from_slice(&0x30u32.to_le_bytes());
+        attr[10..12].copy_from_slice(&24u16.to_le_bytes());
+        attr[16..20].copy_from_slice(&(content.len() as u32).to_le_bytes());
+        attr[20..22].copy_from_slice(&24u16.to_le_bytes());
+        attr.extend_from_slice(&content);
+        let mut attr = pad8(attr);
+        let len = attr.len() as u32;
+        attr[4..8].copy_from_slice(&len.to_le_bytes());
+        attr
+    };
+    let data_resident = |content: &[u8]| {
+        let mut attr = vec![0u8; 24];
+        attr[0..4].copy_from_slice(&0x80u32.to_le_bytes());
+        attr[10..12].copy_from_slice(&24u16.to_le_bytes());
+        attr[16..20].copy_from_slice(&(content.len() as u32).to_le_bytes());
+        attr[20..22].copy_from_slice(&24u16.to_le_bytes());
+        attr.extend_from_slice(content);
+        let mut attr = pad8(attr);
+        let len = attr.len() as u32;
+        attr[4..8].copy_from_slice(&len.to_le_bytes());
+        attr
+    };
+    let data_nonresident = |real_size: u64, runs: &[u8]| {
+        let mut attr = vec![0u8; 64];
+        attr[0..4].copy_from_slice(&0x80u32.to_le_bytes());
+        attr[8] = 1;
+        attr[32..34].copy_from_slice(&64u16.to_le_bytes());
+        attr[48..56].copy_from_slice(&real_size.to_le_bytes());
+        attr.extend_from_slice(runs);
+        let mut attr = pad8(attr);
+        let len = attr.len() as u32;
+        attr[4..8].copy_from_slice(&len.to_le_bytes());
+        attr
+    };
+    let record = |flags: u16, attrs: &[Vec<u8>]| {
+        let mut rec = vec![0u8; RECORD];
+        rec[0..4].copy_from_slice(b"FILE");
+        rec[4..6].copy_from_slice(&48u16.to_le_bytes());
+        rec[6..8].copy_from_slice(&3u16.to_le_bytes());
+        rec[20..22].copy_from_slice(&56u16.to_le_bytes());
+        rec[22..24].copy_from_slice(&flags.to_le_bytes());
+        let mut off = 56;
+        for a in attrs {
+            rec[off..off + a.len()].copy_from_slice(a);
+            off += a.len();
+        }
+        rec[off..off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        rec
+    };
+
+    // Record 0: $MFT with a non-resident $DATA describing the whole MFT.
+    let mft_run = [
+        0x11u8,
+        (mft_records * (RECORD / CLUSTER)) as u8,
+        MFT_CLUSTER as u8,
+        0x00,
+    ];
+    let rec0 = record(
+        0x01,
+        &[data_nonresident((mft_records * RECORD) as u64, &mft_run)],
+    );
+    let o = mft_byte(0);
+    img[o..o + RECORD].copy_from_slice(&rec0);
+
+    // Many deleted files with small resident data.
+    for i in 0..deleted_files {
+        let rec_no = 24 + i;
+        let name = format!("file{i:04}.txt");
+        let content = format!("deleted file number {i}").into_bytes();
+        let rec = record(0, &[filename_attr(&name, 5), data_resident(&content)]);
+        let o = mft_byte(rec_no);
+        img[o..o + RECORD].copy_from_slice(&rec);
+    }
+    img
 }

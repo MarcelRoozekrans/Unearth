@@ -47,6 +47,24 @@ the whole carving run instead of allocating per file.
 Peak memory is now dominated by the single 8 MiB sequential scan buffer, which is
 intentional and independent of how many files are recovered.
 
+### Recovery backends
+
+A second pass profiled the `undelete` path. The NTFS backend read **every MFT
+record** through a helper that allocated a fresh 1 MiB temp buffer per call, so
+scanning the MFT churned ~1 MiB per record. The fix reads each record straight
+into its output buffer, and the FAT/exFAT/NTFS per-file copy buffers are now
+sized to the file (capped at 1 MiB).
+
+Workload: carve (as above) **plus** an NTFS volume with 90 deleted files.
+
+| Metric                | Before  | After  | Change        |
+|-----------------------|---------|--------|---------------|
+| Total bytes allocated | 200 MB  | 72 MB  | **~2.8× less** |
+| NTFS undelete time    | 15.7 ms | 6.5 ms | ~2.4× faster  |
+
+The ~128 MB difference is exactly the per-record temp buffers that no longer
+exist.
+
 ## Tips
 
 - Profile in the `profiling` profile (release optimizations + line info) so the
