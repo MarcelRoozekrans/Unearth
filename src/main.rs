@@ -6,8 +6,9 @@ use anyhow::Result;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 
-use cli::{Cli, Command, ScanArgs};
+use cli::{Cli, Command, ScanArgs, UndeleteArgs};
 use filerecovery::carver::{self, CarveOptions, ProgressSink};
+use filerecovery::fat;
 use filerecovery::signatures::{self, SIGNATURES};
 use filerecovery::source::Source;
 
@@ -19,6 +20,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Scan(args) => scan(args),
+        Command::Undelete(args) => undelete(args),
     }
 }
 
@@ -74,6 +76,55 @@ fn scan(args: ScanArgs) -> Result<()> {
             println!("  {:<6} {}", ext, count);
         }
     }
+    Ok(())
+}
+
+fn undelete(args: UndeleteArgs) -> Result<()> {
+    let source = Source::open(&args.source)?;
+    eprintln!(
+        "Source: {} ({})",
+        args.source.display(),
+        human_bytes(source.size)
+    );
+
+    let volumes = match args.offset {
+        Some(off) => vec![fat::Volume::parse(&source, off)?],
+        None => fat::detect_volumes(&source)?,
+    };
+    eprintln!("Found {} FAT volume(s).", volumes.len());
+
+    std::fs::create_dir_all(&args.output)
+        .map_err(|e| anyhow::anyhow!("creating output dir {}: {e}", args.output.display()))?;
+
+    let mut total_recovered = 0u64;
+    let mut total_bytes = 0u64;
+    let mut total_skipped = 0u64;
+    for (i, vol) in volumes.iter().enumerate() {
+        // Keep each volume's output separate to avoid path collisions.
+        let out = if volumes.len() > 1 {
+            args.output.join(format!("volume_{i}"))
+        } else {
+            args.output.clone()
+        };
+        eprintln!(
+            "Volume {i}: {:?} at offset {} -> {}",
+            vol.fat_type,
+            vol.offset,
+            out.display()
+        );
+        let stats = vol.recover_deleted(&source, &out, args.min_size)?;
+        total_recovered += stats.recovered;
+        total_bytes += stats.bytes_recovered;
+        total_skipped += stats.skipped;
+    }
+
+    eprintln!();
+    println!(
+        "Done. Recovered {} deleted file(s), {} ({} skipped as unrecoverable).",
+        total_recovered,
+        human_bytes(total_bytes),
+        total_skipped
+    );
     Ok(())
 }
 

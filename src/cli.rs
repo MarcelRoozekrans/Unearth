@@ -15,10 +15,40 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Scan a device or image and recover files into an output directory.
+    /// Carve files from a device or image by signature (filesystem-agnostic).
+    ///
+    /// Works even after a format or partition loss, but cannot restore
+    /// original filenames.
     Scan(ScanArgs),
+    /// Recover deleted files from a FAT filesystem, keeping their original
+    /// names, paths, and sizes.
+    ///
+    /// More accurate than carving when the filesystem metadata is intact (e.g.
+    /// a file was just deleted), but requires a readable FAT12/16/32 volume.
+    Undelete(UndeleteArgs),
     /// List the file types this build can recover.
     ListTypes,
+}
+
+#[derive(Parser)]
+pub struct UndeleteArgs {
+    /// Source to read: a disk image file or a block device
+    /// (e.g. /dev/sdb, /dev/mmcblk0). Opened read-only.
+    #[arg(value_name = "SOURCE")]
+    pub source: PathBuf,
+
+    /// Directory to write recovered files into (created if needed).
+    #[arg(short, long, value_name = "DIR", default_value = "recovered")]
+    pub output: PathBuf,
+
+    /// Byte offset of the FAT volume within the source. By default the source
+    /// is auto-detected (bare volume or MBR partition table).
+    #[arg(long, value_name = "BYTES")]
+    pub offset: Option<u64>,
+
+    /// Ignore deleted files smaller than this many bytes.
+    #[arg(long, value_name = "BYTES", default_value_t = 0)]
+    pub min_size: u32,
 }
 
 #[derive(Parser)]
