@@ -196,13 +196,21 @@ impl Volume {
     }
 
     fn read_block(&self, src: &Source, block: u64) -> Result<Vec<u8>> {
-        let mut buf = vec![0u8; self.block_size as usize];
+        let mut buf = Vec::new();
+        self.read_block_into(src, block, &mut buf)?;
+        Ok(buf)
+    }
+
+    /// Read one block into a reusable buffer (sized to the block, truncated to
+    /// the bytes actually read). Avoids a fresh allocation per call.
+    fn read_block_into(&self, src: &Source, block: u64, buf: &mut Vec<u8>) -> Result<()> {
+        buf.resize(self.block_size as usize, 0);
         let at = self
             .offset
             .saturating_add(block.saturating_mul(self.block_size));
-        let n = src.read_at(at, &mut buf)?;
+        let n = src.read_at(at, buf)?;
         buf.truncate(n);
-        Ok(buf)
+        Ok(())
     }
 
     /// Read a raw inode by 1-based number.
@@ -367,9 +375,12 @@ impl Volume {
 
         let mut ji = first.max(1);
         let mut steps = 0u64;
+        // Reused across the scan; only the descriptor-named data blocks (kept in
+        // the map) are allocated fresh.
+        let mut block = Vec::new();
         while ji < maxlen && (ji as usize) < jblocks.len() && steps < MAX_JOURNAL_BLOCKS {
             steps += 1;
-            let block = self.read_block(src, jblocks[ji as usize])?;
+            self.read_block_into(src, jblocks[ji as usize], &mut block)?;
             if block.len() < 12 || be32(&block, 0) != JBD2_MAGIC {
                 ji += 1;
                 continue;
@@ -522,16 +533,23 @@ impl Volume {
 
         let mut out = Vec::with_capacity(size as usize);
         for b in blocks {
-            if out.len() as u64 >= size {
+            let done = out.len() as u64;
+            if done >= size {
                 break;
             }
-            if b == 0 {
-                // Sparse hole.
-                let take = (size - out.len() as u64).min(self.block_size) as usize;
-                out.resize(out.len() + take, 0);
-            } else {
-                let block = self.read_block(src, b)?;
-                out.extend_from_slice(&block);
+            let take = (size - done).min(self.block_size) as usize;
+            let base = out.len();
+            // Read straight into the output (sparse holes stay zero-filled).
+            out.resize(base + take, 0);
+            if b != 0 {
+                let at = self
+                    .offset
+                    .saturating_add(b.saturating_mul(self.block_size));
+                let n = src.read_at(at, &mut out[base..])?;
+                if n < take {
+                    out.truncate(base + n); // short read at end of source
+                    break;
+                }
             }
         }
         out.truncate(size as usize);
