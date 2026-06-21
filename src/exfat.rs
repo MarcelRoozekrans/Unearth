@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use crate::recover::RecoverStats;
+use crate::recover::{RecoverOptions, RecoverStats};
 use crate::source::Source;
 
 /// A parsed exFAT volume.
@@ -139,26 +139,29 @@ impl Volume {
         &self,
         src: &Source,
         out_dir: &Path,
-        min_size: u64,
+        opts: &RecoverOptions,
     ) -> Result<RecoverStats> {
         let mut deleted = Vec::new();
         self.walk(src, &mut deleted)?;
 
         let mut stats = RecoverStats::default();
         for df in deleted {
-            if df.data_length < min_size {
+            if df.data_length < opts.min_size {
                 continue;
             }
             if !self.valid_extent(&df) {
-                stats.skipped += 1;
+                stats.record_skipped(df.path.clone(), df.data_length);
+                continue;
+            }
+            if opts.dry_run {
+                stats.record_recovered(df.path.clone(), df.data_length);
                 continue;
             }
             match self.write_file(src, out_dir, &df) {
                 Ok(written) if written > 0 || df.data_length == 0 => {
-                    stats.recovered += 1;
-                    stats.bytes_recovered += written;
+                    stats.record_recovered(df.path.clone(), df.data_length)
                 }
-                _ => stats.skipped += 1,
+                _ => stats.record_skipped(df.path.clone(), df.data_length),
             }
         }
         Ok(stats)

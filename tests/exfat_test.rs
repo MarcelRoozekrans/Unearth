@@ -116,7 +116,13 @@ fn recovers_deleted_exfat_file() {
 
     // Recover directly through the exfat backend.
     let vol = exfat::Volume::parse(&source, 0).unwrap();
-    let stats = vol.recover_deleted(&source, &out_dir, 0).unwrap();
+    let stats = vol
+        .recover_deleted(
+            &source,
+            &out_dir,
+            &filerecovery::recover::RecoverOptions::default(),
+        )
+        .unwrap();
     assert_eq!(stats.recovered, 1, "should recover the deleted file");
 
     // Full long name preserved (exFAT loses no characters on delete).
@@ -165,7 +171,13 @@ fn recovers_file_in_subdirectory() {
 
     let source = Source::open(&img_path).unwrap();
     let vol = exfat::Volume::parse(&source, 0).unwrap();
-    let stats = vol.recover_deleted(&source, &out_dir, 0).unwrap();
+    let stats = vol
+        .recover_deleted(
+            &source,
+            &out_dir,
+            &filerecovery::recover::RecoverOptions::default(),
+        )
+        .unwrap();
     assert_eq!(stats.recovered, 1);
 
     let recovered = std::fs::read(out_dir.join("DCIM").join("clip.mov")).unwrap();

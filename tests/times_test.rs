@@ -116,7 +116,13 @@ fn restores_modification_time() {
 
     let source = Source::open(&img_path).unwrap();
     let vol = ext4::Volume::parse(&source, 0).unwrap();
-    let stats = vol.recover_deleted(&source, &out_dir, 0).unwrap();
+    let stats = vol
+        .recover_deleted(
+            &source,
+            &out_dir,
+            &filerecovery::recover::RecoverOptions::default(),
+        )
+        .unwrap();
     assert_eq!(stats.recovered, 1);
 
     let meta = std::fs::metadata(out_dir.join("dated.bin")).unwrap();

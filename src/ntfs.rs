@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use crate::recover::RecoverStats;
+use crate::recover::{RecoverOptions, RecoverStats};
 use crate::source::Source;
 
 /// A list of cluster runs: each is (absolute LCN, or `None` for a sparse run;
@@ -149,7 +149,7 @@ impl Volume {
         &self,
         src: &Source,
         out_dir: &Path,
-        min_size: u64,
+        opts: &RecoverOptions,
     ) -> Result<RecoverStats> {
         let mut stats = RecoverStats::default();
 
@@ -175,18 +175,21 @@ impl Volume {
                 Some(d) => d,
                 None => continue,
             };
-            if data.size < min_size {
+            if data.size < opts.min_size {
                 continue;
             }
 
-            let times = (parsed.mtime, parsed.atime);
             let rel = self.resolve_path(src, parent, &name);
+            if opts.dry_run {
+                stats.record_recovered(rel, data.size);
+                continue;
+            }
+            let times = (parsed.mtime, parsed.atime);
             match self.write_file(src, out_dir, &rel, &data, times) {
                 Ok(written) if written > 0 || data.size == 0 => {
-                    stats.recovered += 1;
-                    stats.bytes_recovered += written;
+                    stats.record_recovered(rel, data.size)
                 }
-                _ => stats.skipped += 1,
+                _ => stats.record_skipped(rel, data.size),
             }
         }
         Ok(stats)

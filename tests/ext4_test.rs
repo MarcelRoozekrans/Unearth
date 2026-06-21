@@ -164,7 +164,13 @@ fn recovers_deleted_ext4_files() {
     assert_eq!(volumes[0].fs_label(), "ext2/3/4");
 
     let vol = ext4::Volume::parse(&source, 0).unwrap();
-    let stats = vol.recover_deleted(&source, &out_dir, 0).unwrap();
+    let stats = vol
+        .recover_deleted(
+            &source,
+            &out_dir,
+            &filerecovery::recover::RecoverOptions::default(),
+        )
+        .unwrap();
     assert_eq!(stats.recovered, 2, "photo.raw and logs/app.log");
 
     assert_eq!(std::fs::read(out_dir.join("photo.raw")).unwrap(), photo);

@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
-use crate::recover::RecoverStats;
+use crate::recover::{RecoverOptions, RecoverStats};
 use crate::source::Source;
 
 const SUPERBLOCK_OFFSET: u64 = 1024;
@@ -183,29 +183,30 @@ impl Volume {
         &self,
         src: &Source,
         out_dir: &Path,
-        min_size: u64,
+        opts: &RecoverOptions,
     ) -> Result<RecoverStats> {
         let mut found: BTreeMap<u32, (PathBuf, u64)> = BTreeMap::new();
         self.walk(src, &mut found)?;
 
         let mut stats = RecoverStats::default();
         for (ino, (rel, size)) in found {
-            if size < min_size {
+            if size < opts.min_size {
+                continue;
+            }
+            if opts.dry_run {
+                stats.record_recovered(rel, size);
                 continue;
             }
             let inode = match self.read_inode(src, ino) {
                 Ok(Some(i)) => i,
                 _ => {
-                    stats.skipped += 1;
+                    stats.record_skipped(rel, size);
                     continue;
                 }
             };
             match self.write_file(src, out_dir, &rel, &inode, size) {
-                Ok(written) if written > 0 => {
-                    stats.recovered += 1;
-                    stats.bytes_recovered += written;
-                }
-                _ => stats.skipped += 1,
+                Ok(written) if written > 0 => stats.record_recovered(rel, size),
+                _ => stats.record_skipped(rel, size),
             }
         }
         Ok(stats)
