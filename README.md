@@ -4,13 +4,13 @@ Recover deleted files from SD cards, USB sticks, hard drives, and disk images.
 
 `filerecovery` offers two complementary recovery strategies:
 
-| Command    | Strategy                  | Restores names? | Works after format? |
-|------------|---------------------------|-----------------|---------------------|
-| `undelete` | Filesystem-aware (FAT)    | **Yes**         | No (needs metadata) |
-| `scan`     | Signature carving         | No              | **Yes**             |
+| Command    | Strategy                     | Restores names? | Works after format? |
+|------------|------------------------------|-----------------|---------------------|
+| `undelete` | Filesystem-aware (FAT/exFAT) | **Yes**         | No (needs metadata) |
+| `scan`     | Signature carving            | No              | **Yes**             |
 
 **Use `undelete` first** if the filesystem is still intact (e.g. you just
-deleted a file): it reads the FAT directory entries that survive deletion and
+deleted a file): it reads the directory entries that survive deletion and
 restores files with their **original names, folder paths, and sizes**. Fall
 back to `scan` (carving) when the filesystem itself is damaged, formatted, or
 its partition table is gone.
@@ -20,18 +20,28 @@ its partition table is gone.
 
 ## How each strategy works
 
-### `undelete` — filesystem-aware recovery (FAT12/16/32)
+### `undelete` — filesystem-aware recovery (FAT12/16/32 and exFAT)
 
-When a file is deleted on FAT, only the first byte of its 32-byte directory
+The filesystem type is auto-detected (bare volume or MBR partition table), and
+both FAT and exFAT are handled by the same `undelete` command.
+
+**FAT.** When a file is deleted, only the first byte of its 32-byte directory
 entry is overwritten (with `0xE5`) and its cluster chain is freed. The entry
 still records the original name (including the VFAT long name), starting
-cluster, and size. `filerecovery` reads those entries, assumes the data was
-stored **contiguously** (the common case for cameras/SD cards), and restores
-each deleted file to its original path. Whole-disk images with an MBR partition
-table are auto-detected, as are bare FAT volumes.
+cluster, and size. One quirk: because that first byte is lost, the leading
+character of a name that had no long-name entry is shown as `_`.
 
-> NTFS, ext4, and exFAT are not yet supported by `undelete` — use `scan` for
-> those.
+**exFAT** (default on SD/SDXC cards over 32 GB and most modern cameras).
+Deletion only clears the *InUse* bit on each directory entry, so the **entire
+name and metadata survive** — nothing is lost. exFAT also records whether a file
+is stored contiguously, which makes contiguous deleted files recover cleanly.
+
+In both cases `filerecovery` reads the surviving directory entries, recovers
+each file under the **contiguous-allocation** assumption (the common case for
+cameras/SD cards; exFAT additionally follows the FAT for files flagged as
+fragmented), and restores them to their original folder paths.
+
+> NTFS and ext4 are not yet supported by `undelete` — use `scan` for those.
 
 ### `scan` — signature-based file carving
 
@@ -76,26 +86,26 @@ cargo build --release
 filerecovery <COMMAND>
 
 Commands:
-  undelete    Recover deleted files from a FAT filesystem (keeps names/paths)
+  undelete    Recover deleted files from FAT/exFAT (keeps names/paths)
   scan        Carve files from a device or image by signature
   list-types  List the file types this build can recover
 ```
 
-### Undelete from a FAT card/image (keeps original names)
+### Undelete from a FAT/exFAT card/image (keeps original names)
 
 ```sh
 filerecovery undelete card.img -o recovered
 sudo filerecovery undelete /dev/mmcblk0 -o recovered   # SD card, needs root
 ```
 
-The FAT volume is auto-detected (bare volume or MBR partition table). Override
-with `--offset <BYTES>` if needed.
+The filesystem and volume are auto-detected (bare FAT/exFAT volume or MBR
+partition table). Override the location with `--offset <BYTES>` if needed.
 
 `undelete` options:
 
 ```text
 -o, --output <DIR>     Where to write recovered files (default: ./recovered)
-    --offset <BYTES>   Byte offset of the FAT volume (default: auto-detect)
+    --offset <BYTES>   Byte offset of the volume (default: auto-detect)
     --min-size <BYTES> Skip deleted files smaller than this
 ```
 
@@ -178,12 +188,13 @@ Common to both strategies:
 - A file is only recoverable while its data blocks have not been **overwritten**;
   partially overwritten files come back partially corrupt.
 
-`undelete` (FAT) specifics:
+`undelete` specifics:
 
-- Only **FAT12/16/32** is supported so far (NTFS, ext4, and exFAT are planned).
+- Supports **FAT12/16/32** and **exFAT** (NTFS and ext4 are planned).
 - File **timestamps** are not yet restored (names, paths, and contents are).
-- If a deleted file had no long name, the first character of its short (8.3)
-  name is lost to the deletion marker and is shown as `_`.
+- FAT only: if a deleted file had no long name, the first character of its short
+  (8.3) name is lost to the deletion marker and is shown as `_`. exFAT preserves
+  the full name.
 
 `scan` (carving) specifics:
 
