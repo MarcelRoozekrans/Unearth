@@ -57,7 +57,7 @@ pub fn carve(
     let max_magic_offset = active.iter().map(|s| s.magic_offset).max().unwrap_or(0);
     // Carry over enough bytes so a magic straddling a chunk boundary is still
     // matched, and so we can subtract magic_offset to find the file start.
-    let overlap = index.max_magic_len + max_magic_offset as usize;
+    let overlap = index.max_lookahead + max_magic_offset as usize;
 
     let scan_end = opts.end.unwrap_or(source.size).min(source.size);
     let scan_start = opts.start.min(scan_end);
@@ -150,6 +150,49 @@ fn file_length(
             hdr.copy_from_slice(&tmp[offset..offset + 4]);
             let size = u32::from_le_bytes(hdr) as u64;
             if size == 0 || file_start + size > limit {
+                return Ok(None);
+            }
+            Ok(Some(size))
+        }
+        Extent::RiffSize => {
+            let mut tmp = [0u8; 8];
+            if source.read_at(file_start, &mut tmp)? < 8 {
+                return Ok(None);
+            }
+            let chunk = u32::from_le_bytes([tmp[4], tmp[5], tmp[6], tmp[7]]) as u64;
+            let size = chunk + 8;
+            if chunk == 0 || file_start + size > limit {
+                return Ok(None);
+            }
+            Ok(Some(size))
+        }
+        Extent::Sqlite => {
+            let mut hdr = [0u8; 32];
+            if source.read_at(file_start, &mut hdr)? < 32 {
+                return Ok(None);
+            }
+            // page_size: big-endian u16 at offset 16; the value 1 means 65536.
+            let raw = u16::from_be_bytes([hdr[16], hdr[17]]) as u64;
+            let page_size = if raw == 1 { 65536 } else { raw };
+            let page_count = u32::from_be_bytes([hdr[28], hdr[29], hdr[30], hdr[31]]) as u64;
+            let size = page_size.checked_mul(page_count).unwrap_or(0);
+            if size == 0 || file_start + size > limit {
+                return Ok(None);
+            }
+            Ok(Some(size))
+        }
+        Extent::SevenZip => {
+            let mut hdr = [0u8; 32];
+            if source.read_at(file_start, &mut hdr)? < 32 {
+                return Ok(None);
+            }
+            let next_off = u64::from_le_bytes(hdr[12..20].try_into().unwrap());
+            let next_size = u64::from_le_bytes(hdr[20..28].try_into().unwrap());
+            let size = 32u64
+                .checked_add(next_off)
+                .and_then(|s| s.checked_add(next_size))
+                .unwrap_or(0);
+            if size <= 32 || file_start + size > limit {
                 return Ok(None);
             }
             Ok(Some(size))

@@ -5,10 +5,13 @@
 //! device, then determining the file's length with one of a few strategies:
 //!
 //! * [`Extent::Footer`] — scan forward for a trailing marker (JPEG, PNG, ...).
-//! * [`Extent::HeaderSizeLe32`] — read a little-endian u32 size field from the
-//!   header itself (BMP).
+//! * [`Extent::HeaderSizeLe32`] — read a little-endian u32 size field (BMP, CAB).
+//! * [`Extent::RiffSize`] — RIFF container size at offset 4, plus the 8-byte
+//!   chunk header (WAV, AVI, WEBP).
+//! * [`Extent::Sqlite`] — page size × page count from the SQLite header.
+//! * [`Extent::SevenZip`] — next-header offset + size from the 7z header.
 //! * [`Extent::Mp4Atoms`] — walk the ISO base-media box/atom structure (MP4,
-//!   MOV, M4A, ...).
+//!   MOV, HEIC, ...).
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -25,7 +28,15 @@ pub enum Extent {
     /// The total file size is stored as a little-endian u32 at `offset` bytes
     /// into the file (relative to the file start).
     HeaderSizeLe32 { offset: usize },
-    /// Parse the ISO base-media (MP4/QuickTime) box structure to sum atoms.
+    /// RIFF container: total size = (little-endian u32 at offset 4) + 8.
+    RiffSize,
+    /// SQLite database: total size = page_size × page_count (big-endian fields
+    /// in the file header).
+    Sqlite,
+    /// 7-Zip archive: total size = 32 + NextHeaderOffset + NextHeaderSize
+    /// (little-endian u64 fields in the signature header).
+    SevenZip,
+    /// Parse the ISO base-media (MP4/QuickTime/HEIF) box structure to sum atoms.
     Mp4Atoms,
 }
 
@@ -39,9 +50,13 @@ pub struct Signature {
     /// Magic bytes that identify the type.
     pub magic: &'static [u8],
     /// Where the magic appears relative to the start of the file. This is `0`
-    /// for most formats but `4` for MP4/MOV where the `ftyp` marker follows a
+    /// for most formats but `4` for MP4/HEIC where the `ftyp` marker follows a
     /// 4-byte box-size field.
     pub magic_offset: u64,
+    /// Optional secondary tag to disambiguate formats that share a magic, given
+    /// as `(offset_from_magic, bytes)`. Used to tell RIFF (WAV/AVI/WEBP) and
+    /// ISO-BMFF brands (HEIC vs MP4) apart.
+    pub secondary: Option<(usize, &'static [u8])>,
     /// Strategy used to compute the file length.
     pub extent: Extent,
     /// Hard cap on carved size; protects against runaway files when an end
@@ -54,12 +69,17 @@ const MB: u64 = 1024 * KB;
 const GB: u64 = 1024 * MB;
 
 /// The built-in signature table.
+///
+/// Order matters where magics overlap: more specific entries (with a
+/// `secondary` tag) must precede the generic fallback for the same magic, so
+/// HEIC is matched before the generic MP4 `ftyp` entry.
 pub static SIGNATURES: &[Signature] = &[
     Signature {
         name: "JPEG image",
         ext: "jpg",
         magic: &[0xFF, 0xD8, 0xFF],
         magic_offset: 0,
+        secondary: None,
         extent: Extent::Footer {
             marker: &[0xFF, 0xD9],
             trailing: 0,
@@ -71,6 +91,7 @@ pub static SIGNATURES: &[Signature] = &[
         ext: "png",
         magic: &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
         magic_offset: 0,
+        secondary: None,
         extent: Extent::Footer {
             // IEND chunk: length(0) + "IEND" + CRC
             marker: &[0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82],
@@ -83,6 +104,7 @@ pub static SIGNATURES: &[Signature] = &[
         ext: "gif",
         magic: b"GIF89a",
         magic_offset: 0,
+        secondary: None,
         extent: Extent::Footer {
             marker: &[0x00, 0x3B],
             trailing: 0,
@@ -94,6 +116,7 @@ pub static SIGNATURES: &[Signature] = &[
         ext: "gif",
         magic: b"GIF87a",
         magic_offset: 0,
+        secondary: None,
         extent: Extent::Footer {
             marker: &[0x00, 0x3B],
             trailing: 0,
@@ -105,6 +128,7 @@ pub static SIGNATURES: &[Signature] = &[
         ext: "bmp",
         magic: b"BM",
         magic_offset: 0,
+        secondary: None,
         // Total file size is a LE u32 at offset 2.
         extent: Extent::HeaderSizeLe32 { offset: 2 },
         max_size: 100 * MB,
@@ -114,6 +138,7 @@ pub static SIGNATURES: &[Signature] = &[
         ext: "pdf",
         magic: b"%PDF",
         magic_offset: 0,
+        secondary: None,
         extent: Extent::Footer {
             marker: b"%%EOF",
             trailing: 2, // allow a trailing CR/LF
@@ -125,6 +150,7 @@ pub static SIGNATURES: &[Signature] = &[
         ext: "zip",
         magic: &[0x50, 0x4B, 0x03, 0x04],
         magic_offset: 0,
+        secondary: None,
         extent: Extent::Footer {
             // End of central directory record.
             marker: &[0x50, 0x4B, 0x05, 0x06],
@@ -133,10 +159,95 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 2 * GB,
     },
     Signature {
+        name: "WAV audio",
+        ext: "wav",
+        magic: b"RIFF",
+        magic_offset: 0,
+        secondary: Some((8, b"WAVE")),
+        extent: Extent::RiffSize,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "AVI video",
+        ext: "avi",
+        magic: b"RIFF",
+        magic_offset: 0,
+        secondary: Some((8, b"AVI ")),
+        extent: Extent::RiffSize,
+        max_size: 4 * GB,
+    },
+    Signature {
+        name: "WebP image",
+        ext: "webp",
+        magic: b"RIFF",
+        magic_offset: 0,
+        secondary: Some((8, b"WEBP")),
+        extent: Extent::RiffSize,
+        max_size: 100 * MB,
+    },
+    Signature {
+        name: "SQLite database",
+        ext: "sqlite",
+        magic: b"SQLite format 3\0",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Sqlite,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "7-Zip archive",
+        ext: "7z",
+        magic: &[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::SevenZip,
+        max_size: 4 * GB,
+    },
+    Signature {
+        name: "Microsoft Cabinet archive",
+        ext: "cab",
+        magic: b"MSCF",
+        magic_offset: 0,
+        secondary: None,
+        // Cabinet size is a LE u32 at offset 8.
+        extent: Extent::HeaderSizeLe32 { offset: 8 },
+        max_size: 2 * GB,
+    },
+    // HEIC/HEIF brands share the `ftyp` magic with MP4, so they must come first
+    // and use a secondary brand tag (at offset 8 in the file => 4 past `ftyp`).
+    Signature {
+        name: "HEIC image",
+        ext: "heic",
+        magic: b"ftyp",
+        magic_offset: 4,
+        secondary: Some((4, b"heic")),
+        extent: Extent::Mp4Atoms,
+        max_size: 100 * MB,
+    },
+    Signature {
+        name: "HEIC image",
+        ext: "heic",
+        magic: b"ftyp",
+        magic_offset: 4,
+        secondary: Some((4, b"heix")),
+        extent: Extent::Mp4Atoms,
+        max_size: 100 * MB,
+    },
+    Signature {
+        name: "HEIF image",
+        ext: "heic",
+        magic: b"ftyp",
+        magic_offset: 4,
+        secondary: Some((4, b"mif1")),
+        extent: Extent::Mp4Atoms,
+        max_size: 100 * MB,
+    },
+    Signature {
         name: "MP4/MOV/M4A media",
         ext: "mp4",
         magic: b"ftyp",
         magic_offset: 4, // preceded by a 4-byte box size
+        secondary: None,
         extent: Extent::Mp4Atoms,
         max_size: 4 * GB,
     },
@@ -150,8 +261,9 @@ pub struct SignatureIndex {
     /// For each possible leading byte, the signatures whose magic starts with
     /// it. Most slots are empty, keeping per-byte work tiny.
     by_first_byte: [Vec<&'static Signature>; 256],
-    /// Largest number of bytes we must look ahead to confirm any magic.
-    pub max_magic_len: usize,
+    /// Largest number of bytes we must inspect from the magic position to
+    /// confirm any magic *and* its secondary tag.
+    pub max_lookahead: usize,
 }
 
 impl SignatureIndex {
@@ -160,24 +272,35 @@ impl SignatureIndex {
         let by_first_byte: [Vec<&'static Signature>; 256] = std::array::from_fn(|_| Vec::new());
         let mut idx = SignatureIndex {
             by_first_byte,
-            max_magic_len: 0,
+            max_lookahead: 0,
         };
         for sig in active {
             let first = sig.magic[0] as usize;
             idx.by_first_byte[first].push(sig);
-            idx.max_magic_len = idx.max_magic_len.max(sig.magic.len());
+            let reach = match sig.secondary {
+                Some((off, tag)) => sig.magic.len().max(off + tag.len()),
+                None => sig.magic.len(),
+            };
+            idx.max_lookahead = idx.max_lookahead.max(reach);
         }
         idx
     }
 
-    /// Return the signature whose magic matches the bytes starting at `window`,
-    /// if any. `window` must begin at the on-disk position of a candidate magic.
+    /// Return the signature whose magic (and secondary tag, if any) matches the
+    /// bytes starting at `window`. `window` must begin at the on-disk position
+    /// of a candidate magic.
     pub fn match_at(&self, window: &[u8]) -> Option<&'static Signature> {
         let first = *window.first()? as usize;
         for sig in &self.by_first_byte[first] {
-            if window.len() >= sig.magic.len() && &window[..sig.magic.len()] == sig.magic {
-                return Some(sig);
+            if window.len() < sig.magic.len() || &window[..sig.magic.len()] != sig.magic {
+                continue;
             }
+            if let Some((off, tag)) = sig.secondary {
+                if window.len() < off + tag.len() || &window[off..off + tag.len()] != tag {
+                    continue;
+                }
+            }
+            return Some(sig);
         }
         None
     }
@@ -197,7 +320,9 @@ pub fn select(types: &[String]) -> anyhow::Result<Vec<&'static Signature>> {
             .filter(|s| s.ext.eq_ignore_ascii_case(t))
             .collect();
         if matches.is_empty() {
-            let known: Vec<&str> = SIGNATURES.iter().map(|s| s.ext).collect();
+            // De-duplicate known extensions for the error message.
+            let mut known: Vec<&str> = SIGNATURES.iter().map(|s| s.ext).collect();
+            known.dedup();
             anyhow::bail!("unknown file type '{t}'. Known types: {}", known.join(", "));
         }
         selected.extend(matches);
