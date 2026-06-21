@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
+use crate::recover::RecoverStats;
 use crate::source::Source;
 
 /// FAT variants, distinguished by cluster count per the Microsoft spec.
@@ -63,14 +64,6 @@ struct DeletedFile {
     path: PathBuf,
     start_cluster: u32,
     size: u32,
-}
-
-/// Outcome of recovering from a single volume.
-#[derive(Default)]
-pub struct FatStats {
-    pub recovered: u64,
-    pub bytes_recovered: u64,
-    pub skipped: u64,
 }
 
 const ENTRY_SIZE: usize = 32;
@@ -129,7 +122,7 @@ pub fn detect_volumes(src: &Source) -> Result<Vec<Volume>> {
 }
 
 /// Heuristic: does this sector look like a FAT volume boot record?
-fn looks_like_fat_vbr(s: &[u8]) -> bool {
+pub(crate) fn looks_like_fat_vbr(s: &[u8]) -> bool {
     let jump_ok = s[0] == 0xEB || s[0] == 0xE9;
     let bps = u16::from_le_bytes([s[11], s[12]]);
     let bps_ok = matches!(bps, 512 | 1024 | 2048 | 4096);
@@ -140,7 +133,7 @@ fn looks_like_fat_vbr(s: &[u8]) -> bool {
     jump_ok && bps_ok && spc_ok && fats_ok
 }
 
-fn is_fat_partition_type(t: u8) -> bool {
+pub(crate) fn is_fat_partition_type(t: u8) -> bool {
     matches!(
         t,
         0x01 | 0x04 | 0x06 | 0x0B | 0x0C | 0x0E // FAT12 / FAT16 / FAT32 (LBA) variants
@@ -275,11 +268,16 @@ impl Volume {
     }
 
     /// Recover all deleted files on this volume into `out_dir`.
-    pub fn recover_deleted(&self, src: &Source, out_dir: &Path, min_size: u32) -> Result<FatStats> {
+    pub fn recover_deleted(
+        &self,
+        src: &Source,
+        out_dir: &Path,
+        min_size: u32,
+    ) -> Result<RecoverStats> {
         let mut deleted = Vec::new();
         self.walk(src, &mut deleted)?;
 
-        let mut stats = FatStats::default();
+        let mut stats = RecoverStats::default();
         let volume_end = self.offset + self.total_sectors as u64 * self.bytes_per_sector as u64;
 
         for df in deleted {
