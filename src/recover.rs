@@ -109,42 +109,30 @@ impl Volume {
     }
 }
 
-/// Detect every FAT/exFAT volume in `src`: a bare volume at offset 0, or the
-/// volumes referenced by an MBR partition table.
+/// Detect every supported volume in `src`: a bare volume at offset 0, or the
+/// volumes referenced by a GPT or legacy MBR partition table.
 pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     let mut sector0 = [0u8; 512];
     if src.read_at(0, &mut sector0)? < 512 {
         bail!("source too small to contain a filesystem");
     }
 
-    // Bare volume: prefer an exact filesystem signature in sector 0.
-    if exfat::is_exfat_vbr(&sector0) {
-        if let Ok(v) = exfat::Volume::parse(src, 0) {
-            return Ok(vec![Volume::Exfat(v)]);
-        }
-    }
-    if ntfs::is_ntfs_vbr(&sector0) {
-        if let Ok(v) = ntfs::Volume::parse(src, 0) {
-            return Ok(vec![Volume::Ntfs(v)]);
-        }
-    }
-    if ext4::is_ext_volume(src, 0) {
-        if let Ok(v) = ext4::Volume::parse(src, 0) {
-            return Ok(vec![Volume::Ext(v)]);
-        }
-    }
-    if fat::looks_like_fat_vbr(&sector0) {
-        if let Ok(v) = fat::Volume::parse(src, 0) {
-            return Ok(vec![Volume::Fat(v)]);
-        }
+    // 1. A bare filesystem placed directly at offset 0 (no partition table).
+    if let Some(v) = try_parse_volume(src, 0)? {
+        return Ok(vec![v]);
     }
 
-    // Otherwise walk an MBR partition table.
+    // 2. A GUID Partition Table (GPT).
+    let gpt = detect_gpt(src)?;
+    if !gpt.is_empty() {
+        return Ok(gpt);
+    }
+
+    // 3. A legacy MBR partition table.
     let mut volumes = Vec::new();
     if sector0[510] == 0x55 && sector0[511] == 0xAA {
         for i in 0..4 {
             let base = 446 + i * 16;
-            let ptype = sector0[base + 4];
             let lba_start = u32::from_le_bytes([
                 sector0[base + 8],
                 sector0[base + 9],
@@ -154,38 +142,8 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
             if lba_start == 0 {
                 continue;
             }
-            let offset = lba_start as u64 * 512;
-
-            // Type 0x07 covers both exFAT and NTFS; the signature check inside
-            // each parser decides which (or neither).
-            if ptype == 0x07 {
-                if let Ok(v) = exfat::Volume::parse(src, offset) {
-                    volumes.push(Volume::Exfat(v));
-                } else if let Ok(v) = ntfs::Volume::parse(src, offset) {
-                    volumes.push(Volume::Ntfs(v));
-                }
-            } else if ptype == 0x83 {
-                // Linux native: ext2/3/4.
-                if let Ok(v) = ext4::Volume::parse(src, offset) {
-                    volumes.push(Volume::Ext(v));
-                }
-            } else if fat::is_fat_partition_type(ptype) {
-                if let Ok(v) = fat::Volume::parse(src, offset) {
-                    volumes.push(Volume::Fat(v));
-                }
-            } else {
-                // Unknown type: try each, signature checks decide.
-                if let Ok(v) = exfat::Volume::parse(src, offset) {
-                    volumes.push(Volume::Exfat(v));
-                } else if let Ok(v) = ntfs::Volume::parse(src, offset) {
-                    volumes.push(Volume::Ntfs(v));
-                } else if ext4::is_ext_volume(src, offset) {
-                    if let Ok(v) = ext4::Volume::parse(src, offset) {
-                        volumes.push(Volume::Ext(v));
-                    }
-                } else if let Ok(v) = fat::Volume::parse(src, offset) {
-                    volumes.push(Volume::Fat(v));
-                }
+            if let Some(v) = try_parse_volume(src, lba_start as u64 * 512)? {
+                volumes.push(v);
             }
         }
     }
@@ -194,6 +152,83 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
         bail!("no FAT, exFAT, NTFS, or ext2/3/4 volume found");
     }
     Ok(volumes)
+}
+
+/// Try to recognise a supported filesystem at `offset`, by signature. Returns
+/// `None` if nothing matches (e.g. an empty or unsupported partition).
+fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
+    let mut boot = [0u8; 512];
+    if src.read_at(offset, &mut boot)? < 512 {
+        return Ok(None);
+    }
+    if exfat::is_exfat_vbr(&boot) {
+        if let Ok(v) = exfat::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Exfat(v)));
+        }
+    }
+    if ntfs::is_ntfs_vbr(&boot) {
+        if let Ok(v) = ntfs::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Ntfs(v)));
+        }
+    }
+    if ext4::is_ext_volume(src, offset) {
+        if let Ok(v) = ext4::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Ext(v)));
+        }
+    }
+    if fat::looks_like_fat_vbr(&boot) {
+        if let Ok(v) = fat::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Fat(v)));
+        }
+    }
+    Ok(None)
+}
+
+/// Detect volumes via a GPT, supporting 512- and 4096-byte logical sectors.
+/// Returns an empty vec when the source is not GPT-partitioned.
+fn detect_gpt(src: &Source) -> Result<Vec<Volume>> {
+    for sector_size in [512u64, 4096] {
+        let mut hdr = [0u8; 92];
+        if src.read_at(sector_size, &mut hdr)? < 92 {
+            continue;
+        }
+        if &hdr[0..8] != b"EFI PART" {
+            continue;
+        }
+        let entry_lba = u64::from_le_bytes(hdr[72..80].try_into().unwrap());
+        let num_entries = u32::from_le_bytes(hdr[80..84].try_into().unwrap()) as u64;
+        let entry_size = u32::from_le_bytes(hdr[84..88].try_into().unwrap()) as u64;
+        if !(128..=4096).contains(&entry_size) {
+            continue;
+        }
+        let num_entries = num_entries.min(1024); // guard against corruption
+        let array_start = match entry_lba.checked_mul(sector_size) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let mut volumes = Vec::new();
+        let mut entry = vec![0u8; entry_size as usize];
+        for i in 0..num_entries {
+            let off = array_start + i * entry_size;
+            if src.read_at(off, &mut entry)? < entry_size as usize {
+                break;
+            }
+            // An all-zero type GUID marks an unused entry.
+            if entry[0..16].iter().all(|&b| b == 0) {
+                continue;
+            }
+            let start_lba = u64::from_le_bytes(entry[32..40].try_into().unwrap());
+            if start_lba == 0 {
+                continue;
+            }
+            if let Some(v) = try_parse_volume(src, start_lba * sector_size)? {
+                volumes.push(v);
+            }
+        }
+        return Ok(volumes);
+    }
+    Ok(vec![])
 }
 
 /// Parse a single volume at an explicit byte offset, trying each backend.
