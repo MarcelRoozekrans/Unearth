@@ -4,10 +4,10 @@ Recover deleted files from SD cards, USB sticks, hard drives, and disk images.
 
 `filerecovery` offers two complementary recovery strategies:
 
-| Command    | Strategy                          | Restores names? | Works after format? |
-|------------|-----------------------------------|-----------------|---------------------|
-| `undelete` | Filesystem-aware (FAT/exFAT/NTFS) | **Yes**         | No (needs metadata) |
-| `scan`     | Signature carving                 | No              | **Yes**             |
+| Command    | Strategy                               | Restores names? | Works after format? |
+|------------|----------------------------------------|-----------------|---------------------|
+| `undelete` | Filesystem-aware (FAT/exFAT/NTFS/ext)  | **Yes**         | No (needs metadata) |
+| `scan`     | Signature carving                      | No              | **Yes**             |
 
 **Use `undelete` first** if the filesystem is still intact (e.g. you just
 deleted a file): it reads the directory entries that survive deletion and
@@ -20,10 +20,10 @@ its partition table is gone.
 
 ## How each strategy works
 
-### `undelete` — filesystem-aware recovery (FAT12/16/32, exFAT, NTFS)
+### `undelete` — filesystem-aware recovery (FAT12/16/32, exFAT, NTFS, ext2/3/4)
 
 The filesystem type is auto-detected (bare volume or MBR partition table), and
-FAT, exFAT, and NTFS are all handled by the same `undelete` command.
+FAT, exFAT, NTFS, and ext2/3/4 are all handled by the same `undelete` command.
 
 **FAT.** When a file is deleted, only the first byte of its 32-byte directory
 entry is overwritten (with `0xE5`) and its cluster chain is freed. The entry
@@ -48,7 +48,15 @@ each file under the **contiguous-allocation** assumption (the common case for
 cameras/SD cards; exFAT additionally follows the FAT for files flagged as
 fragmented), then restores them to their original folder paths.
 
-> ext4 is not yet supported by `undelete` — use `scan` for it.
+**ext2/ext3/ext4** (Linux drives). ext is the trickiest case. On deletion the
+inode's link count is cleared and the directory entry is unlinked by folding its
+space into the previous entry — but the removed entry's **name and inode number**
+usually remain in the directory block's *slack space*, and the inode's **extent
+tree** (or ext2/3 block pointers) often survives. `filerecovery` walks the live
+directory tree, scans that slack for stale entries, and recovers any whose inode
+is now deleted but still has a readable block map. If the extent tree was zeroed
+on deletion (or the inode was reused), the contents can't be found from metadata
+alone — that needs journal recovery, which is out of scope; fall back to `scan`.
 
 ### `scan` — signature-based file carving
 
@@ -93,12 +101,12 @@ cargo build --release
 filerecovery <COMMAND>
 
 Commands:
-  undelete    Recover deleted files from FAT/exFAT/NTFS (keeps names/paths)
+  undelete    Recover deleted files from FAT/exFAT/NTFS/ext (keeps names/paths)
   scan        Carve files from a device or image by signature
   list-types  List the file types this build can recover
 ```
 
-### Undelete from a FAT/exFAT/NTFS card/image (keeps original names)
+### Undelete from a FAT/exFAT/NTFS/ext card/image (keeps original names)
 
 ```sh
 filerecovery undelete card.img -o recovered
@@ -191,20 +199,23 @@ Common to both strategies:
 
 - **Fragmentation:** carving and FAT/exFAT undelete assume a file occupies one
   contiguous run of bytes, so heavily fragmented files may be truncated or have
-  trailing garbage. (NTFS undelete is the exception — it stores explicit cluster
-  runs and reassembles fragmented files.)
+  trailing garbage. (NTFS and ext undelete are the exceptions — they store
+  explicit cluster/extent maps and reassemble fragmented files.)
 - A file is only recoverable while its data blocks have not been **overwritten**;
   partially overwritten files come back partially corrupt.
 
 `undelete` specifics:
 
-- Supports **FAT12/16/32**, **exFAT**, and **NTFS** (ext4 is planned).
+- Supports **FAT12/16/32**, **exFAT**, **NTFS**, and **ext2/3/4**.
 - File **timestamps** are not yet restored (names, paths, and contents are).
 - FAT only: if a deleted file had no long name, the first character of its short
   (8.3) name is lost to the deletion marker and is shown as `_`. exFAT and NTFS
   preserve the full name.
-- NTFS reconstructs fragmented files (it stores explicit cluster runs); FAT and
-  exFAT assume contiguous data, so badly fragmented files may be partial there.
+- NTFS and ext reconstruct fragmented files (explicit cluster/extent maps); FAT
+  and exFAT assume contiguous data, so badly fragmented files may be partial.
+- ext only: if the inode's extent tree was zeroed on deletion, or the inode was
+  reused, contents can't be recovered from metadata — use `scan` (or journal
+  recovery, which this tool does not implement).
 
 `scan` (carving) specifics:
 
