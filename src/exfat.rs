@@ -83,8 +83,10 @@ impl Volume {
         if !(9..=12).contains(&bytes_per_sector_shift) {
             bail!("implausible exFAT bytes-per-sector shift {bytes_per_sector_shift}");
         }
-        if sectors_per_cluster_shift > 25 {
-            bail!("implausible exFAT sectors-per-cluster shift {sectors_per_cluster_shift}");
+        // The spec caps a cluster at 32 MiB: bytes-per-sector + sectors-per-
+        // cluster shifts must total <= 25. This also bounds per-cluster allocs.
+        if bytes_per_sector_shift + sectors_per_cluster_shift > 25 {
+            bail!("implausible exFAT cluster size shift {sectors_per_cluster_shift}");
         }
 
         Ok(Volume {
@@ -104,24 +106,36 @@ impl Volume {
     }
 
     fn volume_end(&self) -> u64 {
-        self.offset + self.volume_length_sectors * self.bytes_per_sector
+        self.offset.saturating_add(
+            self.volume_length_sectors
+                .saturating_mul(self.bytes_per_sector),
+        )
     }
 
     fn max_valid_cluster(&self) -> u32 {
-        self.cluster_count + 1 // clusters are numbered 2..=cluster_count+1
+        self.cluster_count.saturating_add(1) // clusters are numbered 2..=cluster_count+1
     }
 
     /// Absolute byte offset of a data cluster.
     fn cluster_offset(&self, cluster: u32) -> u64 {
-        let sector =
-            self.cluster_heap_offset_sectors + (cluster as u64 - 2) * self.sectors_per_cluster;
-        self.offset + sector * self.bytes_per_sector
+        let sector = self.cluster_heap_offset_sectors.saturating_add(
+            (cluster as u64)
+                .saturating_sub(2)
+                .saturating_mul(self.sectors_per_cluster),
+        );
+        self.offset
+            .saturating_add(sector.saturating_mul(self.bytes_per_sector))
     }
 
     /// Next cluster in the FAT chain, or `None` at end/free/bad/out-of-range.
     fn next_cluster(&self, src: &Source, cluster: u32) -> Result<Option<u32>> {
-        let off =
-            self.offset + self.fat_offset_sectors * self.bytes_per_sector + cluster as u64 * 4;
+        let off = self
+            .offset
+            .saturating_add(
+                self.fat_offset_sectors
+                    .saturating_mul(self.bytes_per_sector),
+            )
+            .saturating_add(cluster as u64 * 4);
         let mut b = [0u8; 4];
         if src.read_at(off, &mut b)? < 4 {
             return Ok(None);
@@ -136,7 +150,8 @@ impl Volume {
 
     /// Total size of the volume in bytes.
     pub fn size(&self) -> u64 {
-        self.volume_length_sectors * self.bytes_per_sector
+        self.volume_length_sectors
+            .saturating_mul(self.bytes_per_sector)
     }
 
     /// Recover all deleted files into `out_dir`.
@@ -179,13 +194,17 @@ impl Volume {
         if df.first_cluster < 2 || df.first_cluster > self.max_valid_cluster() {
             return false;
         }
-        if df.data_length > self.volume_length_sectors * self.bytes_per_sector {
+        if df.data_length
+            > self
+                .volume_length_sectors
+                .saturating_mul(self.bytes_per_sector)
+        {
             return false;
         }
         // For contiguous files the whole extent must fit inside the volume.
         if df.no_fat_chain {
             let start = self.cluster_offset(df.first_cluster);
-            if start + df.data_length > self.volume_end() {
+            if start.saturating_add(df.data_length) > self.volume_end() {
                 return false;
             }
         }

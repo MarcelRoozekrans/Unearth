@@ -103,6 +103,11 @@ impl Volume {
         let inodes_count = u32::from_le_bytes([sb[0], sb[1], sb[2], sb[3]]);
         let blocks_count_lo = u32::from_le_bytes([sb[4], sb[5], sb[6], sb[7]]) as u64;
         let log_block_size = u32::from_le_bytes([sb[0x18], sb[0x19], sb[0x1A], sb[0x1B]]);
+        // ext block size is 1024 << log_block_size; cap it so a corrupt value
+        // cannot overflow the shift or trigger huge allocations (max 64 KiB).
+        if log_block_size > 6 {
+            bail!("implausible ext block size shift {log_block_size}");
+        }
         let block_size = 1024u64 << log_block_size;
         let first_data_block = u32::from_le_bytes([sb[0x14], sb[0x15], sb[0x16], sb[0x17]]) as u64;
         let blocks_per_group = u32::from_le_bytes([sb[0x20], sb[0x21], sb[0x22], sb[0x23]]);
@@ -115,6 +120,11 @@ impl Volume {
                 s
             }
         };
+        // Inode helpers read fields up to offset 0x70 and the inode must fit in
+        // a block; reject sizes outside the spec range.
+        if inode_size < 128 || inode_size > block_size {
+            bail!("implausible ext inode size {inode_size}");
+        }
         let feature_incompat = u32::from_le_bytes([sb[0x60], sb[0x61], sb[0x62], sb[0x63]]);
         let is_64bit = feature_incompat & INCOMPAT_64BIT != 0;
         let desc_size = if is_64bit {
@@ -152,7 +162,9 @@ impl Volume {
         let gdt_block = first_data_block + 1;
         let gdt_start = offset + gdt_block * block_size;
 
-        let mut inode_tables = Vec::with_capacity(group_count as usize);
+        // Reserve conservatively; the loop stops early once reads run past the
+        // source, so a corrupt `group_count` can't drive a huge reservation.
+        let mut inode_tables = Vec::with_capacity((group_count as usize).min(4096));
         for g in 0..group_count {
             let desc_off = gdt_start + g * desc_size;
             let mut d = vec![0u8; desc_size as usize];
@@ -185,7 +197,10 @@ impl Volume {
 
     fn read_block(&self, src: &Source, block: u64) -> Result<Vec<u8>> {
         let mut buf = vec![0u8; self.block_size as usize];
-        let n = src.read_at(self.offset + block * self.block_size, &mut buf)?;
+        let at = self
+            .offset
+            .saturating_add(block.saturating_mul(self.block_size));
+        let n = src.read_at(at, &mut buf)?;
         buf.truncate(n);
         Ok(buf)
     }
@@ -201,7 +216,10 @@ impl Volume {
             Some(&t) => t,
             None => return Ok(None),
         };
-        let off = self.offset + table * self.block_size + index * self.inode_size;
+        let off = self
+            .offset
+            .saturating_add(table.saturating_mul(self.block_size))
+            .saturating_add(index.saturating_mul(self.inode_size));
         let mut buf = vec![0u8; self.inode_size as usize];
         if src.read_at(off, &mut buf)? < self.inode_size as usize {
             return Ok(None);
@@ -211,7 +229,7 @@ impl Volume {
 
     /// Total size of the volume in bytes.
     pub fn size(&self) -> u64 {
-        self.total_blocks * self.block_size
+        self.total_blocks.saturating_mul(self.block_size)
     }
 
     /// Recover all deleted files into `out_dir`.
@@ -230,7 +248,7 @@ impl Volume {
         let journal = self.build_journal_map(src).unwrap_or_default();
 
         let mut stats = RecoverStats::default();
-        let volume_bytes = self.total_blocks * self.block_size;
+        let volume_bytes = self.total_blocks.saturating_mul(self.block_size);
         for (ino, (rel, _hint)) in found {
             // Prefer the live inode if it still has a usable block map; else fall
             // back to a journaled copy that does.
@@ -286,7 +304,9 @@ impl Volume {
         let group = ((ino - 1) / self.inodes_per_group) as usize;
         let index = ((ino - 1) % self.inodes_per_group) as u64;
         let table = *self.inode_tables.get(group)?;
-        let byte = table * self.block_size + index * self.inode_size;
+        let byte = table
+            .saturating_mul(self.block_size)
+            .saturating_add(index.saturating_mul(self.inode_size));
         let fs_block = byte / self.block_size;
         let within = (byte % self.block_size) as usize;
         let copies = journal.get(&fs_block)?;
@@ -488,7 +508,13 @@ impl Volume {
 
     /// Read up to `size` bytes of a file's content from its inode block map.
     fn read_file_data(&self, src: &Source, inode: &[u8], size: u64) -> Result<Vec<u8>> {
-        if size == 0 || size > self.total_blocks * self.block_size {
+        if size == 0 || size > self.total_blocks.saturating_mul(self.block_size) {
+            return Ok(Vec::new());
+        }
+        // A recovered file cannot contain more bytes than the source holds;
+        // clamp so a corrupt size can't drive a huge allocation.
+        let size = size.min(src.size);
+        if size == 0 {
             return Ok(Vec::new());
         }
         let num_blocks = size.div_ceil(self.block_size);
