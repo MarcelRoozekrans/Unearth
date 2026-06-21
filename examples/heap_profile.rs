@@ -79,6 +79,7 @@ fn main() {
         min_size: 0,
         max_files: None,
         allow_nested: false,
+        validate: true,
         progress: false,
     };
 

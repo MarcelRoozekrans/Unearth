@@ -111,6 +111,12 @@ pub struct ScanArgs {
     #[arg(long)]
     pub allow_nested: bool,
 
+    /// Disable structural validation of carved files. By default a candidate
+    /// whose header fails a format check is dropped to cut false positives;
+    /// pass this to keep every signature match.
+    #[arg(long)]
+    pub no_validate: bool,
+
     /// Suppress the progress bar.
     #[arg(short, long)]
     pub quiet: bool,

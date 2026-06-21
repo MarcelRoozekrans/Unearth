@@ -189,6 +189,7 @@ filerecovery scan card.img -o recovered --type jpg --type png
     --min-size <BYTES> Skip carved files smaller than this
     --max-files <N>    Stop after recovering N files
     --allow-nested     Also recover files embedded in other files (e.g. thumbnails)
+    --no-validate      Keep every signature match without structural validation
 -q, --quiet            Hide the progress bar
 ```
 
@@ -229,7 +230,15 @@ header plus one of the existing extent strategies (`Footer`,
    using its signature's strategy — searching forward for a footer, reading a
    size field, or walking the container's box structure. A per-type maximum
    size guards against runaway carves when an end marker is missing.
-3. **Write.** The reconstructed byte range is streamed into a new file in the
+3. **Validate.** Before a file is written, its header is checked against the
+   format's fixed structure (e.g. a JPEG's first marker, a PNG's `IHDR` chunk,
+   a BMP's DIB-header size, SQLite's header constants). A magic that occurred by
+   coincidence in unrelated data almost always fails this check and is dropped,
+   cutting false positives. The check is conservative — a type with no validator,
+   or a file too short to judge, is always kept. Pass `--no-validate` to keep
+   every signature match regardless, and the run reports how many candidates the
+   validation step rejected.
+4. **Write.** The reconstructed byte range is streamed into a new file in the
    output directory, named `<index>_<offset>.<ext>`.
 
 By default, files detected *inside* an already-recovered file (such as a JPEG

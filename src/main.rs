@@ -108,6 +108,7 @@ fn scan(args: ScanArgs) -> Result<()> {
         min_size: args.min_size,
         max_files: args.max_files,
         allow_nested: args.allow_nested,
+        validate: !args.no_validate,
         progress: !args.quiet,
     };
 
@@ -129,6 +130,12 @@ fn scan(args: ScanArgs) -> Result<()> {
         for (ext, count) in &stats.per_type {
             println!("  {:<6} {}", ext, count);
         }
+    }
+    if stats.rejected > 0 {
+        println!(
+            "Rejected {} candidate(s) that failed validation (use --no-validate to keep them).",
+            stats.rejected
+        );
     }
     Ok(())
 }
