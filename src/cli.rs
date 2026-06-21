@@ -117,6 +117,11 @@ pub struct ScanArgs {
     #[arg(long)]
     pub no_validate: bool,
 
+    /// Skip files whose content (SHA-256) was already recovered in this run, so
+    /// identical copies are written only once.
+    #[arg(long)]
+    pub dedup: bool,
+
     /// Suppress the progress bar.
     #[arg(short, long)]
     pub quiet: bool,

@@ -95,6 +95,7 @@ fn recovers_embedded_files() {
         max_files: None,
         allow_nested: false,
         validate: true,
+        dedup: false,
         progress: false,
     };
 
@@ -141,6 +142,7 @@ fn type_filter_limits_recovery() {
         max_files: None,
         allow_nested: false,
         validate: true,
+        dedup: false,
         progress: false,
     };
 

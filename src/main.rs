@@ -109,6 +109,7 @@ fn scan(args: ScanArgs) -> Result<()> {
         max_files: args.max_files,
         allow_nested: args.allow_nested,
         validate: !args.no_validate,
+        dedup: args.dedup,
         progress: !args.quiet,
     };
 
@@ -135,6 +136,12 @@ fn scan(args: ScanArgs) -> Result<()> {
         println!(
             "Rejected {} candidate(s) that failed validation (use --no-validate to keep them).",
             stats.rejected
+        );
+    }
+    if stats.duplicates > 0 {
+        println!(
+            "Skipped {} duplicate(s) with identical content.",
+            stats.duplicates
         );
     }
     Ok(())

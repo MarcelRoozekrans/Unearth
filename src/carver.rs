@@ -6,6 +6,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+use std::collections::HashSet;
+
+use crate::hash::Sha256;
 use crate::signatures::{Extent, Signature, SignatureIndex};
 use crate::source::Source;
 use crate::validate::{self, HEADER_LEN};
@@ -33,6 +36,9 @@ pub struct CarveOptions {
     /// Reject candidates whose header fails a structural check, cutting the
     /// false positives that coincidental magic bytes produce. On by default.
     pub validate: bool,
+    /// Skip writing a file whose content (by SHA-256) was already recovered in
+    /// this run. Off by default.
+    pub dedup: bool,
     /// Report progress to stderr.
     pub progress: bool,
 }
@@ -45,6 +51,8 @@ pub struct CarveStats {
     pub bytes_recovered: u64,
     /// Candidates dropped because their header failed structural validation.
     pub rejected: u64,
+    /// Files dropped by `--dedup` because identical content was already written.
+    pub duplicates: u64,
     /// Recovered-file count per extension.
     pub per_type: std::collections::BTreeMap<&'static str, u64>,
 }
@@ -77,6 +85,8 @@ pub fn carve(
     // Scratch buffers reused across files to avoid per-file allocations.
     let mut footer_buf: Vec<u8> = Vec::new();
     let mut copy_buf: Vec<u8> = Vec::new();
+    // Content digests of files already written, for `--dedup`.
+    let mut seen: HashSet<[u8; 32]> = HashSet::new();
 
     progress.begin(scan_end - scan_start);
 
@@ -120,7 +130,10 @@ pub fn carve(
                                     opts,
                                     &mut stats,
                                     &mut copy_buf,
+                                    &mut seen,
                                 )?;
+                                // A duplicate still occupies this region, so skip
+                                // past it just like a written file.
                                 if !opts.allow_nested {
                                     skip_until = file_start + len;
                                 }
@@ -339,7 +352,10 @@ fn passes_validation(source: &Source, sig: &Signature, file_start: u64, len: u64
     Ok(validate::validate(sig, &hdr[..n]).accept())
 }
 
-/// Stream `len` bytes from the source at `file_start` into a new output file.
+/// Stream `len` bytes from the source at `file_start` into a new output file,
+/// hashing as we go. With `--dedup` set, a file whose content was already
+/// written this run is removed again and counted as a duplicate.
+#[allow(clippy::too_many_arguments)]
 fn write_file(
     source: &Source,
     sig: &Signature,
@@ -348,6 +364,7 @@ fn write_file(
     opts: &CarveOptions,
     stats: &mut CarveStats,
     buf: &mut Vec<u8>,
+    seen: &mut HashSet<[u8; 32]>,
 ) -> Result<()> {
     let name = format!(
         "{:08}_{:#016x}.{}",
@@ -359,6 +376,7 @@ fn write_file(
 
     let mut remaining = len;
     let mut pos = file_start;
+    let mut hasher = Sha256::new();
     // Reused copy buffer, grown to the file size but capped at COPY_CHUNK.
     let buf_len = (len as usize).clamp(1, COPY_CHUNK);
     if buf.len() < buf_len {
@@ -372,10 +390,19 @@ fn write_file(
         }
         out.write_all(&buf[..n])
             .with_context(|| format!("writing {}", path.display()))?;
+        hasher.update(&buf[..n]);
         remaining -= n as u64;
         pos += n as u64;
     }
     out.flush().ok();
+
+    if opts.dedup && !seen.insert(hasher.finalize()) {
+        // Identical content already recovered; discard this copy.
+        drop(out);
+        fs::remove_file(&path).ok();
+        stats.duplicates += 1;
+        return Ok(());
+    }
 
     let written = len - remaining;
     stats.files_recovered += 1;

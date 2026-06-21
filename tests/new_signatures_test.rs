@@ -114,6 +114,7 @@ fn recovers_new_signature_types() {
         max_files: None,
         allow_nested: false,
         validate: true,
+        dedup: false,
         progress: false,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();

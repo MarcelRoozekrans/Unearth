@@ -190,6 +190,7 @@ filerecovery scan card.img -o recovered --type jpg --type png
     --max-files <N>    Stop after recovering N files
     --allow-nested     Also recover files embedded in other files (e.g. thumbnails)
     --no-validate      Keep every signature match without structural validation
+    --dedup            Write identical content (by SHA-256) only once
 -q, --quiet            Hide the progress bar
 ```
 
@@ -244,6 +245,11 @@ header plus one of the existing extent strategies (`Footer`,
 By default, files detected *inside* an already-recovered file (such as a JPEG
 thumbnail embedded in a larger JPEG) are skipped to avoid duplicates; pass
 `--allow-nested` to recover them too.
+
+The same content can also exist at several *separate* places on a device
+(duplicate files, cached copies). Pass `--dedup` to hash each recovered file
+(SHA-256) and write byte-identical content only once; the run reports how many
+duplicate copies were skipped.
 
 ## Limitations
 
