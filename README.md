@@ -191,15 +191,22 @@ filerecovery scan card.img -o recovered --type jpg --type png
 
 ## Supported file types (`scan` / carving)
 
-| Ext  | Type                                              | How the end is found        |
-|------|---------------------------------------------------|-----------------------------|
-| jpg  | JPEG image                                         | footer `FF D9`              |
-| png  | PNG image                                          | `IEND` chunk                |
-| gif  | GIF image (87a/89a)                                | trailer `00 3B`             |
-| bmp  | BMP image                                          | size field in header        |
-| pdf  | PDF document                                       | `%%EOF`                     |
-| zip  | ZIP (also DOCX/XLSX/PPTX/ODT/JAR/APK)              | end-of-central-directory    |
-| mp4  | MP4 / MOV / M4A media                              | ISO box (atom) walk         |
+| Ext    | Type                                            | How the end is found        |
+|--------|-------------------------------------------------|-----------------------------|
+| jpg    | JPEG image                                       | footer `FF D9`              |
+| png    | PNG image                                        | `IEND` chunk                |
+| gif    | GIF image (87a/89a)                              | trailer `00 3B`             |
+| bmp    | BMP image                                        | size field in header        |
+| webp   | WebP image                                       | RIFF size field             |
+| heic   | HEIC / HEIF image                               | ISO box (atom) walk         |
+| pdf    | PDF document                                     | `%%EOF`                     |
+| zip    | ZIP (also DOCX/XLSX/PPTX/ODT/JAR/APK)            | end-of-central-directory    |
+| 7z     | 7-Zip archive                                    | next-header offset + size   |
+| cab    | Microsoft Cabinet archive                       | size field in header        |
+| sqlite | SQLite database                                 | page size × page count      |
+| wav    | WAV audio                                        | RIFF size field             |
+| avi    | AVI video                                        | RIFF size field             |
+| mp4    | MP4 / MOV / M4A media                            | ISO box (atom) walk         |
 
 Run `filerecovery list-types` to see what your build supports.
 
