@@ -65,6 +65,26 @@ Workload: carve (as above) **plus** an NTFS volume with 90 deleted files.
 The ~128 MB difference is exactly the per-record temp buffers that no longer
 exist.
 
+### ext4 read path
+
+A third pass profiled the ext4 backend. Reconstructing a recovered file walked
+its block map and allocated a **fresh `Vec` per block** (`read_block`), copying
+each block into the output — so a 2 MiB file churned ~2,000 short-lived
+allocations. The fix reads each block straight into the output buffer (sparse
+holes stay zero-filled), and the jbd2 journal scan now reuses a single block
+buffer instead of allocating one per journal block.
+
+Workload: carve (as above) plus an ext4 volume with a 2 MiB deleted file.
+
+| Metric                | Before  | After  | Change        |
+|-----------------------|---------|--------|---------------|
+| Total bytes allocated | 78.7 MB | 76.6 MB| ~2 MB less    |
+| Allocation blocks     | 6,883   | 4,834  | ~2,000 fewer  |
+| ext undelete time     | 11.2 ms | 3.2 ms | ~3.5× faster  |
+
+The byte saving is one avoided copy of the file; the bigger win is eliminating
+the per-block allocation traffic, which is what drives the ~3.5× speedup.
+
 ## Tips
 
 - Profile in the `profiling` profile (release optimizations + line info) so the
