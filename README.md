@@ -56,9 +56,12 @@ space into the previous entry — but the removed entry's **name and inode numbe
 usually remain in the directory block's *slack space*, and the inode's **extent
 tree** (or ext2/3 block pointers) often survives. `filerecovery` walks the live
 directory tree, scans that slack for stale entries, and recovers any whose inode
-is now deleted but still has a readable block map. If the extent tree was zeroed
-on deletion (or the inode was reused), the contents can't be found from metadata
-alone — that needs journal recovery, which is out of scope; fall back to `scan`.
+is now deleted but still has a readable block map. When ext4 has *zeroed* the
+live inode's extent tree on deletion, it scans the filesystem **journal
+(jbd2)** for an older copy of the inode-table block — which usually still has
+the extents — and recovers from that. Only when neither the live inode nor any
+journaled copy has an intact block map (the journal wrapped, or the inode was
+reused) is the file unrecoverable by metadata; fall back to `scan`.
 
 ### `scan` — signature-based file carving
 
@@ -256,9 +259,10 @@ Common to both strategies:
   preserve the full name.
 - NTFS and ext reconstruct fragmented files (explicit cluster/extent maps); FAT
   and exFAT assume contiguous data, so badly fragmented files may be partial.
-- ext only: if the inode's extent tree was zeroed on deletion, or the inode was
-  reused, contents can't be recovered from metadata — use `scan` (or journal
-  recovery, which this tool does not implement).
+- ext only: when ext4 zeroes the live inode's extents on deletion, recovery
+  falls back to an older inode-table copy in the **journal (jbd2)**. If the
+  journal has wrapped past it (or the inode was reused), the file is
+  unrecoverable by metadata — use `scan`.
 
 `scan` (carving) specifics:
 
