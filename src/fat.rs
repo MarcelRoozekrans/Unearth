@@ -325,7 +325,9 @@ impl Volume {
 
         let mut remaining = df.size as u64;
         let mut pos = self.cluster_offset(df.start_cluster);
-        let mut buf = vec![0u8; 1024 * 1024];
+        // Size the copy buffer to the file, capped at 1 MiB.
+        let buf_len = (df.size as usize).clamp(1, 1024 * 1024);
+        let mut buf = vec![0u8; buf_len];
         while remaining > 0 {
             let want = (remaining as usize).min(buf.len());
             let n = src.read_at(pos, &mut buf[..want])?;
