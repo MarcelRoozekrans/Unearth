@@ -80,33 +80,44 @@ impl Volume {
         let sectors_per_cluster = if spc_raw <= 0x80 {
             spc_raw as u64
         } else {
-            1u64 << (256 - spc_raw as u32)
+            // Values above 0x80 encode a negative power of two; the exponent
+            // must stay well within a u64 to be plausible.
+            let exp = 256 - spc_raw as u32;
+            if exp >= 32 {
+                bail!("implausible NTFS sectors-per-cluster shift {exp}");
+            }
+            1u64 << exp
         };
         if bytes_per_sector == 0 || sectors_per_cluster == 0 {
             bail!("invalid NTFS BPB (zero sector/cluster size)");
         }
-        let cluster_size = bytes_per_sector * sectors_per_cluster;
+        let cluster_size = bytes_per_sector.saturating_mul(sectors_per_cluster);
 
         let total_sectors = u64::from_le_bytes([
             boot[40], boot[41], boot[42], boot[43], boot[44], boot[45], boot[46], boot[47],
         ]);
-        let volume_size = total_sectors * bytes_per_sector;
+        let volume_size = total_sectors.saturating_mul(bytes_per_sector);
 
         let mft_cluster = u64::from_le_bytes([
             boot[48], boot[49], boot[50], boot[51], boot[52], boot[53], boot[54], boot[55],
         ]);
         let clusters_per_record = boot[64] as i8;
         let record_size = if clusters_per_record >= 0 {
-            clusters_per_record as u64 * cluster_size
+            (clusters_per_record as u64).saturating_mul(cluster_size)
         } else {
-            1u64 << (-clusters_per_record) as u32
+            let exp = (-clusters_per_record) as u32;
+            if exp >= 32 {
+                bail!("implausible NTFS record-size shift {exp}");
+            }
+            1u64 << exp
         };
-        if record_size < 42 {
+        // Bound the record size so a corrupt value cannot trigger a huge alloc.
+        if !(42..=(1 << 20)).contains(&record_size) {
             bail!("implausible NTFS record size {record_size}");
         }
 
         // Read MFT record 0 ($MFT) to learn the MFT's own extent.
-        let mft_start = offset + mft_cluster * cluster_size;
+        let mft_start = offset.saturating_add(mft_cluster.saturating_mul(cluster_size));
         let mut rec0 = vec![0u8; record_size as usize];
         if src.read_at(mft_start, &mut rec0)? < record_size as usize {
             bail!("could not read $MFT record 0");
@@ -237,7 +248,7 @@ impl Volume {
                     if remaining == 0 {
                         break;
                     }
-                    let run_bytes = count * self.cluster_size;
+                    let run_bytes = count.saturating_mul(self.cluster_size);
                     let take = run_bytes.min(remaining);
                     match lcn {
                         None => {
@@ -253,7 +264,9 @@ impl Volume {
                             }
                         }
                         Some(l) if l >= 0 => {
-                            let mut pos = self.offset + l as u64 * self.cluster_size;
+                            let mut pos = self
+                                .offset
+                                .saturating_add((l as u64).saturating_mul(self.cluster_size));
                             let mut left = take;
                             while left > 0 {
                                 let want = (left as usize).min(buf.len());
@@ -333,6 +346,9 @@ enum DataKind {
 
 /// Parse the attributes of an MFT record we want to recover.
 fn parse_record(rec: &[u8]) -> Option<ParsedRecord> {
+    if rec.len() < 24 {
+        return None;
+    }
     let first_attr = u16::from_le_bytes([rec[20], rec[21]]) as usize;
     let mut offset = first_attr;
     let mut best_name: Option<(String, u64, u8)> = None; // (name, parent, namespace)
@@ -340,7 +356,8 @@ fn parse_record(rec: &[u8]) -> Option<ParsedRecord> {
     let mut mtime = None;
     let mut atime = None;
 
-    while offset + 8 <= rec.len() {
+    // Need at least the 16-byte fixed attribute header to read safely.
+    while offset + 16 <= rec.len() {
         let attr_type = u32::from_le_bytes([
             rec[offset],
             rec[offset + 1],
@@ -356,13 +373,13 @@ fn parse_record(rec: &[u8]) -> Option<ParsedRecord> {
             rec[offset + 6],
             rec[offset + 7],
         ]) as usize;
-        if attr_len < 8 || offset + attr_len > rec.len() {
+        if attr_len < 16 || offset + attr_len > rec.len() {
             break;
         }
         let non_resident = rec[offset + 8] != 0;
         let name_length = rec[offset + 9] as usize;
 
-        if attr_type == ATTR_STANDARD_INFO && !non_resident {
+        if attr_type == ATTR_STANDARD_INFO && !non_resident && attr_len >= 22 {
             // $STANDARD_INFORMATION holds the authoritative timestamps.
             let content_off = u16::from_le_bytes([rec[offset + 20], rec[offset + 21]]) as usize;
             let base = offset + content_off;
@@ -413,6 +430,10 @@ fn parse_record(rec: &[u8]) -> Option<ParsedRecord> {
 
 /// Parse a resident `$FILE_NAME` attribute into (name, parent ref, namespace).
 fn parse_file_name(attr: &[u8]) -> Option<(String, u64, u8)> {
+    // Resident attribute header is 24 bytes; need its content length/offset.
+    if attr.len() < 24 {
+        return None;
+    }
     let content_len = u32::from_le_bytes([attr[16], attr[17], attr[18], attr[19]]) as usize;
     let content_off = u16::from_le_bytes([attr[20], attr[21]]) as usize;
     if content_off + content_len > attr.len() || content_len < 0x42 {
@@ -441,6 +462,10 @@ fn parse_file_name(attr: &[u8]) -> Option<(String, u64, u8)> {
 /// Parse a `$DATA` attribute (resident content or non-resident runs).
 fn parse_data(attr: &[u8], non_resident: bool) -> Option<DataAttr> {
     if !non_resident {
+        // Resident attribute header is 24 bytes.
+        if attr.len() < 24 {
+            return None;
+        }
         let content_len = u32::from_le_bytes([attr[16], attr[17], attr[18], attr[19]]) as usize;
         let content_off = u16::from_le_bytes([attr[20], attr[21]]) as usize;
         if content_off + content_len > attr.len() {
@@ -451,6 +476,11 @@ fn parse_data(attr: &[u8], non_resident: bool) -> Option<DataAttr> {
             kind: DataKind::Resident(attr[content_off..content_off + content_len].to_vec()),
         })
     } else {
+        // Non-resident header runs to offset 64 (run list offset @32, real
+        // size @48).
+        if attr.len() < 56 {
+            return None;
+        }
         let run_offset = u16::from_le_bytes([attr[32], attr[33]]) as usize;
         let real_size = u64::from_le_bytes([
             attr[48], attr[49], attr[50], attr[51], attr[52], attr[53], attr[54], attr[55],
@@ -548,7 +578,9 @@ fn read_runs_range(
         match lcn {
             None => out.resize(out.len() + take as usize, 0), // sparse
             Some(l) if l >= 0 => {
-                let mut pos = vol_offset + l as u64 * cluster_size + skip;
+                let mut pos = vol_offset
+                    .saturating_add((l as u64).saturating_mul(cluster_size))
+                    .saturating_add(skip);
                 let mut left = take;
                 let mut buf = vec![0u8; 1024 * 1024];
                 while left > 0 {
