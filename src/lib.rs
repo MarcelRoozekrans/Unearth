@@ -32,6 +32,7 @@
 //!     max_files: None,
 //!     allow_nested: false,
 //!     validate: true,
+//!     dedup: false,
 //!     progress: false,
 //! };
 //! let stats = carver::carve(&src, &sigs, &opts, &carver::NoProgress).unwrap();
@@ -42,6 +43,7 @@ pub mod carver;
 pub mod exfat;
 pub mod ext4;
 pub mod fat;
+pub mod hash;
 pub mod ntfs;
 pub mod recover;
 pub mod signatures;

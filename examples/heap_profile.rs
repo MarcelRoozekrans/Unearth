@@ -80,6 +80,7 @@ fn main() {
         max_files: None,
         allow_nested: false,
         validate: true,
+        dedup: false,
         progress: false,
     };
 

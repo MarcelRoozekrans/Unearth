@@ -51,6 +51,7 @@ fn carve(img: &[u8], validate: bool) -> carver::CarveStats {
         max_files: None,
         allow_nested: false,
         validate,
+        dedup: false,
         progress: false,
     };
     carver::carve(&source, &sigs, &opts, &NoProgress).unwrap()
