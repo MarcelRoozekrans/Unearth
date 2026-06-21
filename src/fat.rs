@@ -64,6 +64,8 @@ struct DeletedFile {
     path: PathBuf,
     start_cluster: u32,
     size: u32,
+    mtime: Option<std::time::SystemTime>,
+    atime: Option<std::time::SystemTime>,
 }
 
 const ENTRY_SIZE: usize = 32;
@@ -329,6 +331,7 @@ impl Volume {
             pos += n as u64;
         }
         out.flush().ok();
+        crate::times::apply(&out, df.mtime, df.atime);
         Ok(df.size as u64 - remaining)
     }
 
@@ -363,6 +366,8 @@ impl Volume {
                         path: path.join(sanitize_component(&entry.name)),
                         start_cluster: entry.start_cluster,
                         size: entry.size,
+                        mtime: entry.mtime,
+                        atime: entry.atime,
                     });
                 }
             }
@@ -436,6 +441,8 @@ struct ParsedEntry {
     is_dir: bool,
     start_cluster: u32,
     size: u32,
+    mtime: Option<std::time::SystemTime>,
+    atime: Option<std::time::SystemTime>,
 }
 
 /// Parse a directory's raw bytes into entries, merging LFN runs into the
@@ -483,12 +490,21 @@ fn parse_entries(bytes: &[u8]) -> Vec<ParsedEntry> {
         let start_cluster = (hi << 16) | lo;
         let size = u32::from_le_bytes([slot[28], slot[29], slot[30], slot[31]]);
 
+        // Write date/time and last-access date from the directory entry.
+        let write_time = u16::from_le_bytes([slot[22], slot[23]]);
+        let write_date = u16::from_le_bytes([slot[24], slot[25]]);
+        let access_date = u16::from_le_bytes([slot[18], slot[19]]);
+        let mtime = crate::times::from_dos(write_date, write_time);
+        let atime = crate::times::from_dos(access_date, 0);
+
         entries.push(ParsedEntry {
             name,
             deleted,
             is_dir,
             start_cluster,
             size,
+            mtime,
+            atime,
         });
     }
     entries

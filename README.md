@@ -11,7 +11,8 @@ Recover deleted files from SD cards, USB sticks, hard drives, and disk images.
 
 **Use `undelete` first** if the filesystem is still intact (e.g. you just
 deleted a file): it reads the directory entries that survive deletion and
-restores files with their **original names, folder paths, and sizes**. Fall
+restores files with their **original names, folder paths, sizes, and
+timestamps**. Fall
 back to `scan` (carving) when the filesystem itself is damaged, formatted, or
 its partition table is gone.
 
@@ -207,7 +208,10 @@ Common to both strategies:
 `undelete` specifics:
 
 - Supports **FAT12/16/32**, **exFAT**, **NTFS**, and **ext2/3/4**.
-- File **timestamps** are not yet restored (names, paths, and contents are).
+- Recovered files keep their original **modification and access times**. (FAT and
+  exFAT store these in local time with no recorded zone, so they are treated as
+  UTC — the date is exact but the wall-clock time may be off by your local
+  offset. NTFS and ext store UTC, restored exactly.)
 - FAT only: if a deleted file had no long name, the first character of its short
   (8.3) name is lost to the deletion marker and is shown as `_`. exFAT and NTFS
   preserve the full name.

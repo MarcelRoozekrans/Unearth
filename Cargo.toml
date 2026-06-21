@@ -2,7 +2,7 @@
 name = "filerecovery"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.74"
+rust-version = "1.75"
 description = "Recover deleted files from SD cards, hard drives, and disk images by signature-based file carving."
 license = "MIT"
 repository = "https://github.com/MarcelRoozekrans/FileRecovery"

@@ -208,6 +208,7 @@ impl Volume {
             }
         };
         out.flush().ok();
+        crate::times::apply(&out, df.mtime, df.atime);
         Ok(written)
     }
 
@@ -298,6 +299,8 @@ impl Volume {
                         first_cluster: item.first_cluster,
                         data_length: item.data_length,
                         no_fat_chain: item.no_fat_chain,
+                        mtime: item.mtime,
+                        atime: item.atime,
                     });
                 }
             }
@@ -371,6 +374,8 @@ struct DeletedFile {
     first_cluster: u32,
     data_length: u64,
     no_fat_chain: bool,
+    mtime: Option<std::time::SystemTime>,
+    atime: Option<std::time::SystemTime>,
 }
 
 /// A parsed file/dir entry set.
@@ -381,6 +386,8 @@ struct Item {
     first_cluster: u32,
     data_length: u64,
     no_fat_chain: bool,
+    mtime: Option<std::time::SystemTime>,
+    atime: Option<std::time::SystemTime>,
 }
 
 /// Parse a directory's bytes into file/directory entry sets.
@@ -402,6 +409,10 @@ fn parse_entry_sets(bytes: &[u8]) -> Vec<Item> {
         let secondary_count = e[1] as usize;
         let attrs = u16::from_le_bytes([e[4], e[5]]);
         let is_dir = attrs & ATTR_DIRECTORY != 0;
+        // Timestamps live in the primary File entry (modified at 0x0C, accessed
+        // at 0x10), packed in the DOS-style exFAT format.
+        let mtime = crate::times::from_exfat(u32::from_le_bytes([e[12], e[13], e[14], e[15]]));
+        let atime = crate::times::from_exfat(u32::from_le_bytes([e[16], e[17], e[18], e[19]]));
 
         // The set is this entry plus `secondary_count` following entries.
         if secondary_count == 0 || i + secondary_count >= total {
@@ -444,6 +455,8 @@ fn parse_entry_sets(bytes: &[u8]) -> Vec<Item> {
                 first_cluster,
                 data_length,
                 no_fat_chain,
+                mtime,
+                atime,
             });
         }
         i += 1 + secondary_count;
