@@ -1,0 +1,150 @@
+//! End-to-end CLI tests: run the built `filerecovery` binary and check exit
+//! codes, output, and side effects on the filesystem.
+
+mod common;
+
+use std::path::Path;
+use std::process::{Command, Output};
+
+fn bin() -> &'static str {
+    env!("CARGO_BIN_EXE_filerecovery")
+}
+
+fn run(args: &[&str]) -> Output {
+    Command::new(bin())
+        .args(args)
+        .output()
+        .expect("failed to run filerecovery")
+}
+
+#[test]
+fn list_types_succeeds() {
+    let out = run(&["list-types"]);
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("jpg"));
+    assert!(stdout.contains("sqlite"));
+}
+
+#[test]
+fn unknown_type_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("x.img");
+    std::fs::write(&img, vec![0u8; 1024]).unwrap();
+    let out = run(&[
+        "scan",
+        img.to_str().unwrap(),
+        "--type",
+        "xyz",
+        "-o",
+        tmp.path().join("out").to_str().unwrap(),
+    ]);
+    assert!(!out.status.success(), "unknown type should fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("unknown file type"), "stderr: {stderr}");
+}
+
+#[test]
+fn missing_source_fails() {
+    let out = run(&["scan", "/no/such/path.img", "-o", "/tmp/whatever"]);
+    assert!(!out.status.success());
+}
+
+#[test]
+fn info_reports_no_volume_on_garbage() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("garbage.img");
+    std::fs::write(&img, vec![0u8; 4096]).unwrap();
+    let out = run(&["info", img.to_str().unwrap()]);
+    // `info` exits 0 even when nothing is found, printing a message.
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("No supported volumes"), "stdout: {stdout}");
+}
+
+#[test]
+fn scan_recovers_embedded_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+
+    let jpeg = common::jpeg(&vec![0x41u8; 2000]);
+    let mut data = vec![0u8; 1000];
+    data.extend_from_slice(&jpeg);
+    data.extend_from_slice(&vec![0u8; 1000]);
+    std::fs::write(&img, &data).unwrap();
+
+    let out = run(&[
+        "scan",
+        img.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "-q",
+    ]);
+    assert!(out.status.success());
+    let recovered: Vec<_> = std::fs::read_dir(&out_dir).unwrap().collect();
+    assert_eq!(recovered.len(), 1, "should carve one jpeg");
+}
+
+#[test]
+fn undelete_dry_run_with_report_writes_no_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("ext.img");
+    let out_dir = tmp.path().join("out");
+    let report = tmp.path().join("report.csv");
+
+    std::fs::write(&img, common::ext_volume("notes.txt", b"hello world")).unwrap();
+
+    let out = run(&[
+        "undelete",
+        img.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--dry-run",
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert!(out.status.success());
+
+    // Dry run writes a report but no recovered files / output dir.
+    assert!(
+        !Path::new(&out_dir).exists(),
+        "dry run must not create output"
+    );
+    let csv = std::fs::read_to_string(&report).unwrap();
+    assert!(csv.contains("filesystem,volume_offset,path,size,recovered"));
+    assert!(csv.contains("notes.txt"));
+}
+
+#[test]
+fn undelete_offset_override_recovers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+
+    // Place an ext volume 1 MiB into the image; auto-detect won't find it, but
+    // an explicit --offset will.
+    let vol = common::ext_volume("data.bin", b"recover me via offset");
+    let off = 1024 * 1024usize;
+    let mut disk = vec![0u8; off + vol.len()];
+    disk[off..off + vol.len()].copy_from_slice(&vol);
+    std::fs::write(&img, &disk).unwrap();
+
+    let out = run(&[
+        "undelete",
+        img.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--offset",
+        &off.to_string(),
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        std::fs::read(out_dir.join("data.bin")).unwrap(),
+        b"recover me via offset"
+    );
+}
