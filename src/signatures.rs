@@ -329,3 +329,53 @@ pub fn select(types: &[String]) -> anyhow::Result<Vec<&'static Signature>> {
     }
     Ok(selected)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn index() -> SignatureIndex {
+        let all = select(&[]).unwrap();
+        SignatureIndex::build(&all)
+    }
+
+    fn ext_of(window: &[u8]) -> Option<&'static str> {
+        index().match_at(window).map(|s| s.ext)
+    }
+
+    #[test]
+    fn riff_secondary_tag_disambiguates() {
+        assert_eq!(ext_of(b"RIFF\0\0\0\0WAVE"), Some("wav"));
+        assert_eq!(ext_of(b"RIFF\0\0\0\0AVI "), Some("avi"));
+        assert_eq!(ext_of(b"RIFF\0\0\0\0WEBP"), Some("webp"));
+        // An unknown RIFF form type matches nothing (no generic fallback).
+        assert_eq!(ext_of(b"RIFF\0\0\0\0JUNK"), None);
+    }
+
+    #[test]
+    fn ftyp_brand_picks_heic_over_mp4() {
+        // The window starts at the `ftyp` magic; the brand is 4 bytes later.
+        assert_eq!(ext_of(b"ftypheic"), Some("heic"));
+        assert_eq!(ext_of(b"ftypmif1"), Some("heic"));
+        // A non-HEIF brand falls through to the generic MP4 entry.
+        assert_eq!(ext_of(b"ftypqt  "), Some("mp4"));
+    }
+
+    #[test]
+    fn plain_magics_match() {
+        assert_eq!(ext_of(&[0xFF, 0xD8, 0xFF, 0x00]), Some("jpg"));
+        assert_eq!(ext_of(b"SQLite format 3\0"), Some("sqlite"));
+        assert_eq!(ext_of(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]), Some("7z"));
+        assert_eq!(ext_of(b"not a magic"), None);
+    }
+
+    #[test]
+    fn select_filters_and_rejects() {
+        assert_eq!(select(&["jpg".to_string()]).unwrap().len(), 1);
+        // "gif" maps to two entries (87a and 89a).
+        assert_eq!(select(&["gif".to_string()]).unwrap().len(), 2);
+        assert!(select(&["all".to_string()]).unwrap().len() >= 13);
+        let err = select(&["nope".to_string()]).unwrap_err().to_string();
+        assert!(err.contains("unknown file type"));
+    }
+}

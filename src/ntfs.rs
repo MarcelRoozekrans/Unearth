@@ -668,3 +668,56 @@ fn unique_path(out_dir: &Path, rel: &Path) -> PathBuf {
     }
     unreachable!()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_runs_basic() {
+        // header 0x11: 1 length byte, 1 offset byte. len=5, lcn=+10.
+        let runs = decode_data_runs(&[0x11, 0x05, 0x0A, 0x00]);
+        assert_eq!(runs, vec![(Some(10), 5)]);
+    }
+
+    #[test]
+    fn decode_runs_sparse() {
+        // header 0x01: 1 length byte, 0 offset bytes => sparse (hole).
+        let runs = decode_data_runs(&[0x01, 0x03, 0x00]);
+        assert_eq!(runs, vec![(None, 3)]);
+    }
+
+    #[test]
+    fn decode_runs_negative_delta() {
+        // Second run's offset 0xFF sign-extends to -1 (relative to the first).
+        let runs = decode_data_runs(&[0x11, 0x04, 0x0A, 0x11, 0x02, 0xFF, 0x00]);
+        assert_eq!(runs, vec![(Some(10), 4), (Some(9), 2)]);
+    }
+
+    #[test]
+    fn decode_runs_multibyte_length() {
+        // header 0x12: 2 length bytes, 1 offset byte. len=0x0100=256, lcn=10.
+        let runs = decode_data_runs(&[0x12, 0x00, 0x01, 0x0A, 0x00]);
+        assert_eq!(runs, vec![(Some(10), 256)]);
+    }
+
+    #[test]
+    fn fixup_restores_sector_tails() {
+        let mut rec = vec![0u8; 1024];
+        rec[4..6].copy_from_slice(&48u16.to_le_bytes()); // USA offset
+        rec[6..8].copy_from_slice(&3u16.to_le_bytes()); // USA count (1 + 2 sectors)
+        rec[50] = 0xAA; // USA[1]
+        rec[51] = 0xBB;
+        rec[52] = 0xCC; // USA[2]
+        rec[53] = 0xDD;
+        // The sector tails currently hold the (stale) sequence number.
+        rec[510] = 0x01;
+        rec[511] = 0x02;
+        rec[1022] = 0x01;
+        rec[1023] = 0x02;
+
+        apply_fixup(&mut rec, 512);
+        assert_eq!(&rec[510..512], &[0xAA, 0xBB]);
+        assert_eq!(&rec[1022..1024], &[0xCC, 0xDD]);
+    }
+}

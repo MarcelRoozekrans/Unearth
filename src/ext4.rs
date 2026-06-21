@@ -851,3 +851,95 @@ fn unique_path(out_dir: &Path, rel: &Path) -> PathBuf {
     }
     unreachable!()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn be_u32(v: &mut Vec<u8>, n: u32) {
+        v.extend_from_slice(&n.to_be_bytes());
+    }
+    fn be_u16(v: &mut Vec<u8>, n: u16) {
+        v.extend_from_slice(&n.to_be_bytes());
+    }
+
+    #[test]
+    fn round8_rounds_up() {
+        assert_eq!(round8(0), 0);
+        assert_eq!(round8(1), 8);
+        assert_eq!(round8(8), 8);
+        assert_eq!(round8(9), 16);
+    }
+
+    #[test]
+    fn be32_reads_big_endian() {
+        assert_eq!(be32(&[0x00, 0x00, 0x00, 0x06], 0), 6);
+        assert_eq!(be32(&[0x12, 0x34], 0), 0); // too short -> 0
+    }
+
+    #[test]
+    fn blockmap_detection() {
+        let mut inode = vec![0u8; 128];
+        // EXTENTS flag set but no extent magic => unusable.
+        inode[0x20..0x24].copy_from_slice(&FLAG_EXTENTS.to_le_bytes());
+        assert!(!inode_has_blockmap(&inode));
+        // ...with the extent magic => usable.
+        inode[0x28..0x2A].copy_from_slice(&EXTENT_MAGIC.to_le_bytes());
+        assert!(inode_has_blockmap(&inode));
+
+        // Indirect (no extents) with a non-zero block pointer => usable.
+        let mut indirect = vec![0u8; 128];
+        indirect[0x28] = 1;
+        assert!(inode_has_blockmap(&indirect));
+
+        // Fully zeroed => unusable.
+        assert!(!inode_has_blockmap(&[0u8; 128]));
+    }
+
+    #[test]
+    fn journal_tags_basic() {
+        let mut b = vec![0u8; 12]; // journal block header
+        be_u32(&mut b, 6); // t_blocknr
+        be_u16(&mut b, 0); // t_checksum
+        be_u16(&mut b, 0x0008); // t_flags = LAST_TAG
+        b.extend_from_slice(&[0u8; 16]); // UUID (no SAME_UUID)
+        assert_eq!(parse_journal_tags(&b, false, false), vec![6]);
+    }
+
+    #[test]
+    fn journal_tags_64bit() {
+        let mut b = vec![0u8; 12];
+        be_u32(&mut b, 6); // blocknr low
+        be_u16(&mut b, 0);
+        be_u16(&mut b, 0x0008); // LAST_TAG
+        be_u32(&mut b, 0); // blocknr high
+        b.extend_from_slice(&[0u8; 16]);
+        assert_eq!(parse_journal_tags(&b, false, true), vec![6]);
+    }
+
+    #[test]
+    fn journal_tags_csum_v3() {
+        let mut b = vec![0u8; 12];
+        be_u32(&mut b, 6); // blocknr
+        be_u32(&mut b, 0x0000_0008); // flags = LAST_TAG
+        be_u32(&mut b, 0); // blocknr high
+        be_u32(&mut b, 0); // checksum
+        b.extend_from_slice(&[0u8; 16]); // UUID
+        assert_eq!(parse_journal_tags(&b, true, false), vec![6]);
+    }
+
+    #[test]
+    fn journal_tags_same_uuid_chain() {
+        let mut b = vec![0u8; 12];
+        // First tag: SAME_UUID set (no trailing UUID), not last.
+        be_u32(&mut b, 6);
+        be_u16(&mut b, 0);
+        be_u16(&mut b, 0x0002); // SAME_UUID
+                                // Second tag: LAST_TAG, no SAME_UUID => trailing UUID.
+        be_u32(&mut b, 7);
+        be_u16(&mut b, 0);
+        be_u16(&mut b, 0x0008); // LAST_TAG
+        b.extend_from_slice(&[0u8; 16]);
+        assert_eq!(parse_journal_tags(&b, false, false), vec![6, 7]);
+    }
+}
