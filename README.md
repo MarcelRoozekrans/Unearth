@@ -23,8 +23,9 @@ its partition table is gone.
 
 ### `undelete` — filesystem-aware recovery (FAT12/16/32, exFAT, NTFS, ext2/3/4)
 
-The filesystem type is auto-detected (bare volume or MBR partition table), and
-FAT, exFAT, NTFS, and ext2/3/4 are all handled by the same `undelete` command.
+The filesystem type is auto-detected (bare volume, or a GPT or MBR partition
+table), and FAT, exFAT, NTFS, and ext2/3/4 are all handled by the same
+`undelete` command.
 
 **FAT.** When a file is deleted, only the first byte of its 32-byte directory
 entry is overwritten (with `0xE5`) and its cluster chain is freed. The entry
@@ -114,7 +115,7 @@ filerecovery undelete card.img -o recovered
 sudo filerecovery undelete /dev/mmcblk0 -o recovered   # SD card, needs root
 ```
 
-The filesystem and volume are auto-detected (bare FAT/exFAT volume or MBR
+The filesystem and volume are auto-detected (bare volume, or a GPT or MBR
 partition table). Override the location with `--offset <BYTES>` if needed.
 
 `undelete` options:

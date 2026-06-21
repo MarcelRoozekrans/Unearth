@@ -43,7 +43,7 @@ pub struct UndeleteArgs {
     pub output: PathBuf,
 
     /// Byte offset of the volume within the source. By default the source is
-    /// auto-detected (bare FAT/exFAT volume or MBR partition table).
+    /// auto-detected (bare volume, or a GPT or MBR partition table).
     #[arg(long, value_name = "BYTES")]
     pub offset: Option<u64>,
 
