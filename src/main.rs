@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 
-use cli::{Cli, Command, ScanArgs, UndeleteArgs};
+use cli::{Cli, Command, InfoArgs, ScanArgs, UndeleteArgs};
 use filerecovery::carver::{self, CarveOptions, ProgressSink};
 use filerecovery::recover;
 use filerecovery::signatures::{self, SIGNATURES};
@@ -21,7 +21,61 @@ fn main() -> Result<()> {
         }
         Command::Scan(args) => scan(args),
         Command::Undelete(args) => undelete(args),
+        Command::Info(args) => info(args),
     }
+}
+
+fn info(args: InfoArgs) -> Result<()> {
+    let source = Source::open(&args.source)?;
+    println!(
+        "Source: {} ({})",
+        args.source.display(),
+        human_bytes(source.size)
+    );
+
+    let volumes = match recover::detect(&source) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("No supported volumes detected: {e}");
+            return Ok(());
+        }
+    };
+
+    println!("\nDetected {} volume(s):\n", volumes.len());
+    println!(
+        "  {:<3} {:<10} {:<14} {:<10} DELETED",
+        "#", "FS", "OFFSET", "SIZE"
+    );
+    println!(
+        "  {:<3} {:<10} {:<14} {:<10} -------",
+        "-", "--", "------", "----"
+    );
+    for (i, vol) in volumes.iter().enumerate() {
+        let deleted = if args.deleted {
+            let opts = recover::RecoverOptions {
+                min_size: 0,
+                dry_run: true,
+            };
+            match vol.recover_deleted(&source, std::path::Path::new("."), &opts) {
+                Ok(stats) => stats.recovered.to_string(),
+                Err(_) => "?".to_string(),
+            }
+        } else {
+            "-".to_string()
+        };
+        println!(
+            "  {:<3} {:<10} {:<14} {:<10} {}",
+            i,
+            vol.fs_label(),
+            vol.offset(),
+            human_bytes(vol.size()),
+            deleted
+        );
+    }
+    if !args.deleted {
+        println!("\nRun with --deleted to count recoverable deleted files per volume.");
+    }
+    Ok(())
 }
 
 fn list_types() {

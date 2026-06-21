@@ -27,8 +27,21 @@ pub enum Command {
     /// a file was just deleted), but requires a readable FAT12/16/32 or exFAT
     /// volume.
     Undelete(UndeleteArgs),
+    /// Show the partition / filesystem layout detected in a source.
+    Info(InfoArgs),
     /// List the file types this build can recover.
     ListTypes,
+}
+
+#[derive(Parser)]
+pub struct InfoArgs {
+    /// Source to inspect: a disk image file or a block device. Opened read-only.
+    #[arg(value_name = "SOURCE")]
+    pub source: PathBuf,
+
+    /// Also count recoverable deleted files in each volume (runs a dry scan).
+    #[arg(long)]
+    pub deleted: bool,
 }
 
 #[derive(Parser)]

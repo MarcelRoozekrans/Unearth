@@ -134,6 +134,11 @@ impl Volume {
         }
     }
 
+    /// Total size of the volume in bytes.
+    pub fn size(&self) -> u64 {
+        self.volume_length_sectors * self.bytes_per_sector
+    }
+
     /// Recover all deleted files into `out_dir`.
     pub fn recover_deleted(
         &self,
