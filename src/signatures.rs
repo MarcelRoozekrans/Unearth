@@ -14,6 +14,8 @@
 //!   MOV, HEIC, AVIF, CR3, ...).
 //! * [`Extent::Elf`] — read the ELF header's section-header-table location to
 //!   find where the file ends.
+//! * [`Extent::Pe`] — walk a PE/COFF section table (and the certificate
+//!   overlay) to find where a Windows executable ends.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -44,6 +46,10 @@ pub enum Extent {
     /// entry size (the section header table normally ends the file). Handles
     /// 32/64-bit and either byte order from the ELF identification bytes.
     Elf,
+    /// PE (Windows EXE/DLL): follow the DOS stub to the PE header, then take the
+    /// largest `PointerToRawData + SizeOfRawData` across the section table, also
+    /// accounting for an appended certificate (Authenticode) overlay.
+    Pe,
 }
 
 /// A recoverable file type.
@@ -301,6 +307,15 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::Elf,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "PE executable (EXE/DLL)",
+        ext: "exe",
+        magic: b"MZ",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Pe,
         max_size: 2 * GB,
     },
 ];

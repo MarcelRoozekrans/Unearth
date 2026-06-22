@@ -252,7 +252,102 @@ fn file_length(
         }
         Extent::Mp4Atoms => Ok(mp4_length(source, file_start, limit)?),
         Extent::Elf => Ok(elf_length(source, file_start, limit)?),
+        Extent::Pe => Ok(pe_length(source, file_start, limit)?),
     }
+}
+
+/// Compute a PE (Windows EXE/DLL) file's length. The MZ magic is only two
+/// bytes, so the real gate here is finding the `PE\0\0` header via `e_lfanew`
+/// and a sane section table; a coincidental "MZ" returns `None` and is skipped.
+fn pe_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let avail = limit - file_start;
+    let mut dos = [0u8; 64];
+    if source.read_at(file_start, &mut dos)? < 64 || &dos[0..2] != b"MZ" {
+        return Ok(None);
+    }
+    let e_lfanew = u32::from_le_bytes([dos[0x3C], dos[0x3D], dos[0x3E], dos[0x3F]]) as u64;
+    // The PE header must lie past the DOS header and within the file.
+    if e_lfanew < 64 || e_lfanew.saturating_add(24) > avail {
+        return Ok(None);
+    }
+
+    // PE signature + 20-byte COFF file header.
+    let mut coff = [0u8; 24];
+    if source.read_at(file_start + e_lfanew, &mut coff)? < 24 || &coff[0..4] != b"PE\0\0" {
+        return Ok(None);
+    }
+    let num_sections = u16::from_le_bytes([coff[6], coff[7]]) as u64;
+    let opt_size = u16::from_le_bytes([coff[20], coff[21]]) as u64;
+    if num_sections == 0 || num_sections > 96 {
+        return Ok(None); // 96 is the PE-spec maximum
+    }
+
+    let opt_off = file_start + e_lfanew + 24;
+    let sec_table_off = opt_off + opt_size;
+    // The file spans at least its headers.
+    let mut end = sec_table_off
+        .saturating_add(num_sections.saturating_mul(40))
+        .saturating_sub(file_start);
+
+    let mut sh = [0u8; 40];
+    for i in 0..num_sections {
+        if source.read_at(sec_table_off + i * 40, &mut sh)? < 40 {
+            break;
+        }
+        let size_raw = u32::from_le_bytes([sh[16], sh[17], sh[18], sh[19]]) as u64;
+        let ptr_raw = u32::from_le_bytes([sh[20], sh[21], sh[22], sh[23]]) as u64;
+        if ptr_raw != 0 {
+            end = end.max(ptr_raw.saturating_add(size_raw));
+        }
+    }
+
+    // The certificate (Authenticode) table, if present, is appended past the
+    // sections; its directory entry holds a *file offset* (not an RVA) + size.
+    if let Some(cert_end) = pe_cert_end(source, opt_off, opt_size)? {
+        end = end.max(cert_end);
+    }
+
+    if end == 0 || file_start + end > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
+}
+
+/// Read the PE optional header's certificate-table directory entry and return
+/// `offset + size` if it points to an overlay, else `None`.
+fn pe_cert_end(source: &Source, opt_off: u64, opt_size: u64) -> Result<Option<u64>> {
+    if opt_size < 4 {
+        return Ok(None);
+    }
+    let mut magic = [0u8; 2];
+    if source.read_at(opt_off, &mut magic)? < 2 {
+        return Ok(None);
+    }
+    // Data-directory base and NumberOfRvaAndSizes offset differ by PE flavour.
+    let (numrva_off, dir_off) = match u16::from_le_bytes(magic) {
+        0x10B => (92u64, 96u64),   // PE32
+        0x20B => (108u64, 112u64), // PE32+
+        _ => return Ok(None),
+    };
+    // The security directory is index 4, so the optional header must hold at
+    // least five directory entries (8 bytes each).
+    if opt_size < dir_off + 5 * 8 {
+        return Ok(None);
+    }
+    let mut nb = [0u8; 4];
+    if source.read_at(opt_off + numrva_off, &mut nb)? < 4 || u32::from_le_bytes(nb) <= 4 {
+        return Ok(None);
+    }
+    let mut cert = [0u8; 8];
+    if source.read_at(opt_off + dir_off + 4 * 8, &mut cert)? < 8 {
+        return Ok(None);
+    }
+    let cert_off = u32::from_le_bytes([cert[0], cert[1], cert[2], cert[3]]) as u64;
+    let cert_size = u32::from_le_bytes([cert[4], cert[5], cert[6], cert[7]]) as u64;
+    if cert_off == 0 {
+        return Ok(None);
+    }
+    Ok(Some(cert_off.saturating_add(cert_size)))
 }
 
 /// Compute an ELF file's length from its section-header table, which normally

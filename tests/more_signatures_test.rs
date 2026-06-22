@@ -104,3 +104,90 @@ fn recovers_brands_and_elf() {
     originals.sort();
     assert_eq!(recovered, originals, "recovered bytes must match originals");
 }
+
+/// A minimal PE32+ executable with two sections and no certificate overlay.
+/// Layout: 64-byte DOS header (e_lfanew = 64), PE sig + COFF header, a 112-byte
+/// optional header (PE32+ magic, NumberOfRvaAndSizes = 0), then the section
+/// table. The file ends at the furthest `PointerToRawData + SizeOfRawData`.
+fn pe_exe() -> Vec<u8> {
+    let opt_size: usize = 112;
+    let headers = 64 + 4 + 20 + opt_size + 2 * 40; // dos + sig + coff + opt + 2 sections
+    let s0_ptr = headers; // first section's raw data
+    let s0_size = 200usize;
+    let s1_ptr = s0_ptr + s0_size;
+    let s1_size = 100usize;
+    let total = s1_ptr + s1_size;
+
+    let mut v = vec![0u8; total];
+    v[0..2].copy_from_slice(b"MZ");
+    v[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes()); // e_lfanew
+
+    let pe = 64usize;
+    v[pe..pe + 4].copy_from_slice(b"PE\0\0");
+    let coff = pe + 4;
+    v[coff..coff + 2].copy_from_slice(&0x8664u16.to_le_bytes()); // Machine = x64
+    v[coff + 2..coff + 4].copy_from_slice(&2u16.to_le_bytes()); // NumberOfSections
+    v[coff + 16..coff + 18].copy_from_slice(&(opt_size as u16).to_le_bytes());
+
+    let opt = coff + 20;
+    v[opt..opt + 2].copy_from_slice(&0x20Bu16.to_le_bytes()); // PE32+ magic
+    v[opt + 108..opt + 112].copy_from_slice(&0u32.to_le_bytes()); // NumberOfRvaAndSizes
+
+    let mut section = |i: usize, size_raw: u32, ptr_raw: u32| {
+        let s = opt + opt_size + i * 40;
+        v[s + 16..s + 20].copy_from_slice(&size_raw.to_le_bytes());
+        v[s + 20..s + 24].copy_from_slice(&ptr_raw.to_le_bytes());
+    };
+    section(0, s0_size as u32, s0_ptr as u32);
+    section(1, s1_size as u32, s1_ptr as u32);
+
+    for (i, b) in v.iter_mut().enumerate().skip(s0_ptr) {
+        *b = (i % 251) as u8;
+    }
+    v
+}
+
+#[test]
+fn recovers_pe_executable() {
+    let exe = pe_exe();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let img_path = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+
+    let mut img = std::fs::File::create(&img_path).unwrap();
+    img.write_all(&vec![0u8; 700]).unwrap();
+    img.write_all(&exe).unwrap();
+    img.write_all(&vec![0u8; 700]).unwrap();
+    img.flush().unwrap();
+    drop(img);
+
+    let source = Source::open(&img_path).unwrap();
+    let sigs = signatures::select(&["exe".to_string()]).unwrap();
+    let opts = CarveOptions {
+        output_dir: out_dir.clone(),
+        start: 0,
+        end: None,
+        min_size: 0,
+        max_files: None,
+        allow_nested: false,
+        validate: true,
+        dedup: false,
+        progress: false,
+    };
+    let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
+    assert_eq!(stats.files_recovered, 1, "one PE executable");
+    assert_eq!(stats.per_type.get("exe"), Some(&1));
+
+    let recovered = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert_eq!(
+        std::fs::read(recovered).unwrap(),
+        exe,
+        "byte-for-byte match"
+    );
+}

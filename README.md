@@ -244,6 +244,7 @@ record the `undelete` report produces, so both recovery modes can be audited.
 | mp4    | MP4 / MOV / M4A media                            | ISO box (atom) walk         |
 | 3gp    | 3GP video                                        | ISO box (atom) walk         |
 | elf    | ELF executable / shared object                   | section-header table offset |
+| exe    | PE executable (EXE/DLL)                          | PE/COFF section table        |
 
 Run `filerecovery list-types` to see what your build supports.
 
