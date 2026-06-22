@@ -76,15 +76,70 @@ fn verify(args: VerifyArgs) -> Result<()> {
     Ok(())
 }
 
+/// Count recoverable deleted files in a volume via a dry-run recovery; `None`
+/// when the caller didn't ask, `Some(-1)` when the scan errored.
+fn deleted_count(vol: &recover::Volume, source: &Source, requested: bool) -> Option<i64> {
+    if !requested {
+        return None;
+    }
+    let opts = recover::RecoverOptions {
+        min_size: 0,
+        dry_run: true,
+    };
+    Some(
+        match vol.recover_deleted(source, std::path::Path::new("."), &opts) {
+            Ok(stats) => stats.recovered as i64,
+            Err(_) => -1,
+        },
+    )
+}
+
 fn info(args: InfoArgs) -> Result<()> {
     let source = Source::open(&args.source)?;
+    let detected = recover::detect(&source);
+
+    if args.json {
+        let vols = detected.unwrap_or_default();
+        let mut out = String::from("{\n");
+        out.push_str(&format!(
+            "  \"source\": \"{}\",\n",
+            json_escape(&args.source.display().to_string())
+        ));
+        out.push_str(&format!("  \"source_bytes\": {},\n", source.size));
+        if vols.is_empty() {
+            out.push_str("  \"volumes\": []\n");
+        } else {
+            out.push_str("  \"volumes\": [\n");
+            for (i, vol) in vols.iter().enumerate() {
+                let deleted = match deleted_count(vol, &source, args.deleted) {
+                    Some(n) => n.to_string(),
+                    None => "null".to_string(),
+                };
+                let comma = if i + 1 < vols.len() { "," } else { "" };
+                out.push_str(&format!(
+                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"deleted\": {}}}{}\n",
+                    i,
+                    json_escape(&vol.fs_label()),
+                    vol.offset(),
+                    vol.size(),
+                    deleted,
+                    comma
+                ));
+            }
+            out.push_str("  ]\n");
+        }
+        out.push_str("}\n");
+        print!("{out}");
+        return Ok(());
+    }
+
     println!(
         "Source: {} ({})",
         args.source.display(),
         human_bytes(source.size)
     );
 
-    let volumes = match recover::detect(&source) {
+    let volumes = match detected {
         Ok(v) => v,
         Err(e) => {
             println!("No supported volumes detected: {e}");
@@ -102,17 +157,10 @@ fn info(args: InfoArgs) -> Result<()> {
         "-", "--", "------", "----"
     );
     for (i, vol) in volumes.iter().enumerate() {
-        let deleted = if args.deleted {
-            let opts = recover::RecoverOptions {
-                min_size: 0,
-                dry_run: true,
-            };
-            match vol.recover_deleted(&source, std::path::Path::new("."), &opts) {
-                Ok(stats) => stats.recovered.to_string(),
-                Err(_) => "?".to_string(),
-            }
-        } else {
-            "-".to_string()
+        let deleted = match deleted_count(vol, &source, args.deleted) {
+            None => "-".to_string(),
+            Some(-1) => "?".to_string(),
+            Some(n) => n.to_string(),
         };
         println!(
             "  {:<3} {:<10} {:<14} {:<10} {}",
