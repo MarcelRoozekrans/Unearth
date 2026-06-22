@@ -231,6 +231,9 @@ record the `undelete` report produces, so both recovery modes can be audited.
 | bmp    | BMP image                                        | size field in header        |
 | webp   | WebP image                                       | RIFF size field             |
 | heic   | HEIC / HEIF image                               | ISO box (atom) walk         |
+| avif   | AVIF image                                       | ISO box (atom) walk         |
+| cr3    | Canon CR3 raw image                              | ISO box (atom) walk         |
+| jxl    | JPEG XL image                                    | ISO box (atom) walk         |
 | pdf    | PDF document                                     | `%%EOF`                     |
 | zip    | ZIP (also DOCX/XLSX/PPTX/ODT/JAR/APK)            | end-of-central-directory    |
 | 7z     | 7-Zip archive                                    | next-header offset + size   |
@@ -239,6 +242,8 @@ record the `undelete` report produces, so both recovery modes can be audited.
 | wav    | WAV audio                                        | RIFF size field             |
 | avi    | AVI video                                        | RIFF size field             |
 | mp4    | MP4 / MOV / M4A media                            | ISO box (atom) walk         |
+| 3gp    | 3GP video                                        | ISO box (atom) walk         |
+| elf    | ELF executable / shared object                   | section-header table offset |
 
 Run `filerecovery list-types` to see what your build supports.
 

@@ -251,7 +251,72 @@ fn file_length(
             Ok(Some(size))
         }
         Extent::Mp4Atoms => Ok(mp4_length(source, file_start, limit)?),
+        Extent::Elf => Ok(elf_length(source, file_start, limit)?),
     }
+}
+
+/// Compute an ELF file's length from its section-header table, which normally
+/// sits at the end of the file. Handles 32/64-bit and either byte order.
+fn elf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut hdr = [0u8; 64];
+    if source.read_at(file_start, &mut hdr)? < 52 {
+        return Ok(None); // smaller than even a 32-bit ELF header
+    }
+    let is_64 = match hdr[4] {
+        1 => false,
+        2 => true,
+        _ => return Ok(None),
+    };
+    let le = match hdr[5] {
+        1 => true,
+        2 => false,
+        _ => return Ok(None),
+    };
+    let u16f = |b: &[u8]| {
+        if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        }
+    };
+    let u32f = |b: &[u8]| {
+        if le {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let u64f = |b: &[u8]| {
+        if le {
+            u64::from_le_bytes(b[..8].try_into().unwrap())
+        } else {
+            u64::from_be_bytes(b[..8].try_into().unwrap())
+        }
+    };
+
+    // Section-header-table offset, entry size, and entry count.
+    let (sh_off, sh_entsize, sh_num) = if is_64 {
+        (
+            u64f(&hdr[0x28..0x30]),
+            u16f(&hdr[0x3A..0x3C]) as u64,
+            u16f(&hdr[0x3C..0x3E]) as u64,
+        )
+    } else {
+        (
+            u32f(&hdr[0x20..0x24]) as u64,
+            u16f(&hdr[0x2E..0x30]) as u64,
+            u16f(&hdr[0x30..0x32]) as u64,
+        )
+    };
+
+    if sh_off == 0 || sh_num == 0 || sh_entsize == 0 {
+        return Ok(None); // stripped of section headers; size not determinable here
+    }
+    let size = sh_off.saturating_add(sh_num.saturating_mul(sh_entsize));
+    if size == 0 || file_start + size > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
 }
 
 /// Search forward from `file_start` for `marker`, returning the file length
