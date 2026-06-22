@@ -118,7 +118,13 @@ Commands:
 ```sh
 filerecovery info disk.img
 filerecovery info disk.img --deleted   # also count recoverable deleted files
+filerecovery info disk.img --json      # machine-readable layout for scripting
 ```
+
+With `--json`, the detected layout is written to stdout as a single object
+(`source`, `source_bytes`, and a `volumes` array of `index`/`filesystem`/`offset`/`size`/`deleted`),
+so the tool's output can be consumed by scripts. `deleted` is `null` unless
+`--deleted` is also passed.
 
 Example output:
 

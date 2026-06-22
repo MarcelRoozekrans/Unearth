@@ -61,6 +61,10 @@ pub struct InfoArgs {
     /// Also count recoverable deleted files in each volume (runs a dry scan).
     #[arg(long)]
     pub deleted: bool,
+
+    /// Emit the detected layout as JSON on stdout instead of a table.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Parser)]

@@ -198,6 +198,39 @@ fn report_manifest_carries_matching_sha256() {
 }
 
 #[test]
+fn info_json_lists_volumes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    std::fs::write(&img, common::ext_volume("notes.txt", b"hello world")).unwrap();
+
+    // Without --deleted: the count is null.
+    let out = run(&["info", img.to_str().unwrap(), "--json"]);
+    assert!(out.status.success());
+    let json = String::from_utf8_lossy(&out.stdout);
+    assert!(json.contains("\"filesystem\": \"ext2/3/4\""), "{json}");
+    assert!(json.contains("\"deleted\": null"), "{json}");
+    assert!(json.contains("\"volumes\""), "{json}");
+
+    // With --deleted: the recoverable count is reported.
+    let out = run(&["info", img.to_str().unwrap(), "--json", "--deleted"]);
+    assert!(out.status.success());
+    let json = String::from_utf8_lossy(&out.stdout);
+    assert!(json.contains("\"deleted\": 1"), "{json}");
+}
+
+#[test]
+fn info_json_on_garbage_has_empty_volumes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    std::fs::write(&img, vec![0u8; 4096]).unwrap();
+
+    let out = run(&["info", img.to_str().unwrap(), "--json"]);
+    assert!(out.status.success());
+    let json = String::from_utf8_lossy(&out.stdout);
+    assert!(json.contains("\"volumes\": []"), "{json}");
+}
+
+#[test]
 fn scan_writes_run_summary() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("disk.img");
