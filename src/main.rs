@@ -8,7 +8,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use clap::CommandFactory;
 use cli::{
-    Cli, Command, CompletionsArgs, InfoArgs, ScanArgs, TriageArgs, UndeleteArgs, VerifyArgs,
+    Cli, Command, CompletionsArgs, IdentifyArgs, InfoArgs, ScanArgs, TriageArgs, UndeleteArgs,
+    VerifyArgs,
 };
 use filerecovery::carver::{self, CarveOptions, ProgressSink};
 use filerecovery::recover;
@@ -27,6 +28,7 @@ fn main() -> Result<()> {
         Command::Info(args) => info(args),
         Command::Verify(args) => verify(args),
         Command::Triage(args) => triage(args),
+        Command::Identify(args) => identify(args),
         Command::Mcp => {
             let stdin = std::io::stdin();
             let stdout = std::io::stdout();
@@ -184,6 +186,55 @@ fn triage(args: TriageArgs) -> Result<()> {
         for (path, size) in &sum.largest {
             println!("  {:>10}  {}", human_bytes(*size), path);
         }
+    }
+    Ok(())
+}
+
+fn identify(args: IdentifyArgs) -> Result<()> {
+    use std::io::Read;
+    let mut head = vec![0u8; 64 * 1024];
+    let mut f = std::fs::File::open(&args.file)
+        .map_err(|e| anyhow::anyhow!("opening {}: {e}", args.file.display()))?;
+    let mut read = 0usize;
+    while read < head.len() {
+        let nb = f.read(&mut head[read..])?;
+        if nb == 0 {
+            break;
+        }
+        read += nb;
+    }
+    head.truncate(read);
+    let detected = filerecovery::identify::identify(&head);
+
+    if args.json {
+        use filerecovery::json::{obj, s, Json};
+        let out = match &detected {
+            Some(d) => obj(vec![
+                ("file", s(args.file.display().to_string())),
+                ("identified", Json::Bool(true)),
+                ("type", s(d.ext)),
+                ("name", s(d.name)),
+                ("validated", Json::Bool(d.validated)),
+            ]),
+            None => obj(vec![
+                ("file", s(args.file.display().to_string())),
+                ("identified", Json::Bool(false)),
+            ]),
+        };
+        println!("{out}");
+        return Ok(());
+    }
+
+    match detected {
+        Some(d) => {
+            let note = if d.validated {
+                "structurally validated"
+            } else {
+                "by magic"
+            };
+            println!("{}: {} ({}, {note})", args.file.display(), d.name, d.ext);
+        }
+        None => println!("{}: unknown", args.file.display()),
     }
     Ok(())
 }

@@ -244,6 +244,32 @@ fn completions_emit_a_script() {
 }
 
 #[test]
+fn identify_detects_type_by_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A JPEG given a misleading .bin extension.
+    let jpeg = common::jpeg(&vec![0x41u8; 100]);
+    let f = tmp.path().join("mystery.bin");
+    std::fs::write(&f, &jpeg).unwrap();
+
+    let out = run(&["identify", f.to_str().unwrap()]);
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("jpg"), "{text}");
+
+    let out = run(&["identify", f.to_str().unwrap(), "--json"]);
+    let json = String::from_utf8_lossy(&out.stdout);
+    assert!(json.contains("\"identified\":true"), "{json}");
+    assert!(json.contains("\"type\":\"jpg\""), "{json}");
+    assert!(json.contains("\"validated\":true"), "{json}");
+
+    // Unknown content is reported as such.
+    let g = tmp.path().join("blob.bin");
+    std::fs::write(&g, b"not a known file type at all").unwrap();
+    let out = run(&["identify", g.to_str().unwrap(), "--json"]);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"identified\":false"));
+}
+
+#[test]
 fn triage_summarizes_a_directory() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("rec");

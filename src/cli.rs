@@ -39,6 +39,8 @@ pub enum Command {
     /// Summarize a directory of recovered files: counts per type, the largest
     /// files, content duplicates, and empty files.
     Triage(TriageArgs),
+    /// Identify a file's type from its contents, independent of its extension.
+    Identify(IdentifyArgs),
     /// List the file types this build can recover.
     ListTypes,
     /// Run as a Model Context Protocol (MCP) server on stdin/stdout, exposing
@@ -61,6 +63,17 @@ pub struct TriageArgs {
     pub top: usize,
 
     /// Emit the summary as JSON on stdout instead of a table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Parser)]
+pub struct IdentifyArgs {
+    /// File to identify.
+    #[arg(value_name = "FILE")]
+    pub file: PathBuf,
+
+    /// Emit the result as JSON on stdout instead of a line of text.
     #[arg(long)]
     pub json: bool,
 }

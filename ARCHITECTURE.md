@@ -17,6 +17,7 @@ device or image is always accessed **read-only**.
 | `json`             | A tiny dependency-free JSON value type, parser, and serializer (used by the MCP server, which must parse arbitrary client input). |
 | `mcp`              | A minimal Model Context Protocol server over stdio (JSON-RPC 2.0), exposing recovery as tools (`list_types`, `list_volumes`, `scan`, `undelete`, `verify`, `read_file`, `triage`) for an AI agent. |
 | `triage`           | Summarize a directory of recovered files (counts per type, largest files, content duplicates, empties) — a deterministic digest of a recovery run. |
+| `identify`         | Content-based file-type detection (reuses the signatures + validators) for files with a missing or wrong extension. |
 | `recover`          | Partition/volume **detection** (bare, MBR, GPT) and the `Volume` dispatcher + shared `RecoverOptions`/`RecoverStats`. The single entry point the CLI uses for `undelete`/`info`. |
 | `fat`              | FAT12/16/32 undelete. |
 | `exfat`            | exFAT undelete. |
