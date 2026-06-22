@@ -26,6 +26,8 @@
 //!   plus a 64-bit size, to the end of the container.
 //! * [`Extent::Wasm`] — walk a WebAssembly module's sections (LEB128-sized) to
 //!   the end of the module.
+//! * [`Extent::IcoCur`] — take the furthest `offset + size` across an ICO/CUR
+//!   image directory.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -76,6 +78,9 @@ pub enum Extent {
     /// WebAssembly: after the 8-byte header, walk the sections (each a 1-byte id
     /// and an unsigned LEB128 size) to the end of the module.
     Wasm,
+    /// ICO / CUR: the icon directory lists each image's size and offset; the
+    /// file ends at the furthest `offset + size`.
+    IcoCur,
 }
 
 /// A recoverable file type.
@@ -430,6 +435,24 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Wasm,
         max_size: GB,
+    },
+    Signature {
+        name: "Windows icon",
+        ext: "ico",
+        magic: &[0x00, 0x00, 0x01, 0x00], // reserved=0, type=1 (icon)
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::IcoCur,
+        max_size: 16 * MB,
+    },
+    Signature {
+        name: "Windows cursor",
+        ext: "cur",
+        magic: &[0x00, 0x00, 0x02, 0x00], // reserved=0, type=2 (cursor)
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::IcoCur,
+        max_size: 16 * MB,
     },
 ];
 
