@@ -122,6 +122,11 @@ pub struct ScanArgs {
     #[arg(long)]
     pub dedup: bool,
 
+    /// Write a manifest of carved files to this path. The format is chosen by
+    /// extension: `.json` for JSON, otherwise CSV.
+    #[arg(long, value_name = "FILE")]
+    pub report: Option<PathBuf>,
+
     /// Suppress the progress bar.
     #[arg(short, long)]
     pub quiet: bool,

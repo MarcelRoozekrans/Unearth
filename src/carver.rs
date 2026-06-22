@@ -43,6 +43,20 @@ pub struct CarveOptions {
     pub progress: bool,
 }
 
+/// One carved file, recorded for the recovery report.
+pub struct CarvedFile {
+    /// Output file name within the output directory.
+    pub name: String,
+    /// File-type extension, e.g. `"jpg"`.
+    pub ext: &'static str,
+    /// Byte offset of the file's start within the source.
+    pub offset: u64,
+    /// Number of bytes written.
+    pub size: u64,
+    /// SHA-256 of the written bytes.
+    pub sha256: [u8; 32],
+}
+
 /// Outcome of a carving run.
 #[derive(Default)]
 pub struct CarveStats {
@@ -55,6 +69,8 @@ pub struct CarveStats {
     pub duplicates: u64,
     /// Recovered-file count per extension.
     pub per_type: std::collections::BTreeMap<&'static str, u64>,
+    /// Per-file records, populated for the recovery report.
+    pub files: Vec<CarvedFile>,
 }
 
 /// Scan `source` for the `active` signatures and write recovered files.
@@ -370,7 +386,7 @@ fn write_file(
         "{:08}_{:#016x}.{}",
         stats.files_recovered, file_start, sig.ext
     );
-    let path: PathBuf = opts.output_dir.join(name);
+    let path: PathBuf = opts.output_dir.join(&name);
     let mut out =
         fs::File::create(&path).with_context(|| format!("creating {}", path.display()))?;
 
@@ -396,7 +412,8 @@ fn write_file(
     }
     out.flush().ok();
 
-    if opts.dedup && !seen.insert(hasher.finalize()) {
+    let digest = hasher.finalize();
+    if opts.dedup && !seen.insert(digest) {
         // Identical content already recovered; discard this copy.
         drop(out);
         fs::remove_file(&path).ok();
@@ -408,6 +425,13 @@ fn write_file(
     stats.files_recovered += 1;
     stats.bytes_recovered += written;
     *stats.per_type.entry(sig.ext).or_insert(0) += 1;
+    stats.files.push(CarvedFile {
+        name,
+        ext: sig.ext,
+        offset: file_start,
+        size: written,
+        sha256: digest,
+    });
     Ok(())
 }
 

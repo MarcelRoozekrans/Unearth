@@ -195,8 +195,13 @@ filerecovery scan card.img -o recovered --type jpg --type png
     --allow-nested     Also recover files embedded in other files (e.g. thumbnails)
     --no-validate      Keep every signature match without structural validation
     --dedup            Write identical content (by SHA-256) only once
+    --report <FILE>    Write a manifest of carved files (.json => JSON, else CSV)
 -q, --quiet            Hide the progress bar
 ```
+
+The `--report` manifest lists one row per carved file: output name, type,
+source offset, size, and the SHA-256 of the carved bytes — the same verifiable
+record the `undelete` report produces, so both recovery modes can be audited.
 
 ## Supported file types (`scan` / carving)
 

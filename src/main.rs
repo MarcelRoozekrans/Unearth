@@ -138,6 +138,10 @@ fn scan(args: ScanArgs) -> Result<()> {
             stats.rejected
         );
     }
+    if let Some(report_path) = &args.report {
+        write_carve_report(report_path, &stats.files)?;
+        eprintln!("Report written to {}", report_path.display());
+    }
     if stats.duplicates > 0 {
         println!(
             "Skipped {} duplicate(s) with identical content.",
@@ -274,6 +278,48 @@ fn write_report(
                 size,
                 rec,
                 sha
+            ));
+        }
+    }
+    std::fs::write(path, out)
+        .map_err(|e| anyhow::anyhow!("writing report {}: {e}", path.display()))?;
+    Ok(())
+}
+
+/// Write a carve manifest as CSV, or JSON when the path ends in `.json`. Each
+/// row records the output filename, type, source offset, size, and the SHA-256
+/// of the carved bytes — so the report is a verifiable record of the run.
+fn write_carve_report(path: &std::path::Path, files: &[carver::CarvedFile]) -> Result<()> {
+    let is_json = path
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+    let mut out = String::new();
+    if is_json {
+        out.push_str("[\n");
+        for (i, f) in files.iter().enumerate() {
+            let comma = if i + 1 < files.len() { "," } else { "" };
+            out.push_str(&format!(
+                "  {{\"name\": \"{}\", \"type\": \"{}\", \"offset\": {}, \"size\": {}, \"sha256\": \"{}\"}}{}\n",
+                json_escape(&f.name),
+                f.ext,
+                f.offset,
+                f.size,
+                filerecovery::hash::to_hex(&f.sha256),
+                comma
+            ));
+        }
+        out.push_str("]\n");
+    } else {
+        out.push_str("name,type,offset,size,sha256\n");
+        for f in files {
+            out.push_str(&format!(
+                "{},{},{},{},{}\n",
+                csv_escape(&f.name),
+                f.ext,
+                f.offset,
+                f.size,
+                filerecovery::hash::to_hex(&f.sha256)
             ));
         }
     }

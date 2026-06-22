@@ -117,6 +117,51 @@ fn undelete_dry_run_with_report_writes_no_files() {
 }
 
 #[test]
+fn scan_report_manifest_carries_matching_sha256() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+    let report = tmp.path().join("carved.json");
+
+    let jpeg = common::jpeg(&vec![0x41u8; 2000]);
+    let mut data = vec![0u8; 1000];
+    data.extend_from_slice(&jpeg);
+    std::fs::write(&img, &data).unwrap();
+
+    let out = run(&[
+        "scan",
+        img.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+        "-q",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Exactly one file is carved; its digest in the manifest must match a fresh
+    // hash of the bytes on disk, and the manifest must name its type and offset.
+    let entries: Vec<_> = std::fs::read_dir(&out_dir).unwrap().collect();
+    assert_eq!(entries.len(), 1);
+    let carved = std::fs::read(entries[0].as_ref().unwrap().path()).unwrap();
+    assert_eq!(carved, jpeg, "carved bytes match the planted JPEG");
+    let expected = filerecovery::hash::to_hex(&filerecovery::hash::digest(&carved));
+
+    let json = std::fs::read_to_string(&report).unwrap();
+    assert!(
+        json.contains(&format!("\"sha256\": \"{expected}\"")),
+        "manifest missing digest {expected}: {json}"
+    );
+    assert!(json.contains("\"type\": \"jpg\""), "manifest: {json}");
+    // The JPEG starts 1000 bytes into the image.
+    assert!(json.contains("\"offset\": 1000"), "manifest: {json}");
+}
+
+#[test]
 fn report_manifest_carries_matching_sha256() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("disk.img");
