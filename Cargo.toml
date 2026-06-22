@@ -20,6 +20,7 @@ path = "src/lib.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 anyhow = "1"
 indicatif = "0.17"
 # Optional heap profiler (dotMemory-style allocation reports). Enable with
