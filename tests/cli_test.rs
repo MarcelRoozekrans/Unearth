@@ -244,6 +244,31 @@ fn completions_emit_a_script() {
 }
 
 #[test]
+fn triage_summarizes_a_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("rec");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.jpg"), vec![1u8; 100]).unwrap();
+    std::fs::write(dir.join("b.jpg"), vec![1u8; 100]).unwrap(); // duplicate of a.jpg
+    std::fs::write(dir.join("c.png"), vec![9u8; 30]).unwrap();
+
+    // Human output mentions the counts and the duplicate set.
+    let out = run(&["triage", dir.to_str().unwrap()]);
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("3 file(s)"), "{text}");
+    assert!(text.contains("duplicate set"), "{text}");
+
+    // JSON output is machine-readable.
+    let out = run(&["triage", dir.to_str().unwrap(), "--json"]);
+    assert!(out.status.success());
+    let json = String::from_utf8_lossy(&out.stdout);
+    assert!(json.contains("\"total_files\":3"), "{json}");
+    assert!(json.contains("\"duplicate_sets\":1"), "{json}");
+    assert!(json.contains("\"jpg\""), "{json}");
+}
+
+#[test]
 fn scan_writes_run_summary() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("disk.img");

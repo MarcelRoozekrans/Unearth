@@ -36,6 +36,9 @@ pub enum Command {
     /// checks each recovered file's SHA-256 still matches, turning the manifest
     /// into an auditable integrity record.
     Verify(VerifyArgs),
+    /// Summarize a directory of recovered files: counts per type, the largest
+    /// files, content duplicates, and empty files.
+    Triage(TriageArgs),
     /// List the file types this build can recover.
     ListTypes,
     /// Run as a Model Context Protocol (MCP) server on stdin/stdout, exposing
@@ -45,6 +48,21 @@ pub enum Command {
     ///
     /// Example: `filerecovery completions bash > /etc/bash_completion.d/filerecovery`.
     Completions(CompletionsArgs),
+}
+
+#[derive(Parser)]
+pub struct TriageArgs {
+    /// Directory of recovered files to summarize.
+    #[arg(value_name = "DIR")]
+    pub dir: PathBuf,
+
+    /// How many of the largest files to list.
+    #[arg(long, value_name = "N", default_value_t = 10)]
+    pub top: usize,
+
+    /// Emit the summary as JSON on stdout instead of a table.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Parser)]
