@@ -100,6 +100,10 @@ cargo build --release
 # binary at target/release/filerecovery
 ```
 
+Prebuilt binaries for Linux (glibc and static musl), macOS (Intel and Apple
+Silicon), and Windows are attached to each [GitHub Release](https://github.com/MarcelRoozekrans/FileRecovery/releases);
+they are built automatically by the release workflow when a `v*` tag is pushed.
+
 ## Usage
 
 ```text
