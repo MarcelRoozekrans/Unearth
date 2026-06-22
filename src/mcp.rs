@@ -7,7 +7,9 @@
 //!
 //! * `list_types`   — the file types carving can recover
 //! * `list_volumes` — detect partitions/filesystems in a source (+ deleted counts)
-//! * `scan`         — signature carving into an output directory
+//! * `scan`         — start background signature carving (returns a job id)
+//! * `scan_status`  — poll a scan job's progress and result
+//! * `scan_cancel`  — request cancellation of a scan job
 //! * `undelete`     — filesystem-aware recovery into an output directory
 //! * `verify`       — re-hash recovered files against a `--report` manifest
 //! * `read_file`    — read a recovered file's bytes (base64) for inspection
@@ -22,6 +24,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::carver::ProgressSink;
 use crate::json::{self, obj, s, Json};
 use crate::{carver, hash, manifest, recover, signatures, source::Source};
 
@@ -186,7 +189,10 @@ fn tool_definitions() -> Json {
     );
     tool(
         "scan",
-        "Carve files from a source by signature into output_dir (filesystem-agnostic).",
+        "Start carving files from a source by signature into output_dir \
+         (filesystem-agnostic). Runs as a background job (carving a large drive \
+         is slow): returns a job_id — poll scan_status, and use scan_cancel to \
+         stop it.",
         schema(
             vec![
                 (
@@ -318,6 +324,24 @@ fn tool_definitions() -> Json {
             vec!["path"],
         ),
     );
+    tool(
+        "scan_status",
+        "Check a background scan started by `scan`: running flag, bytes scanned / \
+         total, and the full result (file manifest) once done.",
+        schema(
+            vec![("job_id", int_prop("Job id returned by scan."))],
+            vec!["job_id"],
+        ),
+    );
+    tool(
+        "scan_cancel",
+        "Request cancellation of a running scan; it stops at the next chunk and \
+         keeps whatever was already recovered.",
+        schema(
+            vec![("job_id", int_prop("Job id returned by scan."))],
+            vec!["job_id"],
+        ),
+    );
 
     Json::Arr(tools)
 }
@@ -401,7 +425,10 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
         }
 
         "scan" => {
-            let source = open(arg_str("source")?)?;
+            // Carving a large drive can take an hour, so run it as a background
+            // job and return a job id; the agent polls `scan_status`. Capture
+            // the arguments as owned values for the worker thread.
+            let source_path = arg_str("source")?.to_string();
             let output_dir = arg_str("output_dir")?.to_string();
             let types: Vec<String> = args
                 .and_then(|a| a.get("types"))
@@ -412,57 +439,95 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                         .collect()
                 })
                 .unwrap_or_default();
-            let active = signatures::select(&types).map_err(|e| e.to_string())?;
-            let opts = carver::CarveOptions {
-                output_dir: output_dir.clone().into(),
-                start: 0,
-                end: None,
-                min_size: arg_u64("min_size").unwrap_or(0),
-                max_files: None,
-                allow_nested: false,
-                validate: arg_bool("validate").unwrap_or(true),
-                dedup: arg_bool("dedup").unwrap_or(false),
-                progress: false,
-            };
-            let stats = carver::carve(&source, &active, &opts, &carver::NoProgress)
-                .map_err(|e| e.to_string())?;
-            let per_type = Json::Obj(
-                stats
-                    .per_type
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), n(*v)))
-                    .collect(),
-            );
-            let mut result = vec![
-                ("output_dir", s(output_dir)),
-                ("files_recovered", n(stats.files_recovered)),
-                ("bytes_recovered", n(stats.bytes_recovered)),
-                ("rejected", n(stats.rejected)),
-                ("duplicates", n(stats.duplicates)),
-                ("per_type", per_type),
-            ];
-            if arg_bool("include_files").unwrap_or(true) {
-                let files: Vec<Json> = stats
-                    .files
-                    .iter()
-                    .take(MAX_FILES_IN_RESULT)
-                    .map(|f| {
-                        obj(vec![
-                            ("name", s(f.name.as_str())),
-                            ("type", s(f.ext)),
-                            ("offset", n(f.offset)),
-                            ("size", n(f.size)),
-                            ("sha256", s(hash::to_hex(&f.sha256))),
-                        ])
-                    })
-                    .collect();
-                result.push((
-                    "files_truncated",
-                    Json::Bool(stats.files.len() > files.len()),
-                ));
-                result.push(("files", Json::Arr(files)));
+            let min_size = arg_u64("min_size").unwrap_or(0);
+            let validate = arg_bool("validate").unwrap_or(true);
+            let dedup = arg_bool("dedup").unwrap_or(false);
+            let include_files = arg_bool("include_files").unwrap_or(true);
+
+            let id = crate::job::start("scan", move |progress| {
+                let source = open(&source_path)?;
+                let active = signatures::select(&types).map_err(|e| e.to_string())?;
+                let opts = carver::CarveOptions {
+                    output_dir: output_dir.clone().into(),
+                    start: 0,
+                    end: None,
+                    min_size,
+                    max_files: None,
+                    allow_nested: false,
+                    validate,
+                    dedup,
+                    progress: false,
+                };
+                let stats =
+                    carver::carve(&source, &active, &opts, progress).map_err(|e| e.to_string())?;
+                let per_type = Json::Obj(
+                    stats
+                        .per_type
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), n(*v)))
+                        .collect(),
+                );
+                let mut result = vec![
+                    ("output_dir", s(output_dir)),
+                    ("cancelled", Json::Bool(progress.cancelled())),
+                    ("files_recovered", n(stats.files_recovered)),
+                    ("bytes_recovered", n(stats.bytes_recovered)),
+                    ("rejected", n(stats.rejected)),
+                    ("duplicates", n(stats.duplicates)),
+                    ("per_type", per_type),
+                ];
+                if include_files {
+                    let files: Vec<Json> = stats
+                        .files
+                        .iter()
+                        .take(MAX_FILES_IN_RESULT)
+                        .map(|f| {
+                            obj(vec![
+                                ("name", s(f.name.as_str())),
+                                ("type", s(f.ext)),
+                                ("offset", n(f.offset)),
+                                ("size", n(f.size)),
+                                ("sha256", s(hash::to_hex(&f.sha256))),
+                            ])
+                        })
+                        .collect();
+                    result.push((
+                        "files_truncated",
+                        Json::Bool(stats.files.len() > files.len()),
+                    ));
+                    result.push(("files", Json::Arr(files)));
+                }
+                Ok(obj(result))
+            });
+            Ok(obj(vec![
+                ("job_id", n(id)),
+                ("status", s("started")),
+                (
+                    "note",
+                    s(
+                        "carving runs in the background; poll scan_status with this job_id, \
+                       and scan_cancel to stop it",
+                    ),
+                ),
+            ]))
+        }
+
+        "scan_status" => {
+            let id = arg_u64("job_id").ok_or("missing required integer argument 'job_id'")?;
+            crate::job::status(id).ok_or_else(|| format!("no such job {id}"))
+        }
+
+        "scan_cancel" => {
+            let id = arg_u64("job_id").ok_or("missing required integer argument 'job_id'")?;
+            let existed = crate::job::cancel(id);
+            if existed {
+                Ok(obj(vec![
+                    ("job_id", n(id)),
+                    ("cancel_requested", Json::Bool(true)),
+                ]))
+            } else {
+                Err(format!("no such job {id}"))
             }
-            Ok(obj(result))
         }
 
         "undelete" => {
@@ -734,6 +799,8 @@ mod tests {
             "read_file",
             "triage",
             "identify",
+            "scan_status",
+            "scan_cancel",
         ] {
             assert!(names.contains(&want), "missing tool {want}");
         }
