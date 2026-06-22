@@ -26,3 +26,9 @@ jobs:
 
       - name: Run tests
         run: cargo test --all --no-fail-fast
+
+      # The dhat-heap feature gates code that --all-targets does not enable, so
+      # check it builds (and clippy-clean) to keep the profiling harness from
+      # rotting.
+      - name: Clippy with dhat-heap feature
+        run: cargo clippy --features dhat-heap --example heap_profile -- -D warnings
