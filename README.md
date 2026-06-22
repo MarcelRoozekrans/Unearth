@@ -115,8 +115,31 @@ Commands:
   info        Show the partition / filesystem layout of a source
   verify      Re-hash recovered files against a --report manifest
   list-types  List the file types this build can recover
+  mcp         Run as an MCP server so an AI agent can drive recovery
   completions Print a shell completion script
 ```
+
+### Use from an AI agent (MCP server)
+
+`filerecovery mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
+server on stdin/stdout, exposing recovery as tools an AI agent (e.g. Claude) can
+call: `list_types`, `list_volumes`, `scan`, `undelete`, and `verify`. It speaks
+JSON-RPC 2.0 and needs no extra dependencies or network access.
+
+Point an MCP client at the binary, for example in a Claude Desktop config:
+
+```json
+{
+  "mcpServers": {
+    "filerecovery": { "command": "filerecovery", "args": ["mcp"] }
+  }
+}
+```
+
+The agent can then detect volumes, carve or undelete into a directory you name,
+and verify the results — each tool returns a JSON summary. All access is
+read-only on the source; the only writes are the recovered files in the output
+directory you specify.
 
 ### Shell completions
 

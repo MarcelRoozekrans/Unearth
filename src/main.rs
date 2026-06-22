@@ -24,6 +24,11 @@ fn main() -> Result<()> {
         Command::Undelete(args) => undelete(args),
         Command::Info(args) => info(args),
         Command::Verify(args) => verify(args),
+        Command::Mcp => {
+            let stdin = std::io::stdin();
+            let stdout = std::io::stdout();
+            filerecovery::mcp::serve(stdin.lock(), stdout.lock())
+        }
         Command::Completions(args) => {
             completions(args);
             Ok(())

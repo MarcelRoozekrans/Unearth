@@ -38,6 +38,9 @@ pub enum Command {
     Verify(VerifyArgs),
     /// List the file types this build can recover.
     ListTypes,
+    /// Run as a Model Context Protocol (MCP) server on stdin/stdout, exposing
+    /// recovery as tools an AI agent can call.
+    Mcp,
     /// Print a shell completion script (bash, zsh, fish, powershell, elvish).
     ///
     /// Example: `filerecovery completions bash > /etc/bash_completion.d/filerecovery`.
