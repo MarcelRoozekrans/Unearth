@@ -1,8 +1,43 @@
 # Performance & memory profiling
 
 The recovery engines are I/O-bound, but careless per-file allocation can dominate
-runtime and memory. This project ships a **heap-profiling harness** (the Rust
-analogue of a dotMemory snapshot) so allocation regressions are easy to catch.
+runtime and memory. This project ships two complementary harnesses, mirroring the
+.NET tooling pair:
+
+- **Benchmarks** ([`criterion`](https://docs.rs/criterion), the BenchmarkDotNet
+  analogue) — statistical timing of the hot paths.
+- **Heap profiling** ([`dhat`](https://docs.rs/dhat), the dotMemory analogue) —
+  allocation totals/peaks and call sites.
+
+## Benchmarks (`cargo bench`)
+
+```sh
+cargo bench
+```
+
+The `benches/recovery.rs` suite measures SHA-256 hashing, signature carving,
+content identification, and filesystem undelete. Criterion warms up, collects
+many samples, and reports mean/median/std-dev with outlier detection; the
+throughput-annotated benchmarks also print MiB/s. It is console-only (no
+plotting dependencies). To iterate quickly, shorten the run:
+
+```sh
+cargo bench --bench recovery -- --sample-size 10 --measurement-time 1
+```
+
+Indicative results (debug-host, relative numbers — use your own machine as the
+baseline):
+
+| Benchmark              | What it measures                          |
+|------------------------|-------------------------------------------|
+| `hash/sha256_1MiB`     | hashing throughput (dedup / manifests)    |
+| `carve/all_signatures` | end-to-end carving throughput (MiB/s)     |
+| `identify/jpeg`        | content type-detection latency            |
+| `undelete/ext_one_file`| filesystem undelete latency               |
+
+Criterion saves each run under `target/criterion/` and compares against the
+previous run, so a regression shows up as a "change" line on the next `cargo
+bench`.
 
 ## Running the profiler
 
