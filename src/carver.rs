@@ -255,7 +255,54 @@ fn file_length(
         Extent::Pe => Ok(pe_length(source, file_start, limit)?),
         Extent::Tiff => Ok(tiff_length(source, file_start, limit)?),
         Extent::Ebml => Ok(ebml_length(source, file_start, limit)?),
+        Extent::Ogg => Ok(ogg_length(source, file_start, limit)?),
     }
+}
+
+/// Walk the chain of Ogg pages starting at `file_start`. Each `OggS` page is
+/// sized by its 27-byte header plus the lacing values in its segment table; the
+/// bitstream ends at the first position that is no longer a valid page.
+fn ogg_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAX_PAGES: u64 = 1 << 24;
+    let avail = limit - file_start;
+    let mut pos = 0u64;
+    let mut pages = 0u64;
+
+    while pages < MAX_PAGES {
+        if pos + 27 > avail {
+            break;
+        }
+        let mut hdr = [0u8; 27];
+        if source.read_at(file_start + pos, &mut hdr)? < 27 {
+            break;
+        }
+        // Each page begins with "OggS" and stream-structure version 0.
+        if &hdr[0..4] != b"OggS" || hdr[4] != 0 {
+            break;
+        }
+        let nsegs = hdr[26] as u64;
+        if pos + 27 + nsegs > avail {
+            break;
+        }
+        let mut seg = [0u8; 255];
+        if nsegs > 0
+            && source.read_at(file_start + pos + 27, &mut seg[..nsegs as usize])? < nsegs as usize
+        {
+            break;
+        }
+        let data: u64 = seg[..nsegs as usize].iter().map(|&b| b as u64).sum();
+        let page_len = 27 + nsegs + data;
+        if pos + page_len > avail {
+            break;
+        }
+        pos += page_len;
+        pages += 1;
+    }
+
+    if pages == 0 || pos == 0 || file_start + pos > limit {
+        return Ok(None);
+    }
+    Ok(Some(pos))
 }
 
 /// Read an EBML variable-length integer at `off` (relative to `base`). Returns

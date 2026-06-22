@@ -352,3 +352,44 @@ fn recovers_matroska() {
     let video = mkv(&filler(11, 7000));
     assert_eq!(carve_one(&video, "mkv"), video, "MKV byte-for-byte");
 }
+
+/// Build one Ogg page: the 27-byte header, a lacing segment table sized to the
+/// body, then the body.
+fn ogg_page(header_type: u8, serial: u32, seqno: u32, body: &[u8]) -> Vec<u8> {
+    let mut segs = Vec::new();
+    let mut remaining = body.len();
+    loop {
+        if remaining >= 255 {
+            segs.push(255u8);
+            remaining -= 255;
+        } else {
+            segs.push(remaining as u8);
+            break;
+        }
+    }
+    let mut v = Vec::new();
+    v.extend_from_slice(b"OggS");
+    v.push(0); // version
+    v.push(header_type);
+    v.extend_from_slice(&0u64.to_le_bytes()); // granule position
+    v.extend_from_slice(&serial.to_le_bytes());
+    v.extend_from_slice(&seqno.to_le_bytes());
+    v.extend_from_slice(&0u32.to_le_bytes()); // CRC (ignored by the carver)
+    v.push(segs.len() as u8);
+    v.extend_from_slice(&segs);
+    v.extend_from_slice(body);
+    v
+}
+
+/// A two-page Ogg bitstream (BOS then EOS).
+fn ogg(b1: &[u8], b2: &[u8]) -> Vec<u8> {
+    let mut v = ogg_page(0x02, 1, 0, b1); // begin-of-stream
+    v.extend(ogg_page(0x04, 1, 1, b2)); // end-of-stream
+    v
+}
+
+#[test]
+fn recovers_ogg() {
+    let audio = ogg(&filler(12, 600), &filler(13, 3000));
+    assert_eq!(carve_one(&audio, "ogg"), audio, "Ogg byte-for-byte");
+}

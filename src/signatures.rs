@@ -20,6 +20,8 @@
 //!   arrays) to find the end of a TIFF or TIFF-based raw image.
 //! * [`Extent::Ebml`] — read the Matroska/WebM segment size (or walk its
 //!   top-level elements) to find where the container ends.
+//! * [`Extent::Ogg`] — walk the chain of Ogg pages (each sized by its segment
+//!   table) to the end of the bitstream.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -61,6 +63,9 @@ pub enum Extent {
     /// Matroska / WebM (EBML): take the Segment element's declared size, or, for
     /// an unknown-size Segment, sum its top-level child elements.
     Ebml,
+    /// Ogg (Vorbis/Opus/Theora): walk consecutive `OggS` pages, each sized by
+    /// its segment table, to the end of the bitstream.
+    Ogg,
 }
 
 /// A recoverable file type.
@@ -384,6 +389,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Ebml,
         max_size: 16 * GB,
+    },
+    Signature {
+        name: "Ogg (Vorbis/Opus/Theora)",
+        ext: "ogg",
+        magic: b"OggS",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Ogg,
+        max_size: 2 * GB,
     },
 ];
 
