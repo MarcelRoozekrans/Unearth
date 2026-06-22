@@ -18,6 +18,8 @@
 //!   overlay) to find where a Windows executable ends.
 //! * [`Extent::Tiff`] — walk the TIFF IFD chain (and sub-IFDs, strip/tile
 //!   arrays) to find the end of a TIFF or TIFF-based raw image.
+//! * [`Extent::Ebml`] — read the Matroska/WebM segment size (or walk its
+//!   top-level elements) to find where the container ends.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -56,6 +58,9 @@ pub enum Extent {
     /// sub-IFDs, taking the furthest extent of all field data and the strip/tile
     /// image arrays. Handles little- and big-endian.
     Tiff,
+    /// Matroska / WebM (EBML): take the Segment element's declared size, or, for
+    /// an unknown-size Segment, sum its top-level child elements.
+    Ebml,
 }
 
 /// A recoverable file type.
@@ -370,6 +375,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Tiff,
         max_size: 2 * GB,
+    },
+    Signature {
+        name: "Matroska / WebM video",
+        ext: "mkv",
+        magic: &[0x1A, 0x45, 0xDF, 0xA3], // EBML header element ID
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Ebml,
+        max_size: 16 * GB,
     },
 ];
 
