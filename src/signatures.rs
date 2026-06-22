@@ -16,6 +16,8 @@
 //!   find where the file ends.
 //! * [`Extent::Pe`] — walk a PE/COFF section table (and the certificate
 //!   overlay) to find where a Windows executable ends.
+//! * [`Extent::Tiff`] — walk the TIFF IFD chain (and sub-IFDs, strip/tile
+//!   arrays) to find the end of a TIFF or TIFF-based raw image.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -50,6 +52,10 @@ pub enum Extent {
     /// largest `PointerToRawData + SizeOfRawData` across the section table, also
     /// accounting for an appended certificate (Authenticode) overlay.
     Pe,
+    /// TIFF / TIFF-based raw (CR2, NEF, DNG, ARW, ...): walk the IFD chain and
+    /// sub-IFDs, taking the furthest extent of all field data and the strip/tile
+    /// image arrays. Handles little- and big-endian.
+    Tiff,
 }
 
 /// A recoverable file type.
@@ -317,6 +323,35 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Pe,
         max_size: 2 * GB,
+    },
+    // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
+    // at offset 8, so it must precede the generic TIFF entry.
+    Signature {
+        name: "Canon CR2 raw image",
+        ext: "cr2",
+        magic: &[0x49, 0x49, 0x2A, 0x00],
+        magic_offset: 0,
+        secondary: Some((8, b"CR")),
+        extent: Extent::Tiff,
+        max_size: 200 * MB,
+    },
+    Signature {
+        name: "TIFF image / raw (DNG/NEF/ARW)",
+        ext: "tif",
+        magic: &[0x49, 0x49, 0x2A, 0x00], // little-endian ("II*\0")
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Tiff,
+        max_size: 500 * MB,
+    },
+    Signature {
+        name: "TIFF image / raw (DNG/NEF/ARW)",
+        ext: "tif",
+        magic: &[0x4D, 0x4D, 0x00, 0x2A], // big-endian ("MM\0*")
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Tiff,
+        max_size: 500 * MB,
     },
 ];
 

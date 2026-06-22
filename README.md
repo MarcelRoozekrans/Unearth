@@ -234,6 +234,8 @@ record the `undelete` report produces, so both recovery modes can be audited.
 | avif   | AVIF image                                       | ISO box (atom) walk         |
 | cr3    | Canon CR3 raw image                              | ISO box (atom) walk         |
 | jxl    | JPEG XL image                                    | ISO box (atom) walk         |
+| tif    | TIFF image / raw (DNG/NEF/ARW)                   | IFD / strip-tile walk       |
+| cr2    | Canon CR2 raw image                              | IFD / strip-tile walk       |
 | pdf    | PDF document                                     | `%%EOF`                     |
 | zip    | ZIP (also DOCX/XLSX/PPTX/ODT/JAR/APK)            | end-of-central-directory    |
 | 7z     | 7-Zip archive                                    | next-header offset + size   |

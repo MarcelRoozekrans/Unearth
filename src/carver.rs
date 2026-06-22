@@ -253,7 +253,250 @@ fn file_length(
         Extent::Mp4Atoms => Ok(mp4_length(source, file_start, limit)?),
         Extent::Elf => Ok(elf_length(source, file_start, limit)?),
         Extent::Pe => Ok(pe_length(source, file_start, limit)?),
+        Extent::Tiff => Ok(tiff_length(source, file_start, limit)?),
     }
+}
+
+/// Positioned, endian-aware reader for the TIFF walk. All offsets are relative
+/// to the file start and bounds-checked against `avail`.
+struct TiffReader<'a> {
+    src: &'a Source,
+    base: u64,
+    le: bool,
+    avail: u64,
+}
+
+impl TiffReader<'_> {
+    fn u16(&self, off: u64) -> Result<Option<u16>> {
+        if off.saturating_add(2) > self.avail {
+            return Ok(None);
+        }
+        let mut b = [0u8; 2];
+        if self.src.read_at(self.base + off, &mut b)? < 2 {
+            return Ok(None);
+        }
+        Ok(Some(if self.le {
+            u16::from_le_bytes(b)
+        } else {
+            u16::from_be_bytes(b)
+        }))
+    }
+
+    fn u32(&self, off: u64) -> Result<Option<u32>> {
+        if off.saturating_add(4) > self.avail {
+            return Ok(None);
+        }
+        let mut b = [0u8; 4];
+        if self.src.read_at(self.base + off, &mut b)? < 4 {
+            return Ok(None);
+        }
+        Ok(Some(if self.le {
+            u32::from_le_bytes(b)
+        } else {
+            u32::from_be_bytes(b)
+        }))
+    }
+
+    /// Read up to `cap` integer values of an IFD entry (`entry` is the offset of
+    /// the 12-byte entry). Values live inline when they fit in 4 bytes, else at
+    /// the offset stored in the entry's value field. Only 1/2/4-byte integer
+    /// types are read (the kinds used for offsets and byte counts).
+    fn entry_array(&self, entry: u64, typ: u16, count: u64, cap: u64) -> Result<Vec<u64>> {
+        let sz = tiff_type_size(typ);
+        if !(sz == 1 || sz == 2 || sz == 4) || count == 0 {
+            return Ok(Vec::new());
+        }
+        let n = count.min(cap);
+        let total = n.saturating_mul(sz);
+        let inline = count.saturating_mul(sz) <= 4;
+        let base = if inline {
+            entry + 8
+        } else {
+            match self.u32(entry + 8)? {
+                Some(o) => o as u64,
+                None => return Ok(Vec::new()),
+            }
+        };
+        if base.saturating_add(total) > self.avail {
+            return Ok(Vec::new());
+        }
+        let mut buf = vec![0u8; total as usize];
+        let got = self.src.read_at(self.base + base, &mut buf)?;
+        let usable = (got as u64 / sz).min(n);
+        let mut out = Vec::with_capacity(usable as usize);
+        for j in 0..usable as usize {
+            let o = j * sz as usize;
+            let v = match sz {
+                1 => buf[o] as u64,
+                2 => {
+                    let b = [buf[o], buf[o + 1]];
+                    if self.le {
+                        u16::from_le_bytes(b) as u64
+                    } else {
+                        u16::from_be_bytes(b) as u64
+                    }
+                }
+                _ => {
+                    let b = [buf[o], buf[o + 1], buf[o + 2], buf[o + 3]];
+                    if self.le {
+                        u32::from_le_bytes(b) as u64
+                    } else {
+                        u32::from_be_bytes(b) as u64
+                    }
+                }
+            };
+            out.push(v);
+        }
+        Ok(out)
+    }
+}
+
+/// Byte size of a TIFF field type (0 for unknown/unsupported types).
+fn tiff_type_size(typ: u16) -> u64 {
+    match typ {
+        1 | 2 | 6 | 7 => 1, // BYTE, ASCII, SBYTE, UNDEFINED
+        3 | 8 => 2,         // SHORT, SSHORT
+        4 | 9 | 11 => 4,    // LONG, SLONG, FLOAT
+        5 | 10 | 12 => 8,   // RATIONAL, SRATIONAL, DOUBLE
+        _ => 0,
+    }
+}
+
+/// Walk a TIFF's IFD chain (plus sub-IFDs) and return the furthest byte the
+/// file references, which is its length. Returns `None` for a non-TIFF or a
+/// coincidental magic with no usable IFD.
+fn tiff_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAX_IFDS: usize = 4096;
+    const MAX_SUBIFDS: u64 = 64;
+    const MAX_STRIPS: u64 = 1 << 20;
+    let avail = limit - file_start;
+
+    let mut hdr = [0u8; 8];
+    if source.read_at(file_start, &mut hdr)? < 8 {
+        return Ok(None);
+    }
+    let le = match &hdr[0..2] {
+        b"II" => true,
+        b"MM" => false,
+        _ => return Ok(None),
+    };
+    let t = TiffReader {
+        src: source,
+        base: file_start,
+        le,
+        avail,
+    };
+    // Classic TIFF only (BigTIFF, magic 43, has a different layout).
+    if t.u16(2)?.unwrap_or(0) != 42 {
+        return Ok(None);
+    }
+    let first = match t.u32(4)? {
+        Some(v) => v as u64,
+        None => return Ok(None),
+    };
+
+    let mut max_end = 8u64; // the header
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = vec![first];
+    let mut processed = 0usize;
+    let mut budget: u32 = 1 << 20; // total entries scanned, bounds adversarial input
+
+    while let Some(ifd) = queue.pop() {
+        if ifd < 8 || !visited.insert(ifd) || processed >= MAX_IFDS {
+            continue;
+        }
+        let count = match t.u16(ifd)? {
+            Some(c) => c as u64,
+            None => continue,
+        };
+        processed += 1;
+        max_end = max_end.max(ifd + 2 + count * 12 + 4);
+
+        // Strip/tile offset+bytecount pairs, captured then resolved together.
+        let mut strip_off = None;
+        let mut strip_cnt = None;
+        let mut tile_off = None;
+        let mut tile_cnt = None;
+
+        for i in 0..count {
+            if budget == 0 {
+                break;
+            }
+            budget -= 1;
+            let e = ifd + 2 + i * 12;
+            let tag = match t.u16(e)? {
+                Some(v) => v,
+                None => break,
+            };
+            let typ = t.u16(e + 2)?.unwrap_or(0);
+            let cnt = t.u32(e + 4)?.unwrap_or(0) as u64;
+            let total = cnt.saturating_mul(tiff_type_size(typ));
+            // Field data stored out-of-line extends the file.
+            if total > 4 {
+                if let Some(off) = t.u32(e + 8)? {
+                    max_end = max_end.max((off as u64).saturating_add(total));
+                }
+            }
+            match tag {
+                273 => strip_off = Some((typ, cnt, e)), // StripOffsets
+                279 => strip_cnt = Some((typ, cnt, e)), // StripByteCounts
+                324 => tile_off = Some((typ, cnt, e)),  // TileOffsets
+                325 => tile_cnt = Some((typ, cnt, e)),  // TileByteCounts
+                330 => {
+                    // SubIFDs: an array of offsets to further IFDs.
+                    for off in t.entry_array(e, typ, cnt, MAX_SUBIFDS)? {
+                        queue.push(off);
+                    }
+                }
+                34665 | 34853 => {
+                    // Exif / GPS IFD pointer (a single LONG offset).
+                    if let Some(off) = t.entry_array(e, typ, cnt, 1)?.first() {
+                        queue.push(*off);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        max_end = max_end.max(strip_tile_end(&t, strip_off, strip_cnt, MAX_STRIPS)?);
+        max_end = max_end.max(strip_tile_end(&t, tile_off, tile_cnt, MAX_STRIPS)?);
+
+        if let Some(next) = t.u32(ifd + 2 + count * 12)? {
+            if next != 0 {
+                queue.push(next as u64);
+            }
+        }
+    }
+
+    if processed == 0 || max_end <= 8 || file_start + max_end > limit {
+        return Ok(None);
+    }
+    Ok(Some(max_end))
+}
+
+/// Resolve a paired (offsets, byte-counts) set of strip or tile entries to the
+/// furthest `offset[i] + bytecount[i]`.
+fn strip_tile_end(
+    t: &TiffReader,
+    offsets: Option<(u16, u64, u64)>,
+    counts: Option<(u16, u64, u64)>,
+    cap: u64,
+) -> Result<u64> {
+    let (ot, oc, oe) = match offsets {
+        Some(v) => v,
+        None => return Ok(0),
+    };
+    let (ct, cc, ce) = match counts {
+        Some(v) => v,
+        None => return Ok(0),
+    };
+    let offs = t.entry_array(oe, ot, oc, cap)?;
+    let lens = t.entry_array(ce, ct, cc, cap)?;
+    let mut end = 0u64;
+    for (o, l) in offs.iter().zip(lens.iter()) {
+        end = end.max(o.saturating_add(*l));
+    }
+    Ok(end)
 }
 
 /// Compute a PE (Windows EXE/DLL) file's length. The MZ magic is only two
