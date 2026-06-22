@@ -88,6 +88,17 @@ fn full_session_initializes_and_scans() {
     );
     // The JPEG was actually written to the output directory.
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1);
+
+    // The per-file manifest is inline, with a digest matching the bytes on disk.
+    let files = scan.get("files").unwrap().as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].get("type").unwrap().as_str(), Some("jpg"));
+    let expected = filerecovery::hash::to_hex(&filerecovery::hash::digest(&jpeg));
+    assert_eq!(
+        files[0].get("sha256").unwrap().as_str(),
+        Some(expected.as_str())
+    );
+    assert_eq!(scan.get("files_truncated").unwrap().as_bool(), Some(false));
 }
 
 #[test]
@@ -120,4 +131,14 @@ fn list_volumes_and_undelete_tools() {
     let undelete = tool_result(&resps[1]);
     assert_eq!(undelete.get("recovered").unwrap().as_u64(), Some(1));
     assert_eq!(std::fs::read(out.join("notes.txt")).unwrap(), b"hello mcp");
+
+    // The recovered file is listed inline with its path and digest.
+    let files = undelete.get("files").unwrap().as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].get("path").unwrap().as_str(), Some("notes.txt"));
+    let expected = filerecovery::hash::to_hex(&filerecovery::hash::digest(b"hello mcp"));
+    assert_eq!(
+        files[0].get("sha256").unwrap().as_str(),
+        Some(expected.as_str())
+    );
 }

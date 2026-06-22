@@ -24,6 +24,8 @@ use crate::{carver, hash, manifest, recover, signatures, source::Source};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const SERVER_NAME: &str = "filerecovery";
+/// Cap on per-file records embedded in a tool result, to bound response size.
+const MAX_FILES_IN_RESULT: usize = 1000;
 
 fn n(v: u64) -> Json {
     Json::Num(v as f64)
@@ -208,6 +210,10 @@ fn tool_definitions() -> Json {
                     int_prop("Ignore carved files smaller than this many bytes."),
                 ),
                 (
+                    "include_files",
+                    bool_prop("Include the per-file list with SHA-256 (default true)."),
+                ),
+                (
                     "validate",
                     bool_prop("Structural validation (default true)."),
                 ),
@@ -244,6 +250,10 @@ fn tool_definitions() -> Json {
                 (
                     "dry_run",
                     bool_prop("Report what would be recovered without writing."),
+                ),
+                (
+                    "include_files",
+                    bool_prop("Include the per-file list with SHA-256 (default true)."),
                 ),
             ],
             vec!["source", "output_dir"],
@@ -352,14 +362,36 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     .map(|(k, v)| (k.to_string(), n(*v)))
                     .collect(),
             );
-            Ok(obj(vec![
+            let mut result = vec![
                 ("output_dir", s(output_dir)),
                 ("files_recovered", n(stats.files_recovered)),
                 ("bytes_recovered", n(stats.bytes_recovered)),
                 ("rejected", n(stats.rejected)),
                 ("duplicates", n(stats.duplicates)),
                 ("per_type", per_type),
-            ]))
+            ];
+            if arg_bool("include_files").unwrap_or(true) {
+                let files: Vec<Json> = stats
+                    .files
+                    .iter()
+                    .take(MAX_FILES_IN_RESULT)
+                    .map(|f| {
+                        obj(vec![
+                            ("name", s(f.name.as_str())),
+                            ("type", s(f.ext)),
+                            ("offset", n(f.offset)),
+                            ("size", n(f.size)),
+                            ("sha256", s(hash::to_hex(&f.sha256))),
+                        ])
+                    })
+                    .collect();
+                result.push((
+                    "files_truncated",
+                    Json::Bool(stats.files.len() > files.len()),
+                ));
+                result.push(("files", Json::Arr(files)));
+            }
+            Ok(obj(result))
         }
 
         "undelete" => {
@@ -374,7 +406,10 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                 None => recover::detect(&source).map_err(|e| e.to_string())?,
             };
             let multi = volumes.len() > 1;
+            let include_files = arg_bool("include_files").unwrap_or(true);
             let (mut recovered, mut bytes, mut skipped) = (0u64, 0u64, 0u64);
+            let mut files: Vec<Json> = Vec::new();
+            let mut total_files = 0usize;
             for (i, vol) in volumes.iter().enumerate() {
                 let out = if multi {
                     Path::new(&output_dir).join(format!("volume_{i}"))
@@ -387,15 +422,41 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                 recovered += st.recovered;
                 bytes += st.bytes_recovered;
                 skipped += st.skipped;
+                if include_files {
+                    total_files += st.files.len();
+                    for f in &st.files {
+                        if files.len() >= MAX_FILES_IN_RESULT {
+                            break;
+                        }
+                        files.push(obj(vec![
+                            ("volume", n(i as u64)),
+                            ("path", s(f.path.to_string_lossy().into_owned())),
+                            ("size", n(f.size)),
+                            ("recovered", Json::Bool(f.recovered)),
+                            (
+                                "sha256",
+                                match &f.sha256 {
+                                    Some(d) => s(hash::to_hex(d)),
+                                    None => Json::Null,
+                                },
+                            ),
+                        ]));
+                    }
+                }
             }
-            Ok(obj(vec![
+            let mut result = vec![
                 ("output_dir", s(output_dir)),
                 ("volumes", n(volumes.len() as u64)),
                 ("dry_run", Json::Bool(opts.dry_run)),
                 ("recovered", n(recovered)),
                 ("bytes_recovered", n(bytes)),
                 ("skipped", n(skipped)),
-            ]))
+            ];
+            if include_files {
+                result.push(("files_truncated", Json::Bool(total_files > files.len())));
+                result.push(("files", Json::Arr(files)));
+            }
+            Ok(obj(result))
         }
 
         "verify" => {
