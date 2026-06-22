@@ -22,6 +22,8 @@
 //!   top-level elements) to find where the container ends.
 //! * [`Extent::Ogg`] — walk the chain of Ogg pages (each sized by its segment
 //!   table) to the end of the bitstream.
+//! * [`Extent::Asf`] — walk the top-level ASF objects (WMV/WMA), each a GUID
+//!   plus a 64-bit size, to the end of the container.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -66,6 +68,9 @@ pub enum Extent {
     /// Ogg (Vorbis/Opus/Theora): walk consecutive `OggS` pages, each sized by
     /// its segment table, to the end of the bitstream.
     Ogg,
+    /// ASF (WMV/WMA/ASF): walk the top-level objects, each a 16-byte GUID plus a
+    /// 64-bit little-endian size, stopping at the first unrecognised object.
+    Asf,
 }
 
 /// A recoverable file type.
@@ -398,6 +403,19 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Ogg,
         max_size: 2 * GB,
+    },
+    Signature {
+        name: "ASF / WMV / WMA media",
+        ext: "asf",
+        // ASF Header Object GUID (75B22630-668E-11CF-A6D9-00AA0062CE6C).
+        magic: &[
+            0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62,
+            0xCE, 0x6C,
+        ],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Asf,
+        max_size: 8 * GB,
     },
 ];
 

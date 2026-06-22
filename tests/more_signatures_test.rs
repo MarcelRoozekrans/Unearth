@@ -393,3 +393,26 @@ fn recovers_ogg() {
     let audio = ogg(&filler(12, 600), &filler(13, 3000));
     assert_eq!(carve_one(&audio, "ogg"), audio, "Ogg byte-for-byte");
 }
+
+const ASF_HEADER_GUID: [u8; 16] = [
+    0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+];
+const ASF_DATA_GUID: [u8; 16] = [
+    0x36, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+];
+
+/// One ASF object: its 16-byte GUID, a 64-bit size covering the whole object,
+/// then the payload.
+fn asf_obj(guid: &[u8; 16], payload: &[u8]) -> Vec<u8> {
+    let mut v = guid.to_vec();
+    v.extend_from_slice(&(24 + payload.len() as u64).to_le_bytes());
+    v.extend_from_slice(payload);
+    v
+}
+
+#[test]
+fn recovers_asf() {
+    let mut wmv = asf_obj(&ASF_HEADER_GUID, &filler(14, 500));
+    wmv.extend(asf_obj(&ASF_DATA_GUID, &filler(15, 4000)));
+    assert_eq!(carve_one(&wmv, "asf"), wmv, "ASF byte-for-byte");
+}

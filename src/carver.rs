@@ -256,7 +256,82 @@ fn file_length(
         Extent::Tiff => Ok(tiff_length(source, file_start, limit)?),
         Extent::Ebml => Ok(ebml_length(source, file_start, limit)?),
         Extent::Ogg => Ok(ogg_length(source, file_start, limit)?),
+        Extent::Asf => Ok(asf_length(source, file_start, limit)?),
     }
+}
+
+/// The 16-byte GUIDs of the ASF top-level objects, used both to confirm the
+/// container and to know where it ends (the walk stops at the first GUID that is
+/// not one of these).
+const ASF_GUIDS: [[u8; 16]; 6] = [
+    // Header Object (75B22630-668E-11CF-A6D9-00AA0062CE6C)
+    [
+        0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE,
+        0x6C,
+    ],
+    // Data Object (75B22636-668E-11CF-A6D9-00AA0062CE6C)
+    [
+        0x36, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE,
+        0x6C,
+    ],
+    // Simple Index Object (33000890-E5B1-11CF-89F4-00A0C90349CB)
+    [
+        0x90, 0x08, 0x00, 0x33, 0xB1, 0xE5, 0xCF, 0x11, 0x89, 0xF4, 0x00, 0xA0, 0xC9, 0x03, 0x49,
+        0xCB,
+    ],
+    // Index Object (D6E229D3-35DA-11D1-9034-00A0C90349BE)
+    [
+        0xD3, 0x29, 0xE2, 0xD6, 0xDA, 0x35, 0xD1, 0x11, 0x90, 0x34, 0x00, 0xA0, 0xC9, 0x03, 0x49,
+        0xBE,
+    ],
+    // Media Object Index Object (FEB103F8-12AD-4C64-840F-2A1D2F7AD48C)
+    [
+        0xF8, 0x03, 0xB1, 0xFE, 0xAD, 0x12, 0x64, 0x4C, 0x84, 0x0F, 0x2A, 0x1D, 0x2F, 0x7A, 0xD4,
+        0x8C,
+    ],
+    // Timecode Index Object (3CB73FD0-0C4A-4803-953D-EDF7B6228F0C)
+    [
+        0xD0, 0x3F, 0xB7, 0x3C, 0x4A, 0x0C, 0x03, 0x48, 0x95, 0x3D, 0xED, 0xF7, 0xB6, 0x22, 0x8F,
+        0x0C,
+    ],
+];
+
+/// Walk the top-level ASF objects (WMV/WMA). Each object is a 16-byte GUID plus
+/// a 64-bit little-endian size that covers the whole object; the file ends at
+/// the first position that is not a recognised top-level object.
+fn asf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAX_OBJECTS: u64 = 4096;
+    let avail = limit - file_start;
+    let mut pos = 0u64;
+    let mut count = 0u64;
+
+    while count < MAX_OBJECTS {
+        if pos + 24 > avail {
+            break;
+        }
+        let mut hdr = [0u8; 24];
+        if source.read_at(file_start + pos, &mut hdr)? < 24 {
+            break;
+        }
+        if !ASF_GUIDS.iter().any(|g| g == &hdr[0..16]) {
+            break; // unknown object => end of this container
+        }
+        let size = u64::from_le_bytes(hdr[16..24].try_into().unwrap());
+        if size < 24 {
+            break; // an object includes its own 24-byte header
+        }
+        let next = pos.saturating_add(size);
+        if next > avail {
+            break;
+        }
+        pos = next;
+        count += 1;
+    }
+
+    if count == 0 || pos == 0 || file_start + pos > limit {
+        return Ok(None);
+    }
+    Ok(Some(pos))
 }
 
 /// Walk the chain of Ogg pages starting at `file_start`. Each `OggS` page is
