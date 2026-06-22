@@ -125,11 +125,19 @@ Commands:
 
 `filerecovery mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
 server on stdin/stdout, exposing recovery as tools an AI agent (e.g. Claude) can
-call: `list_types`, `list_volumes`, `scan`, `undelete`, `verify`,
-`read_file` (read a recovered file's bytes back, base64, for inspection),
-`triage` (summarize a recovery directory — counts per type, largest files,
-duplicates, empties), and `identify` (detect a file's type from its contents).
-It speaks JSON-RPC 2.0 and needs no extra dependencies or network access.
+call: `list_types`, `list_volumes`, `scan`, `scan_status`, `scan_cancel`,
+`undelete`, `verify`, `read_file` (read a recovered file's bytes back, base64,
+for inspection), `triage` (summarize a recovery directory — counts per type,
+largest files, duplicates, empties), and `identify` (detect a file's type from
+its contents). It speaks JSON-RPC 2.0 and needs no extra dependencies or network
+access.
+
+Because carving a large drive can take an hour, `scan` runs as a **background
+job**: it returns a `job_id` immediately, the agent polls `scan_status` for
+live progress (bytes scanned / total) and the final file manifest, and
+`scan_cancel` stops it early (keeping whatever was already recovered). The
+server stays responsive throughout. `undelete` is metadata-driven and fast, so
+it stays synchronous.
 
 Point an MCP client at the binary, for example in a Claude Desktop config:
 

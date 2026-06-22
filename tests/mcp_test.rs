@@ -22,6 +22,13 @@ fn session(requests: &[&str]) -> Vec<Json> {
         .collect()
 }
 
+/// Call one request through `handle_request` and return the parsed tool result
+/// (the JSON inside `result.content[0].text`). Lets a test poll a background job.
+fn call(req: &str) -> Json {
+    let resp = mcp::handle_request(&json::parse(req).unwrap()).unwrap();
+    tool_result(&resp)
+}
+
 /// Pull the parsed `result.content[0].text` JSON out of a tool-call response.
 fn tool_result(resp: &Json) -> Json {
     let result = resp.get("result").unwrap();
@@ -50,26 +57,14 @@ fn full_session_initializes_and_scans() {
     data.extend_from_slice(&jpeg);
     std::fs::write(&img, &data).unwrap();
 
-    let scan_req = format!(
-        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"scan","arguments":{{"source":"{}","output_dir":"{}"}}}}}}"#,
-        img.display(),
-        out.display()
-    );
-    let resps = session(&[
+    // Handshake.
+    let init = session(&[
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-        &scan_req,
     ]);
-
-    // initialize + scan responses (the notification produces none).
+    assert_eq!(init.len(), 1, "no reply to the notification");
     assert_eq!(
-        resps.len(),
-        2,
-        "two responses, no reply to the notification"
-    );
-    assert_eq!(resps[0].get("id").unwrap().as_u64(), Some(1));
-    assert_eq!(
-        resps[0]
+        init[0]
             .get("result")
             .unwrap()
             .get("serverInfo")
@@ -80,7 +75,34 @@ fn full_session_initializes_and_scans() {
         Some("filerecovery")
     );
 
-    let scan = tool_result(&resps[1]);
+    // `scan` starts a background job and returns a job_id.
+    let scan_req = format!(
+        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"scan","arguments":{{"source":"{}","output_dir":"{}"}}}}}}"#,
+        img.display(),
+        out.display()
+    );
+    let started = call(&scan_req);
+    let job_id = started.get("job_id").unwrap().as_u64().unwrap();
+
+    // Poll scan_status until the job is done, then read its result.
+    let status_req = format!(
+        r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"scan_status","arguments":{{"job_id":{job_id}}}}}}}"#
+    );
+    let mut status = call(&status_req);
+    for _ in 0..2000 {
+        if !status.get("running").unwrap().as_bool().unwrap() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        status = call(&status_req);
+    }
+    assert_eq!(
+        status.get("running").unwrap().as_bool(),
+        Some(false),
+        "job finished"
+    );
+    let scan = status.get("result").unwrap();
+
     assert_eq!(scan.get("files_recovered").unwrap().as_u64(), Some(1));
     assert_eq!(
         scan.get("per_type").unwrap().get("jpg").unwrap().as_u64(),
@@ -118,6 +140,43 @@ fn full_session_initializes_and_scans() {
             .unwrap()
             .as_u64(),
         Some(1)
+    );
+}
+
+#[test]
+fn scan_status_and_cancel_reject_unknown_jobs() {
+    let status = mcp::handle_request(
+        &json::parse(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scan_status","arguments":{"job_id":999999}}}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        status
+            .get("result")
+            .unwrap()
+            .get("isError")
+            .unwrap()
+            .as_bool(),
+        Some(true)
+    );
+
+    let cancel = mcp::handle_request(
+        &json::parse(
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scan_cancel","arguments":{"job_id":999999}}}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        cancel
+            .get("result")
+            .unwrap()
+            .get("isError")
+            .unwrap()
+            .as_bool(),
+        Some(true)
     );
 }
 

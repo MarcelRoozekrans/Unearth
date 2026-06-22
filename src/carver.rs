@@ -107,6 +107,9 @@ pub fn carve(
     progress.begin(scan_end - scan_start);
 
     while abs < scan_end {
+        if progress.cancelled() {
+            break; // stop early; `stats` holds what was recovered so far
+        }
         let want = ((scan_end - abs) as usize).min(SCAN_CHUNK + overlap);
         let n = source.read_at(abs, &mut buf[..want])?;
         if n == 0 {
@@ -1324,6 +1327,11 @@ pub trait ProgressSink {
     fn begin(&self, _total: u64) {}
     fn update(&self, _scanned: u64) {}
     fn finish(&self, _scanned: u64) {}
+    /// Whether the caller has requested cancellation. The scan loop checks this
+    /// once per chunk and stops early, returning what it has recovered so far.
+    fn cancelled(&self) -> bool {
+        false
+    }
 }
 
 /// A no-op progress sink.
