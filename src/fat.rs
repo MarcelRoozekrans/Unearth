@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
+use crate::hash::HashingWriter;
 use crate::recover::{RecoverOptions, RecoverStats};
 use crate::source::Source;
 
@@ -303,25 +304,34 @@ impl Volume {
             }
 
             if opts.dry_run {
-                stats.record_recovered(df.path.clone(), df.size as u64);
+                stats.record_recovered(df.path.clone(), df.size as u64, None);
                 continue;
             }
             match self.write_file(src, out_dir, &df) {
-                Ok(_) => stats.record_recovered(df.path.clone(), df.size as u64),
+                Ok((_, digest)) => {
+                    stats.record_recovered(df.path.clone(), df.size as u64, Some(digest))
+                }
                 Err(_) => stats.record_skipped(df.path.clone(), df.size as u64),
             }
         }
         Ok(stats)
     }
 
-    /// Stream a recovered file to disk under `out_dir`, assuming contiguous data.
-    fn write_file(&self, src: &Source, out_dir: &Path, df: &DeletedFile) -> Result<u64> {
+    /// Stream a recovered file to disk under `out_dir`, assuming contiguous
+    /// data. Returns the number of bytes written and their SHA-256 digest.
+    fn write_file(
+        &self,
+        src: &Source,
+        out_dir: &Path,
+        df: &DeletedFile,
+    ) -> Result<(u64, [u8; 32])> {
         let target = unique_path(out_dir, &df.path);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
-        let mut out =
+        let file =
             fs::File::create(&target).with_context(|| format!("creating {}", target.display()))?;
+        let mut out = HashingWriter::new(file);
 
         let mut remaining = df.size as u64;
         let mut pos = self.cluster_offset(df.start_cluster);
@@ -339,8 +349,9 @@ impl Volume {
             pos += n as u64;
         }
         out.flush().ok();
+        let (out, digest) = out.into_parts();
         crate::times::apply(&out, df.mtime, df.atime);
-        Ok(df.size as u64 - remaining)
+        Ok((df.size as u64 - remaining, digest))
     }
 
     /// Walk live directories (starting at the root), collecting deleted files

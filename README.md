@@ -158,7 +158,11 @@ filerecovery undelete card.img --dry-run --report found.csv
 ```
 
 The report lists one row per deleted file: filesystem, volume offset, path,
-size, and whether the data was successfully recovered.
+size, whether the data was successfully recovered, and the **SHA-256** of the
+recovered bytes. The digest is computed as each file is written (no extra read
+pass) and makes the report a forensic manifest — anyone can re-hash a recovered
+file and confirm it matches. It is empty for files that could not be recovered
+and for `--dry-run` (where nothing is read or written).
 
 ### Carve a disk image (filesystem-agnostic)
 

@@ -127,6 +127,41 @@ pub fn to_hex(digest: &[u8]) -> String {
     s
 }
 
+/// A [`std::io::Write`] adapter that feeds everything written through it into a
+/// SHA-256 hasher, so a file can be hashed as it is streamed to disk without a
+/// second pass over the data.
+pub struct HashingWriter<W: std::io::Write> {
+    inner: W,
+    hasher: Sha256,
+}
+
+impl<W: std::io::Write> HashingWriter<W> {
+    pub fn new(inner: W) -> Self {
+        HashingWriter {
+            inner,
+            hasher: Sha256::new(),
+        }
+    }
+
+    /// Consume the writer, returning the wrapped writer and the digest of
+    /// everything written through it.
+    pub fn into_parts(self) -> (W, [u8; 32]) {
+        (self.inner, self.hasher.finalize())
+    }
+}
+
+impl<W: std::io::Write> std::io::Write for HashingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.hasher.update(&buf[..n]);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// The SHA-256 block compression function.
 fn compress(state: &mut [u32; 8], block: &[u8; 64]) {
     let mut w = [0u32; 64];
@@ -211,6 +246,21 @@ mod tests {
             h.update(chunk);
         }
         assert_eq!(h.finalize(), one_shot);
+    }
+
+    #[test]
+    fn hashing_writer_matches_digest() {
+        use std::io::Write;
+        let data: Vec<u8> = (0..5000u32).map(|i| (i % 256) as u8).collect();
+
+        let mut sink = Vec::new();
+        let mut hw = HashingWriter::new(&mut sink);
+        for chunk in data.chunks(101) {
+            hw.write_all(chunk).unwrap();
+        }
+        let (_, got) = hw.into_parts();
+        assert_eq!(got, digest(&data));
+        assert_eq!(sink, data, "bytes still pass through unchanged");
     }
 
     #[test]

@@ -175,8 +175,9 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
     let mut total_recovered = 0u64;
     let mut total_bytes = 0u64;
     let mut total_skipped = 0u64;
-    // Report rows: (filesystem, volume offset, relative path, size, recovered).
-    let mut report_rows: Vec<(String, u64, String, u64, bool)> = Vec::new();
+    // Report rows: (filesystem, volume offset, relative path, size, recovered,
+    // sha256-hex). The digest is empty for skipped files and dry runs.
+    let mut report_rows: Vec<(String, u64, String, u64, bool, String)> = Vec::new();
 
     for (i, vol) in volumes.iter().enumerate() {
         // Keep each volume's output separate to avoid path collisions.
@@ -199,12 +200,17 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
         let label = vol.fs_label();
         let offset = vol.offset();
         for f in &stats.files {
+            let sha = f
+                .sha256
+                .map(|d| filerecovery::hash::to_hex(&d))
+                .unwrap_or_default();
             report_rows.push((
                 label.clone(),
                 offset,
                 f.path.to_string_lossy().into_owned(),
                 f.size,
                 f.recovered,
+                sha,
             ));
         }
     }
@@ -229,8 +235,13 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
     Ok(())
 }
 
-/// Write a recovery report as CSV, or JSON when the path ends in `.json`.
-fn write_report(path: &std::path::Path, rows: &[(String, u64, String, u64, bool)]) -> Result<()> {
+/// Write a recovery report as CSV, or JSON when the path ends in `.json`. The
+/// `sha256` column is a forensic manifest: a verifiable digest of each
+/// recovered file's contents (empty for skipped files and dry runs).
+fn write_report(
+    path: &std::path::Path,
+    rows: &[(String, u64, String, u64, bool, String)],
+) -> Result<()> {
     let is_json = path
         .extension()
         .map(|e| e.eq_ignore_ascii_case("json"))
@@ -238,29 +249,31 @@ fn write_report(path: &std::path::Path, rows: &[(String, u64, String, u64, bool)
     let mut out = String::new();
     if is_json {
         out.push_str("[\n");
-        for (i, (fs, off, p, size, rec)) in rows.iter().enumerate() {
+        for (i, (fs, off, p, size, rec, sha)) in rows.iter().enumerate() {
             let comma = if i + 1 < rows.len() { "," } else { "" };
             out.push_str(&format!(
-                "  {{\"filesystem\": \"{}\", \"volume_offset\": {}, \"path\": \"{}\", \"size\": {}, \"recovered\": {}}}{}\n",
+                "  {{\"filesystem\": \"{}\", \"volume_offset\": {}, \"path\": \"{}\", \"size\": {}, \"recovered\": {}, \"sha256\": \"{}\"}}{}\n",
                 json_escape(fs),
                 off,
                 json_escape(p),
                 size,
                 rec,
+                sha,
                 comma
             ));
         }
         out.push_str("]\n");
     } else {
-        out.push_str("filesystem,volume_offset,path,size,recovered\n");
-        for (fs, off, p, size, rec) in rows {
+        out.push_str("filesystem,volume_offset,path,size,recovered,sha256\n");
+        for (fs, off, p, size, rec, sha) in rows {
             out.push_str(&format!(
-                "{},{},{},{},{}\n",
+                "{},{},{},{},{},{}\n",
                 fs,
                 off,
                 csv_escape(p),
                 size,
-                rec
+                rec,
+                sha
             ));
         }
     }
