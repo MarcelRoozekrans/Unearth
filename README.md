@@ -109,6 +109,7 @@ Commands:
   undelete    Recover deleted files from FAT/exFAT/NTFS/ext (keeps names/paths)
   scan        Carve files from a device or image by signature
   info        Show the partition / filesystem layout of a source
+  verify      Re-hash recovered files against a --report manifest
   list-types  List the file types this build can recover
 ```
 
@@ -163,6 +164,23 @@ recovered bytes. The digest is computed as each file is written (no extra read
 pass) and makes the report a forensic manifest — anyone can re-hash a recovered
 file and confirm it matches. It is empty for files that could not be recovered
 and for `--dry-run` (where nothing is read or written).
+
+### Verify recovered files against a manifest
+
+Both `scan` and `undelete` can write a `--report` manifest that records the
+SHA-256 of every recovered file. The `verify` command reads one back and
+re-hashes the files to confirm none were altered or lost:
+
+```sh
+filerecovery scan card.img -o recovered --report recovered/manifest.csv
+filerecovery verify recovered/manifest.csv --base recovered
+```
+
+It resolves each manifest row's path relative to `--base` (default: the current
+directory), re-hashes the file, and prints a `MISMATCH` or `MISSING` line for
+anything that fails. The command exits non-zero if any file mismatched or is
+missing, so it can gate a script. Rows without a digest (skipped files, dry
+runs) are counted but not checked. Both CSV and JSON manifests are accepted.
 
 ### Carve a disk image (filesystem-agnostic)
 

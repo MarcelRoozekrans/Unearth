@@ -198,6 +198,62 @@ fn report_manifest_carries_matching_sha256() {
 }
 
 #[test]
+fn verify_detects_intact_and_tampered_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+    let report = tmp.path().join("carved.csv");
+
+    let jpeg = common::jpeg(&vec![0x42u8; 3000]);
+    let mut data = vec![0u8; 500];
+    data.extend_from_slice(&jpeg);
+    std::fs::write(&img, &data).unwrap();
+
+    let out = run(&[
+        "scan",
+        img.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+        "-q",
+    ]);
+    assert!(out.status.success());
+
+    // A fresh recovery verifies clean.
+    let out = run(&[
+        "verify",
+        report.to_str().unwrap(),
+        "--base",
+        out_dir.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "verify should pass on intact files: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("1 OK"));
+
+    // Tamper with the recovered file; verify must now fail and flag it.
+    let carved = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    std::fs::write(&carved, b"corrupted contents").unwrap();
+
+    let out = run(&[
+        "verify",
+        report.to_str().unwrap(),
+        "--base",
+        out_dir.to_str().unwrap(),
+    ]);
+    assert!(!out.status.success(), "verify must fail on a tampered file");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("MISMATCH"));
+}
+
+#[test]
 fn undelete_offset_override_recovers() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("disk.img");

@@ -29,8 +29,27 @@ pub enum Command {
     Undelete(UndeleteArgs),
     /// Show the partition / filesystem layout detected in a source.
     Info(InfoArgs),
+    /// Re-hash recovered files against a manifest to confirm their integrity.
+    ///
+    /// Reads a report written by `scan --report` or `undelete --report` and
+    /// checks each recovered file's SHA-256 still matches, turning the manifest
+    /// into an auditable integrity record.
+    Verify(VerifyArgs),
     /// List the file types this build can recover.
     ListTypes,
+}
+
+#[derive(Parser)]
+pub struct VerifyArgs {
+    /// Manifest to verify: a `.json` or `.csv` report (format chosen by
+    /// extension).
+    #[arg(value_name = "MANIFEST")]
+    pub manifest: PathBuf,
+
+    /// Directory the recovered files live in. The `name`/`path` in each manifest
+    /// row is resolved relative to this.
+    #[arg(short, long, value_name = "DIR", default_value = ".")]
+    pub base: PathBuf,
 }
 
 #[derive(Parser)]
