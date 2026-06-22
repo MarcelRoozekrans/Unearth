@@ -231,6 +231,19 @@ fn info_json_on_garbage_has_empty_volumes() {
 }
 
 #[test]
+fn completions_emit_a_script() {
+    let out = run(&["completions", "bash"]);
+    assert!(out.status.success());
+    let script = String::from_utf8_lossy(&out.stdout);
+    // The bash completion script references the binary name and registers it.
+    assert!(script.contains("filerecovery"), "{script}");
+    assert!(script.contains("complete "), "{script}");
+
+    // An invalid shell is rejected.
+    assert!(!run(&["completions", "not-a-shell"]).status.success());
+}
+
+#[test]
 fn scan_writes_run_summary() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("disk.img");

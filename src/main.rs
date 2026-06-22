@@ -6,7 +6,8 @@ use anyhow::Result;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 
-use cli::{Cli, Command, InfoArgs, ScanArgs, UndeleteArgs, VerifyArgs};
+use clap::CommandFactory;
+use cli::{Cli, Command, CompletionsArgs, InfoArgs, ScanArgs, UndeleteArgs, VerifyArgs};
 use filerecovery::carver::{self, CarveOptions, ProgressSink};
 use filerecovery::recover;
 use filerecovery::signatures::{self, SIGNATURES};
@@ -23,7 +24,17 @@ fn main() -> Result<()> {
         Command::Undelete(args) => undelete(args),
         Command::Info(args) => info(args),
         Command::Verify(args) => verify(args),
+        Command::Completions(args) => {
+            completions(args);
+            Ok(())
+        }
     }
+}
+
+/// Print a shell completion script for `filerecovery` to stdout.
+fn completions(args: CompletionsArgs) {
+    let mut cmd = Cli::command();
+    clap_complete::generate(args.shell, &mut cmd, "filerecovery", &mut std::io::stdout());
 }
 
 fn verify(args: VerifyArgs) -> Result<()> {

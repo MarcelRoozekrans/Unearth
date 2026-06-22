@@ -115,7 +115,18 @@ Commands:
   info        Show the partition / filesystem layout of a source
   verify      Re-hash recovered files against a --report manifest
   list-types  List the file types this build can recover
+  completions Print a shell completion script
 ```
+
+### Shell completions
+
+```sh
+filerecovery completions bash > /etc/bash_completion.d/filerecovery   # bash
+filerecovery completions zsh  > ~/.zfunc/_filerecovery                # zsh
+filerecovery completions fish > ~/.config/fish/completions/filerecovery.fish
+```
+
+Supported shells: `bash`, `zsh`, `fish`, `powershell`, `elvish`.
 
 ### Inspect the layout of a disk or image
 

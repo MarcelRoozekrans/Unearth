@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use clap_complete::Shell;
 
 /// Recover deleted files from SD cards, hard drives, and disk images by
 /// signature-based file carving.
@@ -37,6 +38,17 @@ pub enum Command {
     Verify(VerifyArgs),
     /// List the file types this build can recover.
     ListTypes,
+    /// Print a shell completion script (bash, zsh, fish, powershell, elvish).
+    ///
+    /// Example: `filerecovery completions bash > /etc/bash_completion.d/filerecovery`.
+    Completions(CompletionsArgs),
+}
+
+#[derive(Parser)]
+pub struct CompletionsArgs {
+    /// Shell to generate a completion script for.
+    #[arg(value_name = "SHELL")]
+    pub shell: Shell,
 }
 
 #[derive(Parser)]
