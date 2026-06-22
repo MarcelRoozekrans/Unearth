@@ -416,3 +416,39 @@ fn recovers_asf() {
     wmv.extend(asf_obj(&ASF_DATA_GUID, &filler(15, 4000)));
     assert_eq!(carve_one(&wmv, "asf"), wmv, "ASF byte-for-byte");
 }
+
+/// Encode an unsigned LEB128 integer (only the small single-/double-byte cases
+/// the test needs).
+fn leb128(mut value: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let mut b = (value & 0x7F) as u8;
+        value >>= 7;
+        if value != 0 {
+            b |= 0x80;
+        }
+        out.push(b);
+        if value == 0 {
+            break;
+        }
+    }
+    out
+}
+
+/// A minimal WebAssembly module: the 8-byte header then sections of
+/// `(id, content)`.
+fn wasm(sections: &[(u8, Vec<u8>)]) -> Vec<u8> {
+    let mut v = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+    for (id, content) in sections {
+        v.push(*id);
+        v.extend(leb128(content.len() as u64));
+        v.extend_from_slice(content);
+    }
+    v
+}
+
+#[test]
+fn recovers_wasm() {
+    let module = wasm(&[(1, filler(16, 100)), (10, filler(17, 5000))]);
+    assert_eq!(carve_one(&module, "wasm"), module, "WASM byte-for-byte");
+}

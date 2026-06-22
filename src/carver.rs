@@ -257,7 +257,86 @@ fn file_length(
         Extent::Ebml => Ok(ebml_length(source, file_start, limit)?),
         Extent::Ogg => Ok(ogg_length(source, file_start, limit)?),
         Extent::Asf => Ok(asf_length(source, file_start, limit)?),
+        Extent::Wasm => Ok(wasm_length(source, file_start, limit)?),
     }
+}
+
+/// Read an unsigned LEB128 integer at `off`. Returns `(value, byte_len)`, or
+/// `None` if it runs past `avail` or exceeds the 5-byte limit for a 32-bit
+/// value (WebAssembly section sizes are `u32`).
+fn wasm_leb(source: &Source, base: u64, avail: u64, off: u64) -> Result<Option<(u64, u32)>> {
+    let mut value = 0u64;
+    let mut shift = 0u32;
+    let mut len = 0u32;
+    loop {
+        if off + len as u64 >= avail {
+            return Ok(None);
+        }
+        let mut b = [0u8; 1];
+        if source.read_at(base + off + len as u64, &mut b)? < 1 {
+            return Ok(None);
+        }
+        value |= ((b[0] & 0x7F) as u64) << shift;
+        len += 1;
+        if b[0] & 0x80 == 0 {
+            return Ok(Some((value, len)));
+        }
+        shift += 7;
+        if len >= 5 {
+            return Ok(None); // a u32 LEB128 is at most 5 bytes
+        }
+    }
+}
+
+/// Walk a WebAssembly module's sections. After the 8-byte header each section is
+/// a 1-byte id, an unsigned LEB128 size, then that many content bytes; the file
+/// ends at the first byte that is no longer a valid section.
+fn wasm_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAX_SECTIONS: u64 = 1 << 16;
+    let avail = limit - file_start;
+    let mut hdr = [0u8; 8];
+    if source.read_at(file_start, &mut hdr)? < 8 {
+        return Ok(None);
+    }
+    // "\0asm" magic and version 1.
+    if hdr[0..4] != [0x00, 0x61, 0x73, 0x6D]
+        || u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) != 1
+    {
+        return Ok(None);
+    }
+
+    let mut pos = 8u64;
+    let mut sections = 0u64;
+    while sections < MAX_SECTIONS {
+        if pos >= avail {
+            break;
+        }
+        let mut id = [0u8; 1];
+        if source.read_at(file_start + pos, &mut id)? < 1 || id[0] > 12 {
+            break; // 0..=12 are the defined section ids; anything else ends it
+        }
+        let (size, leblen) = match wasm_leb(source, file_start, avail, pos + 1)? {
+            Some(v) => v,
+            None => break,
+        };
+        if size == 0 {
+            break; // every real section carries at least one content byte
+        }
+        let next = pos
+            .saturating_add(1)
+            .saturating_add(leblen as u64)
+            .saturating_add(size);
+        if next > avail {
+            break;
+        }
+        pos = next;
+        sections += 1;
+    }
+
+    if sections == 0 || pos <= 8 || file_start + pos > limit {
+        return Ok(None);
+    }
+    Ok(Some(pos))
 }
 
 /// The 16-byte GUIDs of the ASF top-level objects, used both to confirm the

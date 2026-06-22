@@ -24,6 +24,8 @@
 //!   table) to the end of the bitstream.
 //! * [`Extent::Asf`] — walk the top-level ASF objects (WMV/WMA), each a GUID
 //!   plus a 64-bit size, to the end of the container.
+//! * [`Extent::Wasm`] — walk a WebAssembly module's sections (LEB128-sized) to
+//!   the end of the module.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -71,6 +73,9 @@ pub enum Extent {
     /// ASF (WMV/WMA/ASF): walk the top-level objects, each a 16-byte GUID plus a
     /// 64-bit little-endian size, stopping at the first unrecognised object.
     Asf,
+    /// WebAssembly: after the 8-byte header, walk the sections (each a 1-byte id
+    /// and an unsigned LEB128 size) to the end of the module.
+    Wasm,
 }
 
 /// A recoverable file type.
@@ -416,6 +421,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Asf,
         max_size: 8 * GB,
+    },
+    Signature {
+        name: "WebAssembly module",
+        ext: "wasm",
+        magic: &[0x00, 0x61, 0x73, 0x6D], // "\0asm"
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Wasm,
+        max_size: GB,
     },
 ];
 
