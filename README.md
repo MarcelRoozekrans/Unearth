@@ -350,4 +350,4 @@ assert that they are recovered byte-for-byte.
 
 ## License
 
-MIT
+Licensed under the [MIT License](LICENSE).
