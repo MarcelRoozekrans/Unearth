@@ -7,7 +7,9 @@ use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use clap::CommandFactory;
-use cli::{Cli, Command, CompletionsArgs, InfoArgs, ScanArgs, UndeleteArgs, VerifyArgs};
+use cli::{
+    Cli, Command, CompletionsArgs, InfoArgs, ScanArgs, TriageArgs, UndeleteArgs, VerifyArgs,
+};
 use filerecovery::carver::{self, CarveOptions, ProgressSink};
 use filerecovery::recover;
 use filerecovery::signatures::{self, SIGNATURES};
@@ -24,6 +26,7 @@ fn main() -> Result<()> {
         Command::Undelete(args) => undelete(args),
         Command::Info(args) => info(args),
         Command::Verify(args) => verify(args),
+        Command::Triage(args) => triage(args),
         Command::Mcp => {
             let stdin = std::io::stdin();
             let stdout = std::io::stdout();
@@ -108,6 +111,81 @@ fn deleted_count(vol: &recover::Volume, source: &Source, requested: bool) -> Opt
             Err(_) => -1,
         },
     )
+}
+
+fn triage(args: TriageArgs) -> Result<()> {
+    use filerecovery::json::{obj, s, Json};
+
+    let sum = filerecovery::triage::summarize(&args.dir, args.top)?;
+
+    if args.json {
+        let by_type = Json::Obj(
+            sum.by_type
+                .iter()
+                .map(|(ext, st)| {
+                    (
+                        ext.clone(),
+                        obj(vec![
+                            ("count", Json::Num(st.count as f64)),
+                            ("bytes", Json::Num(st.bytes as f64)),
+                        ]),
+                    )
+                })
+                .collect(),
+        );
+        let largest = sum
+            .largest
+            .iter()
+            .map(|(p, sz)| {
+                obj(vec![
+                    ("path", s(p.as_str())),
+                    ("size", Json::Num(*sz as f64)),
+                ])
+            })
+            .collect();
+        let out = obj(vec![
+            ("dir", s(args.dir.display().to_string())),
+            ("total_files", Json::Num(sum.total_files as f64)),
+            ("total_bytes", Json::Num(sum.total_bytes as f64)),
+            ("empty_files", Json::Num(sum.empty_files as f64)),
+            ("duplicate_sets", Json::Num(sum.duplicate_sets as f64)),
+            ("duplicate_bytes", Json::Num(sum.duplicate_bytes as f64)),
+            ("by_type", by_type),
+            ("largest", Json::Arr(largest)),
+        ]);
+        println!("{out}");
+        return Ok(());
+    }
+
+    println!(
+        "{} file(s), {} total.",
+        sum.total_files,
+        human_bytes(sum.total_bytes)
+    );
+    if sum.empty_files > 0 {
+        println!("  {} empty file(s).", sum.empty_files);
+    }
+    if sum.duplicate_sets > 0 {
+        println!(
+            "  {} duplicate set(s), {} redundant.",
+            sum.duplicate_sets,
+            human_bytes(sum.duplicate_bytes)
+        );
+    }
+    if !sum.by_type.is_empty() {
+        println!("\nBy type:");
+        for (ext, st) in &sum.by_type {
+            let label = if ext.is_empty() { "(none)" } else { ext };
+            println!("  {:<8} {:>5}  {}", label, st.count, human_bytes(st.bytes));
+        }
+    }
+    if !sum.largest.is_empty() {
+        println!("\nLargest:");
+        for (path, size) in &sum.largest {
+            println!("  {:>10}  {}", human_bytes(*size), path);
+        }
+    }
+    Ok(())
 }
 
 fn info(args: InfoArgs) -> Result<()> {

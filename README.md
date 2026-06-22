@@ -114,6 +114,7 @@ Commands:
   scan        Carve files from a device or image by signature
   info        Show the partition / filesystem layout of a source
   verify      Re-hash recovered files against a --report manifest
+  triage      Summarize a directory of recovered files
   list-types  List the file types this build can recover
   mcp         Run as an MCP server so an AI agent can drive recovery
   completions Print a shell completion script
@@ -181,6 +182,16 @@ Detected 1 volume(s):
 ```
 
 The `OFFSET` column is handy if you ever need to pass `--offset` to `undelete`.
+
+### Summarize a recovery directory
+
+After recovering, get the shape of what came back — counts per type, the
+largest files, content duplicates, and empty files:
+
+```sh
+filerecovery triage recovered
+filerecovery triage recovered --json   # machine-readable
+```
 
 ### Undelete from a FAT/exFAT/NTFS/ext card/image (keeps original names)
 
