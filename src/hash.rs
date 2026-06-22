@@ -97,9 +97,9 @@ impl Sha256 {
             }
         }
         while data.len() >= 64 {
-            let mut block = [0u8; 64];
-            block.copy_from_slice(&data[..64]);
-            compress(&mut self.state, &block);
+            // Compress straight from the input (no per-block copy).
+            let block: &[u8; 64] = data[..64].try_into().unwrap();
+            compress(&mut self.state, block);
             data = &data[64..];
         }
         if !data.is_empty() {
@@ -179,25 +179,40 @@ fn compress(state: &mut [u32; 8], block: &[u8; 64]) {
     }
 
     let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
-    for i in 0..64 {
-        let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-        let ch = (e & f) ^ ((!e) & g);
-        let t1 = h
-            .wrapping_add(s1)
-            .wrapping_add(ch)
-            .wrapping_add(K[i])
-            .wrapping_add(w[i]);
-        let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-        let maj = (a & b) ^ (a & c) ^ (b & c);
-        let t2 = s0.wrapping_add(maj);
-        h = g;
-        g = f;
-        f = e;
-        e = d.wrapping_add(t1);
-        d = c;
-        c = b;
-        b = a;
-        a = t1.wrapping_add(t2);
+
+    // One SHA-256 round. Computing into the `d`/`h` slots and shifting the
+    // argument order each call (below) keeps the eight working words in
+    // registers — the standard unrolled form, which is markedly faster than a
+    // loop that shuffles the variables every iteration.
+    macro_rules! round {
+        ($a:ident,$b:ident,$c:ident,$d:ident,$e:ident,$f:ident,$g:ident,$h:ident,$i:expr) => {{
+            let s1 = $e.rotate_right(6) ^ $e.rotate_right(11) ^ $e.rotate_right(25);
+            let ch = ($e & $f) ^ ((!$e) & $g);
+            let t1 = $h
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[$i])
+                .wrapping_add(w[$i]);
+            let s0 = $a.rotate_right(2) ^ $a.rotate_right(13) ^ $a.rotate_right(22);
+            let maj = ($a & $b) ^ ($a & $c) ^ ($b & $c);
+            $d = $d.wrapping_add(t1); // new e
+            $h = t1.wrapping_add(s0.wrapping_add(maj)); // new a (kept in the h slot)
+        }};
+    }
+
+    // 64 rounds as eight groups of eight; after each group of eight the variable
+    // roles return to (a..h), so the same eight statements repeat per group.
+    let mut i = 0;
+    while i < 64 {
+        round!(a, b, c, d, e, f, g, h, i);
+        round!(h, a, b, c, d, e, f, g, i + 1);
+        round!(g, h, a, b, c, d, e, f, i + 2);
+        round!(f, g, h, a, b, c, d, e, i + 3);
+        round!(e, f, g, h, a, b, c, d, i + 4);
+        round!(d, e, f, g, h, a, b, c, i + 5);
+        round!(c, d, e, f, g, h, a, b, i + 6);
+        round!(b, c, d, e, f, g, h, a, i + 7);
+        i += 8;
     }
 
     state[0] = state[0].wrapping_add(a);
