@@ -247,7 +247,7 @@ fn completions_emit_a_script() {
 fn identify_detects_type_by_content() {
     let tmp = tempfile::tempdir().unwrap();
     // A JPEG given a misleading .bin extension.
-    let jpeg = common::jpeg(&vec![0x41u8; 100]);
+    let jpeg = common::jpeg(&[0x41u8; 100]);
     let f = tmp.path().join("mystery.bin");
     std::fs::write(&f, &jpeg).unwrap();
 
