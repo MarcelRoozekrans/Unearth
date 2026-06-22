@@ -44,6 +44,7 @@ pub mod exfat;
 pub mod ext4;
 pub mod fat;
 pub mod hash;
+pub mod manifest;
 pub mod ntfs;
 pub mod recover;
 pub mod signatures;

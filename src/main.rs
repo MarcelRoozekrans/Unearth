@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 
-use cli::{Cli, Command, InfoArgs, ScanArgs, UndeleteArgs};
+use cli::{Cli, Command, InfoArgs, ScanArgs, UndeleteArgs, VerifyArgs};
 use filerecovery::carver::{self, CarveOptions, ProgressSink};
 use filerecovery::recover;
 use filerecovery::signatures::{self, SIGNATURES};
@@ -22,7 +22,58 @@ fn main() -> Result<()> {
         Command::Scan(args) => scan(args),
         Command::Undelete(args) => undelete(args),
         Command::Info(args) => info(args),
+        Command::Verify(args) => verify(args),
     }
+}
+
+fn verify(args: VerifyArgs) -> Result<()> {
+    let text = std::fs::read_to_string(&args.manifest)
+        .map_err(|e| anyhow::anyhow!("reading manifest {}: {e}", args.manifest.display()))?;
+    let is_json = args
+        .manifest
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+    let entries = filerecovery::manifest::parse(&text, is_json)?;
+
+    let mut ok = 0u64;
+    let mut mismatched = 0u64;
+    let mut missing = 0u64;
+    let mut no_digest = 0u64;
+
+    for e in &entries {
+        let expected = match &e.sha256 {
+            Some(s) => s,
+            None => {
+                no_digest += 1;
+                continue;
+            }
+        };
+        let path = args.base.join(&e.path);
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(_) => {
+                missing += 1;
+                println!("MISSING   {}", e.path);
+                continue;
+            }
+        };
+        let got = filerecovery::hash::to_hex(&filerecovery::hash::digest(&data));
+        if got.eq_ignore_ascii_case(expected) {
+            ok += 1;
+        } else {
+            mismatched += 1;
+            println!("MISMATCH  {} (expected {expected}, got {got})", e.path);
+        }
+    }
+
+    println!(
+        "Verified {ok} OK, {mismatched} mismatched, {missing} missing, {no_digest} without a digest."
+    );
+    if mismatched > 0 || missing > 0 {
+        anyhow::bail!("verification failed: {mismatched} mismatched, {missing} missing");
+    }
+    Ok(())
 }
 
 fn info(args: InfoArgs) -> Result<()> {
