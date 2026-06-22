@@ -140,6 +140,7 @@ fn list_types() {
 }
 
 fn scan(args: ScanArgs) -> Result<()> {
+    let started = std::time::Instant::now();
     let active = signatures::select(&args.types)?;
 
     let source = Source::open(&args.source)?;
@@ -199,10 +200,38 @@ fn scan(args: ScanArgs) -> Result<()> {
             stats.duplicates
         );
     }
+    if let Some(summary_path) = &args.summary {
+        let per_type: Vec<(String, u64)> = stats
+            .per_type
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect();
+        let fields = [
+            ("command", Sv::S("scan".into())),
+            ("source", Sv::S(args.source.display().to_string())),
+            ("source_bytes", Sv::N(source.size)),
+            ("output", Sv::S(opts.output_dir.display().to_string())),
+            ("types", Sv::S(type_list.join(","))),
+            ("validate", Sv::B(!args.no_validate)),
+            ("dedup", Sv::B(args.dedup)),
+            ("allow_nested", Sv::B(args.allow_nested)),
+            ("min_size", Sv::N(args.min_size)),
+            ("files_recovered", Sv::N(stats.files_recovered)),
+            ("bytes_recovered", Sv::N(stats.bytes_recovered)),
+            ("rejected", Sv::N(stats.rejected)),
+            ("duplicates", Sv::N(stats.duplicates)),
+            ("per_type", Sv::Map(per_type)),
+            ("elapsed_ms", Sv::N(started.elapsed().as_millis() as u64)),
+            ("timestamp_unix", Sv::N(unix_now())),
+        ];
+        write_summary(summary_path, &fields)?;
+        eprintln!("Summary written to {}", summary_path.display());
+    }
     Ok(())
 }
 
 fn undelete(args: UndeleteArgs) -> Result<()> {
+    let started = std::time::Instant::now();
     let source = Source::open(&args.source)?;
     eprintln!(
         "Source: {} ({})",
@@ -287,6 +316,92 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
         human_bytes(total_bytes),
         total_skipped
     );
+
+    if let Some(summary_path) = &args.summary {
+        let fields = [
+            ("command", Sv::S("undelete".into())),
+            ("source", Sv::S(args.source.display().to_string())),
+            ("source_bytes", Sv::N(source.size)),
+            ("output", Sv::S(args.output.display().to_string())),
+            ("volumes", Sv::N(volumes.len() as u64)),
+            ("dry_run", Sv::B(args.dry_run)),
+            ("min_size", Sv::N(args.min_size)),
+            ("recovered", Sv::N(total_recovered)),
+            ("bytes_recovered", Sv::N(total_bytes)),
+            ("skipped", Sv::N(total_skipped)),
+            ("elapsed_ms", Sv::N(started.elapsed().as_millis() as u64)),
+            ("timestamp_unix", Sv::N(unix_now())),
+        ];
+        write_summary(summary_path, &fields)?;
+        eprintln!("Summary written to {}", summary_path.display());
+    }
+    Ok(())
+}
+
+/// Seconds since the Unix epoch (0 if the clock is before it).
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// A value in a run summary.
+enum Sv {
+    S(String),
+    N(u64),
+    B(bool),
+    /// A nested object of string -> number (e.g. the per-type breakdown).
+    Map(Vec<(String, u64)>),
+}
+
+/// Write a run summary as JSON (when the path ends in `.json`) or plain text.
+fn write_summary(path: &std::path::Path, fields: &[(&str, Sv)]) -> Result<()> {
+    let is_json = path
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+    let mut out = String::new();
+    if is_json {
+        out.push_str("{\n");
+        for (i, (k, v)) in fields.iter().enumerate() {
+            let comma = if i + 1 < fields.len() { "," } else { "" };
+            match v {
+                Sv::S(s) => out.push_str(&format!("  \"{k}\": \"{}\"{comma}\n", json_escape(s))),
+                Sv::N(n) => out.push_str(&format!("  \"{k}\": {n}{comma}\n")),
+                Sv::B(b) => out.push_str(&format!("  \"{k}\": {b}{comma}\n")),
+                Sv::Map(m) => {
+                    if m.is_empty() {
+                        out.push_str(&format!("  \"{k}\": {{}}{comma}\n"));
+                    } else {
+                        out.push_str(&format!("  \"{k}\": {{\n"));
+                        for (j, (sk, sn)) in m.iter().enumerate() {
+                            let c2 = if j + 1 < m.len() { "," } else { "" };
+                            out.push_str(&format!("    \"{}\": {sn}{c2}\n", json_escape(sk)));
+                        }
+                        out.push_str(&format!("  }}{comma}\n"));
+                    }
+                }
+            }
+        }
+        out.push_str("}\n");
+    } else {
+        for (k, v) in fields {
+            match v {
+                Sv::S(s) => out.push_str(&format!("{k}: {s}\n")),
+                Sv::N(n) => out.push_str(&format!("{k}: {n}\n")),
+                Sv::B(b) => out.push_str(&format!("{k}: {b}\n")),
+                Sv::Map(m) => {
+                    out.push_str(&format!("{k}:\n"));
+                    for (sk, sn) in m {
+                        out.push_str(&format!("  {sk}: {sn}\n"));
+                    }
+                }
+            }
+        }
+    }
+    std::fs::write(path, out)
+        .map_err(|e| anyhow::anyhow!("writing summary {}: {e}", path.display()))?;
     Ok(())
 }
 

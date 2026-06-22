@@ -150,6 +150,7 @@ partition table). Override the location with `--offset <BYTES>` if needed.
     --min-size <BYTES> Skip deleted files smaller than this
     --dry-run          List what would be recovered without writing any files
     --report <FILE>    Write a report of what was found (.json => JSON, else CSV)
+    --summary <FILE>   Write a run summary (.json => JSON, else text)
 ```
 
 Preview what is recoverable, and save a manifest, without touching the output:
@@ -214,12 +215,18 @@ filerecovery scan card.img -o recovered --type jpg --type png
     --no-validate      Keep every signature match without structural validation
     --dedup            Write identical content (by SHA-256) only once
     --report <FILE>    Write a manifest of carved files (.json => JSON, else CSV)
+    --summary <FILE>   Write a run summary (.json => JSON, else text)
 -q, --quiet            Hide the progress bar
 ```
 
 The `--report` manifest lists one row per carved file: output name, type,
 source offset, size, and the SHA-256 of the carved bytes — the same verifiable
 record the `undelete` report produces, so both recovery modes can be audited.
+
+Both `scan` and `undelete` also accept `--summary <FILE>` to write a one-object
+run summary (source, options, counts, per-type breakdown, elapsed time, and a
+timestamp) as JSON or plain text — a compact record of the whole run to keep
+alongside the per-file manifest.
 
 ## Supported file types (`scan` / carving)
 
