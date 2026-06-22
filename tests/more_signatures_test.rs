@@ -191,3 +191,93 @@ fn recovers_pe_executable() {
         "byte-for-byte match"
     );
 }
+
+/// Build a minimal little-endian classic TIFF whose single IFD points (via a
+/// StripOffsets/StripByteCounts pair) at a block of image data. When `cr2` is
+/// set, the IFD is placed at offset 16 and a `CR\x02\x00` marker is written at
+/// offset 8, matching the Canon CR2 header. The file ends where the strip ends.
+fn tiff_le(image: &[u8], cr2: bool) -> Vec<u8> {
+    let n_entries: u16 = 4;
+    let ifd_off: usize = if cr2 { 16 } else { 8 };
+    let ifd_len = 2 + n_entries as usize * 12 + 4;
+    let strip_off = ifd_off + ifd_len; // image data right after the IFD
+    let total = strip_off + image.len();
+
+    let mut v = vec![0u8; total];
+    v[0..2].copy_from_slice(b"II");
+    v[2..4].copy_from_slice(&42u16.to_le_bytes());
+    v[4..8].copy_from_slice(&(ifd_off as u32).to_le_bytes());
+    if cr2 {
+        v[8..12].copy_from_slice(b"CR\x02\x00");
+    }
+
+    v[ifd_off..ifd_off + 2].copy_from_slice(&n_entries.to_le_bytes());
+    let mut entry = |idx: usize, tag: u16, typ: u16, count: u32, value: u32| {
+        let e = ifd_off + 2 + idx * 12;
+        v[e..e + 2].copy_from_slice(&tag.to_le_bytes());
+        v[e + 2..e + 4].copy_from_slice(&typ.to_le_bytes());
+        v[e + 4..e + 8].copy_from_slice(&count.to_le_bytes());
+        v[e + 8..e + 12].copy_from_slice(&value.to_le_bytes());
+    };
+    entry(0, 256, 4, 1, 64); // ImageWidth (LONG)
+    entry(1, 257, 4, 1, image.len() as u32 / 64); // ImageLength
+    entry(2, 273, 4, 1, strip_off as u32); // StripOffsets -> image data
+    entry(3, 279, 4, 1, image.len() as u32); // StripByteCounts
+    let next = ifd_off + 2 + n_entries as usize * 12;
+    v[next..next + 4].copy_from_slice(&0u32.to_le_bytes()); // no next IFD
+
+    v[strip_off..strip_off + image.len()].copy_from_slice(image);
+    v
+}
+
+fn carve_one(file: &[u8], ext: &str) -> Vec<u8> {
+    let tmp = tempfile::tempdir().unwrap();
+    let img_path = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+
+    let mut img = std::fs::File::create(&img_path).unwrap();
+    img.write_all(&vec![0u8; 600]).unwrap();
+    img.write_all(file).unwrap();
+    img.write_all(&vec![0u8; 600]).unwrap();
+    img.flush().unwrap();
+    drop(img);
+
+    let source = Source::open(&img_path).unwrap();
+    let sigs = signatures::select(&[ext.to_string()]).unwrap();
+    let opts = CarveOptions {
+        output_dir: out_dir.clone(),
+        start: 0,
+        end: None,
+        min_size: 0,
+        max_files: None,
+        allow_nested: false,
+        validate: true,
+        dedup: false,
+        progress: false,
+    };
+    let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
+    assert_eq!(stats.files_recovered, 1, "one {ext}");
+    assert_eq!(stats.per_type.get(ext), Some(&1));
+    std::fs::read(
+        std::fs::read_dir(&out_dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn recovers_tiff() {
+    let tif = tiff_le(&filler(7, 4000), false);
+    assert_eq!(carve_one(&tif, "tif"), tif, "TIFF byte-for-byte");
+}
+
+#[test]
+fn recovers_cr2_via_secondary_tag() {
+    let cr2 = tiff_le(&filler(8, 5000), true);
+    // The "CR" tag at offset 8 selects the cr2 signature over generic TIFF.
+    assert_eq!(carve_one(&cr2, "cr2"), cr2, "CR2 byte-for-byte");
+}
