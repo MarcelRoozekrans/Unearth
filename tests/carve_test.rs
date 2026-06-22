@@ -156,3 +156,34 @@ fn unknown_type_is_rejected() {
     let err = signatures::select(&["xyz".to_string()]).unwrap_err();
     assert!(err.to_string().contains("unknown file type"));
 }
+
+#[test]
+fn footer_search_terminates_without_a_footer() {
+    // Regression: a footer-type magic (JPEG) followed by data with no `FF D9`
+    // footer used to spin `find_footer` forever once the search reached the end
+    // of the buffer (the tail read advanced position by zero). It must instead
+    // terminate and recover nothing.
+    let tmp = tempfile::tempdir().unwrap();
+    let img: PathBuf = tmp.path().join("disk.img");
+    let out = tmp.path().join("out");
+
+    let mut data = vec![0xFF, 0xD8, 0xFF, 0xE0]; // JPEG SOI, no EOI anywhere
+    data.extend(std::iter::repeat(0x00).take(5000));
+    std::fs::write(&img, &data).unwrap();
+
+    let source = Source::open(&img).unwrap();
+    let sigs = signatures::select(&["jpg".to_string()]).unwrap();
+    let opts = CarveOptions {
+        output_dir: out,
+        start: 0,
+        end: None,
+        min_size: 0,
+        max_files: None,
+        allow_nested: false,
+        validate: false,
+        dedup: false,
+        progress: false,
+    };
+    let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
+    assert_eq!(stats.files_recovered, 0, "no footer => nothing recovered");
+}

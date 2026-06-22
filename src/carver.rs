@@ -1163,8 +1163,12 @@ fn find_footer(
             let file_end = (marker_end + trailing).min(limit);
             return Ok(Some(file_end - file_start));
         }
-        if n < want {
-            return Ok(None); // reached the end without a footer
+        if n < want || pos + n as u64 >= limit {
+            // Reached the end of the search region without a footer. (The final
+            // read was already searched above, so nothing was missed.) This also
+            // guarantees forward progress: the advance below can be zero when the
+            // tail read is `<= overlap` bytes, which would otherwise loop forever.
+            return Ok(None);
         }
         // Keep `overlap` bytes so a marker spanning the boundary is caught.
         pos += (n - overlap) as u64;
