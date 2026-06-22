@@ -123,9 +123,11 @@ Commands:
 
 `filerecovery mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
 server on stdin/stdout, exposing recovery as tools an AI agent (e.g. Claude) can
-call: `list_types`, `list_volumes`, `scan`, `undelete`, `verify`, and
-`read_file` (read a recovered file's bytes back, base64, for inspection). It
-speaks JSON-RPC 2.0 and needs no extra dependencies or network access.
+call: `list_types`, `list_volumes`, `scan`, `undelete`, `verify`,
+`read_file` (read a recovered file's bytes back, base64, for inspection), and
+`triage` (summarize a recovery directory — counts per type, largest files,
+duplicates, empties). It speaks JSON-RPC 2.0 and needs no extra dependencies or
+network access.
 
 Point an MCP client at the binary, for example in a Claude Desktop config:
 
