@@ -265,7 +265,8 @@ Run `filerecovery list-types` to see what your build supports.
 Append a `Signature` to the `SIGNATURES` table in
 [`src/signatures.rs`](src/signatures.rs). Most formats only need a magic-number
 header plus one of the existing extent strategies (`Footer`,
-`HeaderSizeLe32`, or `Mp4Atoms`).
+`HeaderSizeLe32`, or `Mp4Atoms`). See [CONTRIBUTING.md](CONTRIBUTING.md) for a
+step-by-step walkthrough (signature → extent → validator → test).
 
 ## How carving works
 
