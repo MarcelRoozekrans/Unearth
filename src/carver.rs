@@ -258,7 +258,52 @@ fn file_length(
         Extent::Ogg => Ok(ogg_length(source, file_start, limit)?),
         Extent::Asf => Ok(asf_length(source, file_start, limit)?),
         Extent::Wasm => Ok(wasm_length(source, file_start, limit)?),
+        Extent::IcoCur => Ok(icocur_length(source, file_start, limit)?),
     }
+}
+
+/// Compute an ICO/CUR file's length from its image directory: each 16-byte entry
+/// gives an image's byte size and its offset, and the file ends at the furthest
+/// `offset + size`. The weak 4-byte magic is gated by requiring a plausible
+/// directory whose images all sit after it.
+fn icocur_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let avail = limit - file_start;
+    let mut hdr = [0u8; 6];
+    if source.read_at(file_start, &mut hdr)? < 6 {
+        return Ok(None);
+    }
+    // reserved must be 0 and type must be icon (1) or cursor (2).
+    if hdr[0] != 0 || hdr[1] != 0 || !matches!(u16::from_le_bytes([hdr[2], hdr[3]]), 1 | 2) {
+        return Ok(None);
+    }
+    let count = u16::from_le_bytes([hdr[4], hdr[5]]) as u64;
+    if count == 0 || count > 1024 {
+        return Ok(None);
+    }
+    let dir_end = 6 + count * 16;
+    if dir_end > avail {
+        return Ok(None);
+    }
+
+    let mut max_end = dir_end;
+    let mut entry = [0u8; 16];
+    for i in 0..count {
+        if source.read_at(file_start + 6 + i * 16, &mut entry)? < 16 {
+            return Ok(None);
+        }
+        let size = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]) as u64;
+        let off = u32::from_le_bytes([entry[12], entry[13], entry[14], entry[15]]) as u64;
+        // Image data must be non-empty and sit past the directory.
+        if size == 0 || off < dir_end {
+            return Ok(None);
+        }
+        max_end = max_end.max(off.saturating_add(size));
+    }
+
+    if file_start + max_end > limit {
+        return Ok(None);
+    }
+    Ok(Some(max_end))
 }
 
 /// Read an unsigned LEB128 integer at `off`. Returns `(value, byte_len)`, or

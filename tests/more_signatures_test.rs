@@ -452,3 +452,31 @@ fn recovers_wasm() {
     let module = wasm(&[(1, filler(16, 100)), (10, filler(17, 5000))]);
     assert_eq!(carve_one(&module, "wasm"), module, "WASM byte-for-byte");
 }
+
+/// A minimal Windows icon: a directory of `images`, each placed right after the
+/// directory, with size and offset recorded per entry.
+fn ico(images: &[Vec<u8>]) -> Vec<u8> {
+    let count = images.len();
+    let dir_end = 6 + count * 16;
+    let total = dir_end + images.iter().map(|i| i.len()).sum::<usize>();
+    let mut v = vec![0u8; total];
+    v[2..4].copy_from_slice(&1u16.to_le_bytes()); // type = icon
+    v[4..6].copy_from_slice(&(count as u16).to_le_bytes());
+    let mut off = dir_end;
+    for (i, img) in images.iter().enumerate() {
+        let e = 6 + i * 16;
+        v[e] = 32; // width
+        v[e + 1] = 32; // height
+        v[e + 8..e + 12].copy_from_slice(&(img.len() as u32).to_le_bytes());
+        v[e + 12..e + 16].copy_from_slice(&(off as u32).to_le_bytes());
+        v[off..off + img.len()].copy_from_slice(img);
+        off += img.len();
+    }
+    v
+}
+
+#[test]
+fn recovers_ico() {
+    let icon = ico(&[filler(18, 1200), filler(19, 800)]);
+    assert_eq!(carve_one(&icon, "ico"), icon, "ICO byte-for-byte");
+}

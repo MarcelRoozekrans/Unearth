@@ -236,6 +236,8 @@ alongside the per-file manifest.
 | png    | PNG image                                        | `IEND` chunk                |
 | gif    | GIF image (87a/89a)                              | trailer `00 3B`             |
 | bmp    | BMP image                                        | size field in header        |
+| ico    | Windows icon                                     | image-directory walk        |
+| cur    | Windows cursor                                   | image-directory walk        |
 | webp   | WebP image                                       | RIFF size field             |
 | heic   | HEIC / HEIF image                               | ISO box (atom) walk         |
 | avif   | AVIF image                                       | ISO box (atom) walk         |
