@@ -257,6 +257,7 @@ alongside the per-file manifest.
 | asf    | ASF / WMV / WMA media                            | ASF object walk             |
 | elf    | ELF executable / shared object                   | section-header table offset |
 | exe    | PE executable (EXE/DLL)                          | PE/COFF section table        |
+| wasm   | WebAssembly module                               | section (LEB128) walk        |
 
 Run `filerecovery list-types` to see what your build supports.
 
