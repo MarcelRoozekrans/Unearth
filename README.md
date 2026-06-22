@@ -85,9 +85,11 @@ offset where they were found.
   recovered files back onto the damaged device can overwrite the very data you
   are trying to recover.
 - For the best results, work from an **image** of the device rather than the
-  live device:
+  live device — image it once, then run as many scans as you like against the
+  copy without stressing the (possibly failing) original. The built-in `image`
+  command does this read-only, tolerating bad sectors and writing sparse output:
   ```sh
-  sudo dd if=/dev/sdb of=card.img bs=4M conv=noerror,sync status=progress
+  sudo filerecovery image /dev/sdb card.img
   filerecovery scan card.img -o recovered
   ```
 
@@ -112,6 +114,7 @@ filerecovery <COMMAND>
 Commands:
   undelete    Recover deleted files from FAT/exFAT/NTFS/ext (keeps names/paths)
   scan        Carve files from a device or image by signature
+  image       Copy a device/image to an image file (read-only, bad-sector tolerant)
   info        Show the partition / filesystem layout of a source
   verify      Re-hash recovered files against a --report manifest
   triage      Summarize a directory of recovered files
@@ -126,16 +129,17 @@ Commands:
 `filerecovery mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
 server on stdin/stdout, exposing recovery as tools an AI agent (e.g. Claude) can
 call: `list_types`, `list_volumes`, `scan`, `scan_status`, `scan_cancel`,
-`undelete`, `verify`, `read_file` (read a recovered file's bytes back, base64,
-for inspection), `triage` (summarize a recovery directory — counts per type,
-largest files, duplicates, empties), and `identify` (detect a file's type from
-its contents). It speaks JSON-RPC 2.0 and needs no extra dependencies or network
-access.
+`image` (copy a device/image to an image file, read-only and bad-sector
+tolerant), `undelete`, `verify`, `read_file` (read a recovered file's bytes
+back, base64, for inspection), `triage` (summarize a recovery directory —
+counts per type, largest files, duplicates, empties), and `identify` (detect a
+file's type from its contents). It speaks JSON-RPC 2.0 and needs no extra
+dependencies or network access.
 
-Because carving a large drive can take an hour, `scan` runs as a **background
-job**: it returns a `job_id` immediately, the agent polls `scan_status` for
-live progress (bytes scanned / total) and the final file manifest, and
-`scan_cancel` stops it early (keeping whatever was already recovered). The
+Because carving or imaging a large drive can take an hour, `scan` and `image`
+run as **background jobs**: each returns a `job_id` immediately, the agent polls
+`scan_status` for live progress (bytes processed / total) and the final result,
+and `scan_cancel` stops a job early (keeping whatever was already produced). The
 server stays responsive throughout. `undelete` is metadata-driven and fast, so
 it stays synchronous.
 
@@ -166,6 +170,33 @@ filerecovery completions fish > ~/.config/fish/completions/filerecovery.fish
 ```
 
 Supported shells: `bash`, `zsh`, `fish`, `powershell`, `elvish`.
+
+### Image a failing drive first (recommended)
+
+If the drive may be failing, copy it once and recover from the copy — every
+later pass then reads the image instead of stressing the dying hardware again:
+
+```sh
+sudo filerecovery image /dev/sdb card.img      # read-only, bad-sector tolerant
+filerecovery scan card.img -o recovered        # then work on the copy
+```
+
+The copy is **read-only** on the source. A read that fails is retried at sector
+granularity to salvage the good sectors around the bad one; sectors that still
+fail are left as zero-filled holes and reported (and the command exits non-zero
+so the partial image is obvious). Zero runs are skipped, so an image of a
+mostly-empty drive stays small on a filesystem that supports sparse files.
+
+`image` options:
+
+```text
+    --start <BYTES>       Start copying at this offset (default: 0)
+    --end <BYTES>         Stop copying at this offset (exclusive)
+    --no-sparse           Write every byte, including zero runs (no holes)
+    --sector-size <BYTES> Bad-sector retry granularity (default: 512)
+    --summary <FILE>      Write a run summary (.json => JSON, else text)
+-q, --quiet               Suppress the progress bar
+```
 
 ### Inspect the layout of a disk or image
 

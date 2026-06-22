@@ -30,6 +30,14 @@ pub enum Command {
     Undelete(UndeleteArgs),
     /// Show the partition / filesystem layout detected in a source.
     Info(InfoArgs),
+    /// Copy a device or image to an image file, read-only and bad-sector
+    /// tolerant.
+    ///
+    /// Best practice for a failing drive: image it once, then run `scan` /
+    /// `undelete` against the image so later passes never touch the dying
+    /// hardware. Unreadable sectors are left as holes and reported, and zero
+    /// runs are skipped to keep the image sparse.
+    Image(ImageArgs),
     /// Re-hash recovered files against a manifest to confirm their integrity.
     ///
     /// Reads a report written by `scan --report` or `undelete --report` and
@@ -96,6 +104,45 @@ pub struct VerifyArgs {
     /// row is resolved relative to this.
     #[arg(short, long, value_name = "DIR", default_value = ".")]
     pub base: PathBuf,
+}
+
+#[derive(Parser)]
+pub struct ImageArgs {
+    /// Source to copy: a disk image file or a block device
+    /// (e.g. /dev/sdb, /dev/mmcblk0). Opened read-only.
+    #[arg(value_name = "SOURCE")]
+    pub source: PathBuf,
+
+    /// Image file to create (overwritten if it exists).
+    #[arg(value_name = "OUTPUT")]
+    pub output: PathBuf,
+
+    /// Start copying at this byte offset.
+    #[arg(long, value_name = "BYTES", default_value_t = 0)]
+    pub start: u64,
+
+    /// Stop copying at this byte offset (exclusive).
+    #[arg(long, value_name = "BYTES")]
+    pub end: Option<u64>,
+
+    /// Write every byte, including zero runs, instead of leaving holes. Use this
+    /// when the destination filesystem does not support sparse files.
+    #[arg(long)]
+    pub no_sparse: bool,
+
+    /// Bad-sector retry granularity: when a larger read fails, fall back to
+    /// reads of this size to salvage the good sectors around the bad one.
+    #[arg(long, value_name = "BYTES", default_value_t = 512)]
+    pub sector_size: u64,
+
+    /// Write a run summary (bytes copied/zeroed/sparse, bad regions) to this
+    /// path. `.json` for JSON, otherwise plain text.
+    #[arg(long, value_name = "FILE")]
+    pub summary: Option<PathBuf>,
+
+    /// Suppress the progress bar.
+    #[arg(short, long)]
+    pub quiet: bool,
 }
 
 #[derive(Parser)]

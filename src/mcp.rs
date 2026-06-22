@@ -9,7 +9,8 @@
 //! * `list_volumes` — detect partitions/filesystems in a source (+ deleted counts)
 //! * `scan`         — start background signature carving (returns a job id)
 //! * `scan_status`  — poll a scan job's progress and result
-//! * `scan_cancel`  — request cancellation of a scan job
+//! * `scan_cancel`  — request cancellation of a scan/image job
+//! * `image`        — background, bad-sector-tolerant disk imaging (returns a job id)
 //! * `undelete`     — filesystem-aware recovery into an output directory
 //! * `verify`       — re-hash recovered files against a `--report` manifest
 //! * `read_file`    — read a recovered file's bytes (base64) for inspection
@@ -235,6 +236,36 @@ fn tool_definitions() -> Json {
         ),
     );
     tool(
+        "image",
+        "Copy a source (disk image or device) to an image file, read-only and \
+         bad-sector tolerant. Best practice for a failing drive: image it once, \
+         then scan/undelete the image. Runs as a background job: returns a \
+         job_id — poll scan_status, and use scan_cancel to stop it.",
+        schema(
+            vec![
+                (
+                    "source",
+                    str_prop("Path to a disk image or device (read-only)."),
+                ),
+                ("output", str_prop("Image file to create (overwritten).")),
+                ("start", int_prop("Start byte offset (default 0).")),
+                (
+                    "end",
+                    int_prop("Exclusive end byte offset (default: device end)."),
+                ),
+                (
+                    "sparse",
+                    bool_prop("Skip zero runs, leaving holes (default true)."),
+                ),
+                (
+                    "sector_size",
+                    int_prop("Bad-sector retry granularity in bytes (default 512)."),
+                ),
+            ],
+            vec!["source", "output"],
+        ),
+    );
+    tool(
         "undelete",
         "Recover deleted files from a FAT/exFAT/NTFS/ext volume into output_dir, \
          keeping original names where possible.",
@@ -326,19 +357,19 @@ fn tool_definitions() -> Json {
     );
     tool(
         "scan_status",
-        "Check a background scan started by `scan`: running flag, bytes scanned / \
-         total, and the full result (file manifest) once done.",
+        "Check a background job started by `scan` or `image`: running flag, bytes \
+         processed / total, and the full result once done.",
         schema(
-            vec![("job_id", int_prop("Job id returned by scan."))],
+            vec![("job_id", int_prop("Job id returned by scan or image."))],
             vec!["job_id"],
         ),
     );
     tool(
         "scan_cancel",
-        "Request cancellation of a running scan; it stops at the next chunk and \
-         keeps whatever was already recovered.",
+        "Request cancellation of a running scan/image job; it stops at the next \
+         chunk and keeps whatever was already produced.",
         schema(
-            vec![("job_id", int_prop("Job id returned by scan."))],
+            vec![("job_id", int_prop("Job id returned by scan or image."))],
             vec!["job_id"],
         ),
     );
@@ -528,6 +559,61 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             } else {
                 Err(format!("no such job {id}"))
             }
+        }
+
+        "image" => {
+            // Imaging a large drive is slow, so run it as a background job and
+            // return a job id; the agent polls `scan_status` (shared job API).
+            let source_path = arg_str("source")?.to_string();
+            let output = arg_str("output")?.to_string();
+            let start = arg_u64("start").unwrap_or(0);
+            let end = arg_u64("end");
+            let sparse = arg_bool("sparse").unwrap_or(true);
+            let sector_size = arg_u64("sector_size").unwrap_or(crate::image::DEFAULT_SECTOR);
+
+            let id = crate::job::start("image", move |progress| {
+                let source = open(&source_path)?;
+                let opts = crate::image::ImageOptions {
+                    output: output.clone().into(),
+                    start,
+                    end,
+                    sparse,
+                    sector_size,
+                };
+                let stats =
+                    crate::image::image(&source, &opts, progress).map_err(|e| e.to_string())?;
+                let regions: Vec<Json> = stats
+                    .bad_regions
+                    .iter()
+                    .take(MAX_FILES_IN_RESULT)
+                    .map(|r| obj(vec![("offset", n(r.offset)), ("length", n(r.len))]))
+                    .collect();
+                Ok(obj(vec![
+                    ("output", s(output)),
+                    ("cancelled", Json::Bool(stats.cancelled)),
+                    ("bytes_total", n(stats.bytes_total)),
+                    ("bytes_copied", n(stats.bytes_copied)),
+                    ("bytes_sparse", n(stats.bytes_sparse)),
+                    ("bytes_zeroed", n(stats.bytes_zeroed)),
+                    ("bad_region_count", n(stats.bad_regions.len() as u64)),
+                    (
+                        "bad_regions_truncated",
+                        Json::Bool(stats.bad_regions.len() > regions.len()),
+                    ),
+                    ("bad_regions", Json::Arr(regions)),
+                ]))
+            });
+            Ok(obj(vec![
+                ("job_id", n(id)),
+                ("status", s("started")),
+                (
+                    "note",
+                    s(
+                        "imaging runs in the background; poll scan_status with this job_id, \
+                       and scan_cancel to stop it",
+                    ),
+                ),
+            ]))
         }
 
         "undelete" => {
@@ -794,6 +880,7 @@ mod tests {
             "list_types",
             "list_volumes",
             "scan",
+            "image",
             "undelete",
             "verify",
             "read_file",
