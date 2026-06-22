@@ -117,6 +117,42 @@ fn undelete_dry_run_with_report_writes_no_files() {
 }
 
 #[test]
+fn report_manifest_carries_matching_sha256() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+    let report = tmp.path().join("manifest.json");
+
+    let content = b"hash me for the recovery manifest";
+    std::fs::write(&img, common::ext_volume("notes.txt", content)).unwrap();
+
+    let out = run(&[
+        "undelete",
+        img.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The digest in the report must match a fresh hash of the recovered file.
+    let recovered = std::fs::read(out_dir.join("notes.txt")).unwrap();
+    assert_eq!(recovered, content);
+    let expected = filerecovery::hash::to_hex(&filerecovery::hash::digest(&recovered));
+
+    let json = std::fs::read_to_string(&report).unwrap();
+    assert!(
+        json.contains(&format!("\"sha256\": \"{expected}\"")),
+        "report missing expected digest {expected}: {json}"
+    );
+}
+
+#[test]
 fn undelete_offset_override_recovers() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("disk.img");

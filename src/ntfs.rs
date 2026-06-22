@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
+use crate::hash::HashingWriter;
 use crate::recover::{RecoverOptions, RecoverStats};
 use crate::source::Source;
 
@@ -205,13 +206,13 @@ impl Volume {
 
             let rel = self.resolve_path(src, parent, &name);
             if opts.dry_run {
-                stats.record_recovered(rel, data.size);
+                stats.record_recovered(rel, data.size, None);
                 continue;
             }
             let times = (parsed.mtime, parsed.atime);
             match self.write_file(src, out_dir, &rel, &data, times) {
-                Ok(written) if written > 0 || data.size == 0 => {
-                    stats.record_recovered(rel, data.size)
+                Ok((written, digest)) if written > 0 || data.size == 0 => {
+                    stats.record_recovered(rel, data.size, Some(digest))
                 }
                 _ => stats.record_skipped(rel, data.size),
             }
@@ -227,13 +228,14 @@ impl Volume {
         rel: &Path,
         data: &DataAttr,
         times: (Option<std::time::SystemTime>, Option<std::time::SystemTime>),
-    ) -> Result<u64> {
+    ) -> Result<(u64, [u8; 32])> {
         let target = unique_path(out_dir, rel);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
-        let mut out =
+        let file =
             fs::File::create(&target).with_context(|| format!("creating {}", target.display()))?;
+        let mut out = HashingWriter::new(file);
 
         let written = match &data.kind {
             DataKind::Resident(bytes) => {
@@ -290,8 +292,9 @@ impl Volume {
             }
         };
         out.flush().ok();
+        let (out, digest) = out.into_parts();
         crate::times::apply(&out, times.0, times.1);
-        Ok(written)
+        Ok((written, digest))
     }
 
     /// Resolve a deleted file's path by climbing parent directory records.

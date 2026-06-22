@@ -28,6 +28,9 @@ pub struct RecoveredFile {
     pub size: u64,
     /// Whether the data was successfully recovered (false = skipped/corrupt).
     pub recovered: bool,
+    /// SHA-256 of the recovered bytes, when they were written. `None` for
+    /// skipped files and for dry runs (where nothing is read or written).
+    pub sha256: Option<[u8; 32]>,
 }
 
 /// Outcome of recovering deleted files from one volume.
@@ -42,14 +45,16 @@ pub struct RecoverStats {
 }
 
 impl RecoverStats {
-    /// Record a successfully recovered file.
-    pub fn record_recovered(&mut self, path: PathBuf, size: u64) {
+    /// Record a successfully recovered file. `sha256` is the digest of the
+    /// written bytes, or `None` for a dry run.
+    pub fn record_recovered(&mut self, path: PathBuf, size: u64, sha256: Option<[u8; 32]>) {
         self.recovered += 1;
         self.bytes_recovered += size;
         self.files.push(RecoveredFile {
             path,
             size,
             recovered: true,
+            sha256,
         });
     }
 
@@ -60,6 +65,7 @@ impl RecoverStats {
             path,
             size,
             recovered: false,
+            sha256: None,
         });
     }
 }

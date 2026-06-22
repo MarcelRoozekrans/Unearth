@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
+use crate::hash;
 use crate::recover::{RecoverOptions, RecoverStats};
 use crate::source::Source;
 
@@ -277,11 +278,13 @@ impl Volume {
                 continue;
             }
             if opts.dry_run {
-                stats.record_recovered(rel, size);
+                stats.record_recovered(rel, size, None);
                 continue;
             }
             match self.write_file(src, out_dir, &rel, &inode, size) {
-                Ok(written) if written > 0 => stats.record_recovered(rel, size),
+                Ok((written, digest)) if written > 0 => {
+                    stats.record_recovered(rel, size, Some(digest))
+                }
                 _ => stats.record_skipped(rel, size),
             }
         }
@@ -694,10 +697,10 @@ impl Volume {
         rel: &Path,
         inode: &[u8],
         size: u64,
-    ) -> Result<u64> {
+    ) -> Result<(u64, [u8; 32])> {
         let data = self.read_file_data(src, inode, size)?;
         if data.is_empty() {
-            return Ok(0);
+            return Ok((0, hash::digest(&data)));
         }
         let target = unique_path(out_dir, rel);
         if let Some(parent) = target.parent() {
@@ -710,7 +713,7 @@ impl Volume {
         let mtime = crate::times::from_unix(inode_mtime(inode));
         let atime = crate::times::from_unix(inode_atime(inode));
         crate::times::apply(&out, mtime, atime);
-        Ok(data.len() as u64)
+        Ok((data.len() as u64, hash::digest(&data)))
     }
 }
 
