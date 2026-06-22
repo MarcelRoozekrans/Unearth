@@ -10,6 +10,7 @@
 //! * `scan`         — signature carving into an output directory
 //! * `undelete`     — filesystem-aware recovery into an output directory
 //! * `verify`       — re-hash recovered files against a `--report` manifest
+//! * `read_file`    — read a recovered file's bytes (base64) for inspection
 //!
 //! It is built on the crate's own [`crate::json`] so it pulls in no new
 //! dependencies and runs synchronously (no async runtime).
@@ -273,8 +274,49 @@ fn tool_definitions() -> Json {
             vec!["manifest", "base"],
         ),
     );
+    tool(
+        "read_file",
+        "Read the contents of a recovered file (base64), so the agent can inspect \
+         it. Capped at 1 MiB; use max_bytes for a smaller preview.",
+        schema(
+            vec![
+                ("path", str_prop("Path to the file to read.")),
+                (
+                    "max_bytes",
+                    int_prop("Maximum bytes to return (default 65536, cap 1 MiB)."),
+                ),
+            ],
+            vec!["path"],
+        ),
+    );
 
     Json::Arr(tools)
+}
+
+/// Standard base64 encoding (with padding), so recovered bytes can travel in a
+/// JSON string. Hand-rolled to avoid a dependency.
+fn to_base64(data: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[(n >> 18) as usize & 0x3F] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 0x3F] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 0x3F] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 0x3F] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
@@ -497,6 +539,37 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             ]))
         }
 
+        "read_file" => {
+            const HARD_CAP: u64 = 1 << 20; // 1 MiB
+            let path = arg_str("path")?;
+            let max_bytes = arg_u64("max_bytes").unwrap_or(65536).min(HARD_CAP);
+            let meta = std::fs::metadata(path).map_err(|e| format!("stat {path}: {e}"))?;
+            let size = meta.len();
+            let mut buf = vec![0u8; max_bytes.min(size) as usize];
+            {
+                use std::io::Read;
+                let mut f =
+                    std::fs::File::open(path).map_err(|e| format!("opening {path}: {e}"))?;
+                let mut read = 0usize;
+                while read < buf.len() {
+                    let nb = f.read(&mut buf[read..]).map_err(|e| e.to_string())?;
+                    if nb == 0 {
+                        break;
+                    }
+                    read += nb;
+                }
+                buf.truncate(read);
+            }
+            Ok(obj(vec![
+                ("path", s(path)),
+                ("size", n(size)),
+                ("bytes_returned", n(buf.len() as u64)),
+                ("truncated", Json::Bool((buf.len() as u64) < size)),
+                ("encoding", s("base64")),
+                ("data", s(to_base64(&buf))),
+            ]))
+        }
+
         other => Err(format!("unknown tool '{other}'")),
     }
 }
@@ -565,9 +638,25 @@ mod tests {
             .iter()
             .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
             .collect();
-        for want in ["list_types", "list_volumes", "scan", "undelete", "verify"] {
+        for want in [
+            "list_types",
+            "list_volumes",
+            "scan",
+            "undelete",
+            "verify",
+            "read_file",
+        ] {
             assert!(names.contains(&want), "missing tool {want}");
         }
+    }
+
+    #[test]
+    fn base64_matches_known_vectors() {
+        assert_eq!(to_base64(b""), "");
+        assert_eq!(to_base64(b"f"), "Zg==");
+        assert_eq!(to_base64(b"fo"), "Zm8=");
+        assert_eq!(to_base64(b"foo"), "Zm9v");
+        assert_eq!(to_base64(b"foobar"), "Zm9vYmFy");
     }
 
     #[test]

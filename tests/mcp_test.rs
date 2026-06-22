@@ -141,4 +141,18 @@ fn list_volumes_and_undelete_tools() {
         files[0].get("sha256").unwrap().as_str(),
         Some(expected.as_str())
     );
+
+    // The agent can read the recovered file's bytes back for inspection.
+    let recovered_path = out.join("notes.txt");
+    let rf = format!(
+        r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"read_file","arguments":{{"path":"{}"}}}}}}"#,
+        recovered_path.display()
+    );
+    let resps = session(&[&rf]);
+    let read = tool_result(&resps[0]);
+    assert_eq!(read.get("size").unwrap().as_u64(), Some(9)); // "hello mcp"
+    assert_eq!(read.get("truncated").unwrap().as_bool(), Some(false));
+    assert_eq!(read.get("encoding").unwrap().as_str(), Some("base64"));
+    // "hello mcp" base64-encodes to "aGVsbG8gbWNw".
+    assert_eq!(read.get("data").unwrap().as_str(), Some("aGVsbG8gbWNw"));
 }
