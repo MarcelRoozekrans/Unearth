@@ -99,6 +99,26 @@ fn full_session_initializes_and_scans() {
         Some(expected.as_str())
     );
     assert_eq!(scan.get("files_truncated").unwrap().as_bool(), Some(false));
+
+    // Triage the output directory: one jpg file, no duplicates.
+    let tr = format!(
+        r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"triage","arguments":{{"dir":"{}"}}}}}}"#,
+        out.display()
+    );
+    let triage = tool_result(&session(&[&tr])[0]);
+    assert_eq!(triage.get("total_files").unwrap().as_u64(), Some(1));
+    assert_eq!(triage.get("duplicate_sets").unwrap().as_u64(), Some(0));
+    assert_eq!(
+        triage
+            .get("by_type")
+            .unwrap()
+            .get("jpg")
+            .unwrap()
+            .get("count")
+            .unwrap()
+            .as_u64(),
+        Some(1)
+    );
 }
 
 #[test]

@@ -11,6 +11,7 @@
 //! * `undelete`     — filesystem-aware recovery into an output directory
 //! * `verify`       — re-hash recovered files against a `--report` manifest
 //! * `read_file`    — read a recovered file's bytes (base64) for inspection
+//! * `triage`       — summarize a directory of recovered files
 //!
 //! It is built on the crate's own [`crate::json`] so it pulls in no new
 //! dependencies and runs synchronously (no async runtime).
@@ -287,6 +288,24 @@ fn tool_definitions() -> Json {
                 ),
             ],
             vec!["path"],
+        ),
+    );
+    tool(
+        "triage",
+        "Summarize a directory of recovered files: counts and bytes per type, the \
+         largest files, content duplicates, and empty files.",
+        schema(
+            vec![
+                (
+                    "dir",
+                    str_prop("Directory of recovered files to summarize."),
+                ),
+                (
+                    "top",
+                    int_prop("How many of the largest files to list (default 10)."),
+                ),
+            ],
+            vec!["dir"],
         ),
     );
 
@@ -570,6 +589,38 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             ]))
         }
 
+        "triage" => {
+            let dir = arg_str("dir")?;
+            let top = arg_u64("top").unwrap_or(10) as usize;
+            let sum = crate::triage::summarize(Path::new(dir), top).map_err(|e| e.to_string())?;
+            let by_type = Json::Obj(
+                sum.by_type
+                    .iter()
+                    .map(|(ext, st)| {
+                        (
+                            ext.clone(),
+                            obj(vec![("count", n(st.count)), ("bytes", n(st.bytes))]),
+                        )
+                    })
+                    .collect(),
+            );
+            let largest = sum
+                .largest
+                .iter()
+                .map(|(p, sz)| obj(vec![("path", s(p.as_str())), ("size", n(*sz))]))
+                .collect();
+            Ok(obj(vec![
+                ("dir", s(dir)),
+                ("total_files", n(sum.total_files)),
+                ("total_bytes", n(sum.total_bytes)),
+                ("empty_files", n(sum.empty_files)),
+                ("duplicate_sets", n(sum.duplicate_sets)),
+                ("duplicate_bytes", n(sum.duplicate_bytes)),
+                ("by_type", by_type),
+                ("largest", Json::Arr(largest)),
+            ]))
+        }
+
         other => Err(format!("unknown tool '{other}'")),
     }
 }
@@ -645,6 +696,7 @@ mod tests {
             "undelete",
             "verify",
             "read_file",
+            "triage",
         ] {
             assert!(names.contains(&want), "missing tool {want}");
         }
