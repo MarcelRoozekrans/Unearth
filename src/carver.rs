@@ -254,7 +254,144 @@ fn file_length(
         Extent::Elf => Ok(elf_length(source, file_start, limit)?),
         Extent::Pe => Ok(pe_length(source, file_start, limit)?),
         Extent::Tiff => Ok(tiff_length(source, file_start, limit)?),
+        Extent::Ebml => Ok(ebml_length(source, file_start, limit)?),
     }
+}
+
+/// Read an EBML variable-length integer at `off` (relative to `base`). Returns
+/// `(value, byte_len, is_unknown)` with the leading length-marker bit removed
+/// from the value; `is_unknown` marks the all-ones "unknown size" encoding.
+fn ebml_vint(source: &Source, base: u64, avail: u64, off: u64) -> Result<Option<(u64, u32, bool)>> {
+    if off >= avail {
+        return Ok(None);
+    }
+    let mut first = [0u8; 1];
+    if source.read_at(base + off, &mut first)? < 1 {
+        return Ok(None);
+    }
+    let first = first[0];
+    if first == 0 {
+        return Ok(None); // lengths beyond 8 bytes are unsupported here
+    }
+    let len = first.leading_zeros() + 1; // 1..=8
+    if off + len as u64 > avail {
+        return Ok(None);
+    }
+    let marker = 1u8 << (8 - len);
+    let mut value = (first & (marker - 1)) as u64;
+    let extra = (len - 1) as usize;
+    if extra > 0 {
+        let mut buf = [0u8; 7];
+        if source.read_at(base + off + 1, &mut buf[..extra])? < extra {
+            return Ok(None);
+        }
+        for &b in &buf[..extra] {
+            value = (value << 8) | b as u64;
+        }
+    }
+    let data_bits = 7 * len;
+    let unknown = if data_bits >= 64 {
+        value == u64::MAX
+    } else {
+        value == (1u64 << data_bits) - 1
+    };
+    Ok(Some((value, len, unknown)))
+}
+
+/// Length of an EBML element ID at `off`, derived from its first byte.
+fn ebml_id_len(source: &Source, base: u64, avail: u64, off: u64) -> Result<Option<u32>> {
+    if off >= avail {
+        return Ok(None);
+    }
+    let mut first = [0u8; 1];
+    if source.read_at(base + off, &mut first)? < 1 || first[0] == 0 {
+        return Ok(None);
+    }
+    let len = first[0].leading_zeros() + 1;
+    if off + len as u64 > avail {
+        return Ok(None);
+    }
+    Ok(Some(len))
+}
+
+/// Compute the length of a Matroska/WebM (EBML) file: skip the EBML header
+/// element, then take the Segment's declared size, or sum its top-level
+/// children when the Segment size is encoded as "unknown".
+fn ebml_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const EBML_HEADER_ID: [u8; 4] = [0x1A, 0x45, 0xDF, 0xA3];
+    const SEGMENT_ID: [u8; 4] = [0x18, 0x53, 0x80, 0x67];
+    let avail = limit - file_start;
+
+    let mut id = [0u8; 4];
+    if source.read_at(file_start, &mut id)? < 4 || id != EBML_HEADER_ID {
+        return Ok(None);
+    }
+    // EBML header element: 4-byte ID then a size VINT and that many data bytes.
+    let (hsize, hlen, hunknown) = match ebml_vint(source, file_start, avail, 4)? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    if hunknown {
+        return Ok(None);
+    }
+    let seg_pos = (4u64 + hlen as u64).saturating_add(hsize);
+
+    // The next top-level element must be the Segment.
+    let mut seg = [0u8; 4];
+    if seg_pos + 4 > avail
+        || source.read_at(file_start + seg_pos, &mut seg)? < 4
+        || seg != SEGMENT_ID
+    {
+        return Ok(None);
+    }
+    let (ssize, slen, sunknown) = match ebml_vint(source, file_start, avail, seg_pos + 4)? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    let seg_data_start = seg_pos + 4 + slen as u64;
+
+    let total = if !sunknown {
+        seg_data_start.saturating_add(ssize)
+    } else {
+        // Unknown segment size: sum top-level children that declare a size.
+        let mut p = seg_data_start;
+        let mut advanced = false;
+        loop {
+            if p >= avail {
+                break;
+            }
+            let idlen = match ebml_id_len(source, file_start, avail, p)? {
+                Some(l) => l,
+                None => break,
+            };
+            let (csize, clen, cunknown) =
+                match ebml_vint(source, file_start, avail, p + idlen as u64)? {
+                    Some(v) => v,
+                    None => break,
+                };
+            if cunknown {
+                break; // can't bound a child of unknown size
+            }
+            let next = p
+                .saturating_add(idlen as u64)
+                .saturating_add(clen as u64)
+                .saturating_add(csize);
+            if next > avail {
+                break;
+            }
+            p = next;
+            advanced = true;
+        }
+        if !advanced {
+            return Ok(None);
+        }
+        p
+    };
+
+    if total <= seg_data_start || file_start + total > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
 }
 
 /// Positioned, endian-aware reader for the TIFF walk. All offsets are relative

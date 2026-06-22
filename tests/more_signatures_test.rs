@@ -323,3 +323,32 @@ fn recovers_bigtiff() {
     let big = bigtiff_le(&filler(9, 6400));
     assert_eq!(carve_one(&big, "tif"), big, "BigTIFF byte-for-byte");
 }
+
+/// Encode `value` as an EBML variable-length integer of `len` bytes, including
+/// the leading length-marker bit.
+fn ebml_vint(value: u64, len: u32) -> Vec<u8> {
+    let mut bytes = vec![0u8; len as usize];
+    for i in 0..len as usize {
+        bytes[len as usize - 1 - i] = (value >> (8 * i)) as u8;
+    }
+    bytes[0] |= 1u8 << (8 - len);
+    bytes
+}
+
+/// A minimal Matroska/WebM file: an empty EBML header element followed by a
+/// known-size Segment wrapping the payload.
+fn mkv(payload: &[u8]) -> Vec<u8> {
+    let mut v = Vec::new();
+    v.extend_from_slice(&[0x1A, 0x45, 0xDF, 0xA3]); // EBML header ID
+    v.extend_from_slice(&ebml_vint(0, 1)); // header data size = 0
+    v.extend_from_slice(&[0x18, 0x53, 0x80, 0x67]); // Segment ID
+    v.extend_from_slice(&ebml_vint(payload.len() as u64, 8)); // 8-byte segment size
+    v.extend_from_slice(payload);
+    v
+}
+
+#[test]
+fn recovers_matroska() {
+    let video = mkv(&filler(11, 7000));
+    assert_eq!(carve_one(&video, "mkv"), video, "MKV byte-for-byte");
+}

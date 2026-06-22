@@ -252,6 +252,7 @@ alongside the per-file manifest.
 | avi    | AVI video                                        | RIFF size field             |
 | mp4    | MP4 / MOV / M4A media                            | ISO box (atom) walk         |
 | 3gp    | 3GP video                                        | ISO box (atom) walk         |
+| mkv    | Matroska / WebM video                            | EBML segment-size walk      |
 | elf    | ELF executable / shared object                   | section-header table offset |
 | exe    | PE executable (EXE/DLL)                          | PE/COFF section table        |
 
