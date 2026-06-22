@@ -10,7 +10,10 @@ device or image is always accessed **read-only**.
 |--------------------|----------------|
 | `source`           | Read-only, positioned access to a device/image; reports total size. The one I/O primitive everything else builds on. |
 | `signatures`       | The carving signature table + the matcher (`SignatureIndex`), including the `secondary` tag used to disambiguate shared magics (RIFF, ISO-BMFF). |
-| `carver`           | The `scan` engine: chunked sequential read, header detection, per-type extent computation, streaming writes. |
+| `carver`           | The `scan` engine: chunked sequential read, header detection, per-type extent computation, content hashing, dedup, streaming writes. |
+| `validate`         | Conservative structural validation of carved headers (JPEG marker, PNG `IHDR`, BMP/GIF/SQLite/ELF fields) to drop coincidental magic matches. |
+| `hash`             | Dependency-free SHA-256 (streaming `Sha256` + `HashingWriter`) used for dedup and the recovery manifests. |
+| `manifest`         | Parses the CSV/JSON `--report` manifests back for the `verify` command. |
 | `recover`          | Partition/volume **detection** (bare, MBR, GPT) and the `Volume` dispatcher + shared `RecoverOptions`/`RecoverStats`. The single entry point the CLI uses for `undelete`/`info`. |
 | `fat`              | FAT12/16/32 undelete. |
 | `exfat`            | exFAT undelete. |
