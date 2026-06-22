@@ -281,3 +281,45 @@ fn recovers_cr2_via_secondary_tag() {
     // The "CR" tag at offset 8 selects the cr2 signature over generic TIFF.
     assert_eq!(carve_one(&cr2, "cr2"), cr2, "CR2 byte-for-byte");
 }
+
+/// Build a minimal little-endian BigTIFF: a 16-byte header (magic 43, 8-byte
+/// offsets), one IFD with an 8-byte count, 20-byte entries, and 8-byte offsets,
+/// whose StripOffsets/StripByteCounts point at a block of image data.
+fn bigtiff_le(image: &[u8]) -> Vec<u8> {
+    let n_entries: u64 = 4;
+    let ifd_off: usize = 16;
+    let ifd_len = 8 + n_entries as usize * 20 + 8; // count + entries + next-IFD
+    let strip_off = ifd_off + ifd_len;
+    let total = strip_off + image.len();
+
+    let mut v = vec![0u8; total];
+    v[0..2].copy_from_slice(b"II");
+    v[2..4].copy_from_slice(&43u16.to_le_bytes()); // BigTIFF magic
+    v[4..6].copy_from_slice(&8u16.to_le_bytes()); // offset byte size
+    v[6..8].copy_from_slice(&0u16.to_le_bytes()); // reserved
+    v[8..16].copy_from_slice(&(ifd_off as u64).to_le_bytes()); // first IFD offset
+
+    v[ifd_off..ifd_off + 8].copy_from_slice(&n_entries.to_le_bytes());
+    let mut entry = |idx: usize, tag: u16, typ: u16, count: u64, value: u64| {
+        let e = ifd_off + 8 + idx * 20;
+        v[e..e + 2].copy_from_slice(&tag.to_le_bytes());
+        v[e + 2..e + 4].copy_from_slice(&typ.to_le_bytes());
+        v[e + 4..e + 12].copy_from_slice(&count.to_le_bytes());
+        v[e + 12..e + 20].copy_from_slice(&value.to_le_bytes());
+    };
+    entry(0, 256, 4, 1, 64); // ImageWidth (LONG)
+    entry(1, 257, 4, 1, image.len() as u64 / 64); // ImageLength
+    entry(2, 273, 16, 1, strip_off as u64); // StripOffsets (LONG8) -> image
+    entry(3, 279, 16, 1, image.len() as u64); // StripByteCounts (LONG8)
+    let next = ifd_off + 8 + n_entries as usize * 20;
+    v[next..next + 8].copy_from_slice(&0u64.to_le_bytes()); // no next IFD
+
+    v[strip_off..strip_off + image.len()].copy_from_slice(image);
+    v
+}
+
+#[test]
+fn recovers_bigtiff() {
+    let big = bigtiff_le(&filler(9, 6400));
+    assert_eq!(carve_one(&big, "tif"), big, "BigTIFF byte-for-byte");
+}
