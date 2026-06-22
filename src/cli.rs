@@ -91,6 +91,11 @@ pub struct UndeleteArgs {
     /// extension: `.json` for JSON, otherwise CSV.
     #[arg(long, value_name = "FILE")]
     pub report: Option<PathBuf>,
+
+    /// Write a run summary (source, options, counts, timing) to this path.
+    /// `.json` for JSON, otherwise plain text.
+    #[arg(long, value_name = "FILE")]
+    pub summary: Option<PathBuf>,
 }
 
 #[derive(Parser)]
@@ -145,6 +150,11 @@ pub struct ScanArgs {
     /// extension: `.json` for JSON, otherwise CSV.
     #[arg(long, value_name = "FILE")]
     pub report: Option<PathBuf>,
+
+    /// Write a run summary (source, options, counts, timing) to this path.
+    /// `.json` for JSON, otherwise plain text.
+    #[arg(long, value_name = "FILE")]
+    pub summary: Option<PathBuf>,
 
     /// Suppress the progress bar.
     #[arg(short, long)]

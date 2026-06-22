@@ -198,6 +198,37 @@ fn report_manifest_carries_matching_sha256() {
 }
 
 #[test]
+fn scan_writes_run_summary() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+    let summary = tmp.path().join("summary.json");
+
+    let jpeg = common::jpeg(&vec![0x41u8; 2500]);
+    let mut data = vec![0u8; 800];
+    data.extend_from_slice(&jpeg);
+    std::fs::write(&img, &data).unwrap();
+
+    let out = run(&[
+        "scan",
+        img.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--summary",
+        summary.to_str().unwrap(),
+        "-q",
+    ]);
+    assert!(out.status.success());
+
+    let json = std::fs::read_to_string(&summary).unwrap();
+    assert!(json.contains("\"command\": \"scan\""), "{json}");
+    assert!(json.contains("\"files_recovered\": 1"), "{json}");
+    assert!(json.contains("\"per_type\""), "{json}");
+    assert!(json.contains("\"jpg\": 1"), "{json}");
+    assert!(json.contains("\"timestamp_unix\""), "{json}");
+}
+
+#[test]
 fn verify_detects_intact_and_tampered_files() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("disk.img");
