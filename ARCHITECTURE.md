@@ -14,6 +14,8 @@ device or image is always accessed **read-only**.
 | `validate`         | Conservative structural validation of carved headers (JPEG marker, PNG `IHDR`, BMP/GIF/SQLite/ELF fields) to drop coincidental magic matches. |
 | `hash`             | Dependency-free SHA-256 (streaming `Sha256` + `HashingWriter`) used for dedup and the recovery manifests. |
 | `manifest`         | Parses the CSV/JSON `--report` manifests back for the `verify` command. |
+| `json`             | A tiny dependency-free JSON value type, parser, and serializer (used by the MCP server, which must parse arbitrary client input). |
+| `mcp`              | A minimal Model Context Protocol server over stdio (JSON-RPC 2.0), exposing `list_types`/`list_volumes`/`scan`/`undelete`/`verify` as tools for an AI agent. |
 | `recover`          | Partition/volume **detection** (bare, MBR, GPT) and the `Volume` dispatcher + shared `RecoverOptions`/`RecoverStats`. The single entry point the CLI uses for `undelete`/`info`. |
 | `fat`              | FAT12/16/32 undelete. |
 | `exfat`            | exFAT undelete. |
