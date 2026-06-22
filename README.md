@@ -115,6 +115,7 @@ Commands:
   info        Show the partition / filesystem layout of a source
   verify      Re-hash recovered files against a --report manifest
   triage      Summarize a directory of recovered files
+  identify    Identify a file's type from its contents
   list-types  List the file types this build can recover
   mcp         Run as an MCP server so an AI agent can drive recovery
   completions Print a shell completion script
@@ -125,10 +126,10 @@ Commands:
 `filerecovery mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
 server on stdin/stdout, exposing recovery as tools an AI agent (e.g. Claude) can
 call: `list_types`, `list_volumes`, `scan`, `undelete`, `verify`,
-`read_file` (read a recovered file's bytes back, base64, for inspection), and
+`read_file` (read a recovered file's bytes back, base64, for inspection),
 `triage` (summarize a recovery directory — counts per type, largest files,
-duplicates, empties). It speaks JSON-RPC 2.0 and needs no extra dependencies or
-network access.
+duplicates, empties), and `identify` (detect a file's type from its contents).
+It speaks JSON-RPC 2.0 and needs no extra dependencies or network access.
 
 Point an MCP client at the binary, for example in a Claude Desktop config:
 
@@ -182,6 +183,17 @@ Detected 1 volume(s):
 ```
 
 The `OFFSET` column is handy if you ever need to pass `--offset` to `undelete`.
+
+### Identify a file by content
+
+Carved files are named by offset, not type — and recovered files may have a
+misleading extension. `identify` reports a file's type from its bytes (the same
+signatures and structural checks carving uses):
+
+```sh
+filerecovery identify recovered/00000000_0x1000.bin
+filerecovery identify mystery.dat --json
+```
 
 ### Summarize a recovery directory
 

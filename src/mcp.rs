@@ -12,6 +12,7 @@
 //! * `verify`       — re-hash recovered files against a `--report` manifest
 //! * `read_file`    — read a recovered file's bytes (base64) for inspection
 //! * `triage`       — summarize a directory of recovered files
+//! * `identify`     — identify a file's type from its contents
 //!
 //! It is built on the crate's own [`crate::json`] so it pulls in no new
 //! dependencies and runs synchronously (no async runtime).
@@ -306,6 +307,15 @@ fn tool_definitions() -> Json {
                 ),
             ],
             vec!["dir"],
+        ),
+    );
+    tool(
+        "identify",
+        "Identify a file's type from its contents (signature + structural check), \
+         independent of its extension.",
+        schema(
+            vec![("path", str_prop("Path to the file to identify."))],
+            vec!["path"],
         ),
     );
 
@@ -621,6 +631,32 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             ]))
         }
 
+        "identify" => {
+            use std::io::Read;
+            let path = arg_str("path")?;
+            let mut head = vec![0u8; 64 * 1024];
+            let mut f = std::fs::File::open(path).map_err(|e| format!("opening {path}: {e}"))?;
+            let mut read = 0usize;
+            while read < head.len() {
+                let nb = f.read(&mut head[read..]).map_err(|e| e.to_string())?;
+                if nb == 0 {
+                    break;
+                }
+                read += nb;
+            }
+            head.truncate(read);
+            Ok(match crate::identify::identify(&head) {
+                Some(d) => obj(vec![
+                    ("path", s(path)),
+                    ("identified", Json::Bool(true)),
+                    ("type", s(d.ext)),
+                    ("name", s(d.name)),
+                    ("validated", Json::Bool(d.validated)),
+                ]),
+                None => obj(vec![("path", s(path)), ("identified", Json::Bool(false))]),
+            })
+        }
+
         other => Err(format!("unknown tool '{other}'")),
     }
 }
@@ -697,6 +733,7 @@ mod tests {
             "verify",
             "read_file",
             "triage",
+            "identify",
         ] {
             assert!(names.contains(&want), "missing tool {want}");
         }
