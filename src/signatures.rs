@@ -353,6 +353,24 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Tiff,
         max_size: 500 * MB,
     },
+    Signature {
+        name: "BigTIFF image",
+        ext: "tif",
+        magic: &[0x49, 0x49, 0x2B, 0x00], // little-endian BigTIFF ("II+\0")
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Tiff,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "BigTIFF image",
+        ext: "tif",
+        magic: &[0x4D, 0x4D, 0x00, 0x2B], // big-endian BigTIFF ("MM\0+")
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Tiff,
+        max_size: 2 * GB,
+    },
 ];
 
 /// Look up signatures relevant to a single source byte, keyed by the first

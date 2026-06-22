@@ -258,11 +258,13 @@ fn file_length(
 }
 
 /// Positioned, endian-aware reader for the TIFF walk. All offsets are relative
-/// to the file start and bounds-checked against `avail`.
+/// to the file start and bounds-checked against `avail`. `big` selects BigTIFF
+/// (8-byte offsets and counts) over classic TIFF (4-byte).
 struct TiffReader<'a> {
     src: &'a Source,
     base: u64,
     le: bool,
+    big: bool,
     avail: u64,
 }
 
@@ -297,23 +299,54 @@ impl TiffReader<'_> {
         }))
     }
 
-    /// Read up to `cap` integer values of an IFD entry (`entry` is the offset of
-    /// the 12-byte entry). Values live inline when they fit in 4 bytes, else at
-    /// the offset stored in the entry's value field. Only 1/2/4-byte integer
-    /// types are read (the kinds used for offsets and byte counts).
+    fn u64(&self, off: u64) -> Result<Option<u64>> {
+        if off.saturating_add(8) > self.avail {
+            return Ok(None);
+        }
+        let mut b = [0u8; 8];
+        if self.src.read_at(self.base + off, &mut b)? < 8 {
+            return Ok(None);
+        }
+        Ok(Some(if self.le {
+            u64::from_le_bytes(b)
+        } else {
+            u64::from_be_bytes(b)
+        }))
+    }
+
+    /// Read an offset-sized field: 8 bytes for BigTIFF, 4 for classic TIFF.
+    fn ptr(&self, off: u64) -> Result<Option<u64>> {
+        if self.big {
+            self.u64(off)
+        } else {
+            Ok(self.u32(off)?.map(|v| v as u64))
+        }
+    }
+
+    /// Byte offset of the value/offset field within a 12- (classic) or 20-byte
+    /// (BigTIFF) IFD entry.
+    fn value_field(&self, entry: u64) -> u64 {
+        entry + if self.big { 12 } else { 8 }
+    }
+
+    /// Read up to `cap` integer values of an IFD entry. Values live inline when
+    /// they fit in the value field (4 bytes classic, 8 bytes BigTIFF), otherwise
+    /// at the offset stored there. Only integer types used for offsets and byte
+    /// counts (1/2/4/8-byte) are read.
     fn entry_array(&self, entry: u64, typ: u16, count: u64, cap: u64) -> Result<Vec<u64>> {
         let sz = tiff_type_size(typ);
-        if !(sz == 1 || sz == 2 || sz == 4) || count == 0 {
+        if !(sz == 1 || sz == 2 || sz == 4 || sz == 8) || count == 0 {
             return Ok(Vec::new());
         }
         let n = count.min(cap);
         let total = n.saturating_mul(sz);
-        let inline = count.saturating_mul(sz) <= 4;
-        let base = if inline {
-            entry + 8
+        let val_field = self.value_field(entry);
+        let inline_cap = if self.big { 8 } else { 4 };
+        let base = if count.saturating_mul(sz) <= inline_cap {
+            val_field
         } else {
-            match self.u32(entry + 8)? {
-                Some(o) => o as u64,
+            match self.ptr(val_field)? {
+                Some(o) => o,
                 None => return Ok(Vec::new()),
             }
         };
@@ -336,12 +369,20 @@ impl TiffReader<'_> {
                         u16::from_be_bytes(b) as u64
                     }
                 }
-                _ => {
+                4 => {
                     let b = [buf[o], buf[o + 1], buf[o + 2], buf[o + 3]];
                     if self.le {
                         u32::from_le_bytes(b) as u64
                     } else {
                         u32::from_be_bytes(b) as u64
+                    }
+                }
+                _ => {
+                    let b: [u8; 8] = buf[o..o + 8].try_into().unwrap();
+                    if self.le {
+                        u64::from_le_bytes(b)
+                    } else {
+                        u64::from_be_bytes(b)
                     }
                 }
             };
@@ -354,10 +395,11 @@ impl TiffReader<'_> {
 /// Byte size of a TIFF field type (0 for unknown/unsupported types).
 fn tiff_type_size(typ: u16) -> u64 {
     match typ {
-        1 | 2 | 6 | 7 => 1, // BYTE, ASCII, SBYTE, UNDEFINED
-        3 | 8 => 2,         // SHORT, SSHORT
-        4 | 9 | 11 => 4,    // LONG, SLONG, FLOAT
-        5 | 10 | 12 => 8,   // RATIONAL, SRATIONAL, DOUBLE
+        1 | 2 | 6 | 7 => 1,   // BYTE, ASCII, SBYTE, UNDEFINED
+        3 | 8 => 2,           // SHORT, SSHORT
+        4 | 9 | 11 | 13 => 4, // LONG, SLONG, FLOAT, IFD
+        5 | 10 | 12 => 8,     // RATIONAL, SRATIONAL, DOUBLE
+        16..=18 => 8,         // LONG8, SLONG8, IFD8 (BigTIFF)
         _ => 0,
     }
 }
@@ -380,37 +422,73 @@ fn tiff_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
         b"MM" => false,
         _ => return Ok(None),
     };
+    // Detect classic TIFF (magic 42) vs BigTIFF (magic 43). They differ in
+    // offset width, IFD-count width, and entry size.
+    let magic = if le {
+        u16::from_le_bytes([hdr[2], hdr[3]])
+    } else {
+        u16::from_be_bytes([hdr[2], hdr[3]])
+    };
+    let big = match magic {
+        42 => false,
+        43 => true,
+        _ => return Ok(None),
+    };
     let t = TiffReader {
         src: source,
         base: file_start,
         le,
+        big,
         avail,
     };
-    // Classic TIFF only (BigTIFF, magic 43, has a different layout).
-    if t.u16(2)?.unwrap_or(0) != 42 {
+    // BigTIFF: bytes 4-5 are the offset byte-size (8) and 6-7 are reserved (0).
+    if big && (t.u16(4)?.unwrap_or(0) != 8 || t.u16(6)?.unwrap_or(1) != 0) {
         return Ok(None);
     }
-    let first = match t.u32(4)? {
-        Some(v) => v as u64,
+    // Per-format layout constants: count-field width, entry size, offset width,
+    // and the location of the first IFD offset.
+    let (cnt_size, entry_size, ptr_size, header_end) = if big {
+        (8u64, 20u64, 8u64, 16u64)
+    } else {
+        (2u64, 12u64, 4u64, 8u64)
+    };
+    let first = match if big {
+        t.u64(8)?
+    } else {
+        t.u32(4)?.map(|v| v as u64)
+    } {
+        Some(v) => v,
         None => return Ok(None),
     };
 
-    let mut max_end = 8u64; // the header
+    let mut max_end = header_end; // the header
     let mut visited = std::collections::HashSet::new();
     let mut queue = vec![first];
     let mut processed = 0usize;
     let mut budget: u32 = 1 << 20; // total entries scanned, bounds adversarial input
 
     while let Some(ifd) = queue.pop() {
-        if ifd < 8 || !visited.insert(ifd) || processed >= MAX_IFDS {
+        if ifd < header_end || !visited.insert(ifd) || processed >= MAX_IFDS {
             continue;
         }
-        let count = match t.u16(ifd)? {
-            Some(c) => c as u64,
+        let count = match if big {
+            t.u64(ifd)?
+        } else {
+            t.u16(ifd)?.map(|c| c as u64)
+        } {
+            Some(c) => c,
             None => continue,
         };
         processed += 1;
-        max_end = max_end.max(ifd + 2 + count * 12 + 4);
+        // Extend by the IFD's own span, but only if it plausibly fits (a bogus
+        // count must not inflate the result past the device).
+        let span = ifd
+            .saturating_add(cnt_size)
+            .saturating_add(count.saturating_mul(entry_size))
+            .saturating_add(ptr_size);
+        if span <= avail {
+            max_end = max_end.max(span);
+        }
 
         // Strip/tile offset+bytecount pairs, captured then resolved together.
         let mut strip_off = None;
@@ -423,18 +501,25 @@ fn tiff_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
                 break;
             }
             budget -= 1;
-            let e = ifd + 2 + i * 12;
+            let e = ifd + cnt_size + i * entry_size;
             let tag = match t.u16(e)? {
                 Some(v) => v,
                 None => break,
             };
             let typ = t.u16(e + 2)?.unwrap_or(0);
-            let cnt = t.u32(e + 4)?.unwrap_or(0) as u64;
+            let cnt = match if big {
+                t.u64(e + 4)?
+            } else {
+                t.u32(e + 4)?.map(|v| v as u64)
+            } {
+                Some(v) => v,
+                None => break,
+            };
             let total = cnt.saturating_mul(tiff_type_size(typ));
             // Field data stored out-of-line extends the file.
-            if total > 4 {
-                if let Some(off) = t.u32(e + 8)? {
-                    max_end = max_end.max((off as u64).saturating_add(total));
+            if total > ptr_size {
+                if let Some(off) = t.ptr(t.value_field(e))? {
+                    max_end = max_end.max(off.saturating_add(total));
                 }
             }
             match tag {
@@ -449,7 +534,7 @@ fn tiff_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
                     }
                 }
                 34665 | 34853 => {
-                    // Exif / GPS IFD pointer (a single LONG offset).
+                    // Exif / GPS IFD pointer (a single offset).
                     if let Some(off) = t.entry_array(e, typ, cnt, 1)?.first() {
                         queue.push(*off);
                     }
@@ -461,14 +546,14 @@ fn tiff_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
         max_end = max_end.max(strip_tile_end(&t, strip_off, strip_cnt, MAX_STRIPS)?);
         max_end = max_end.max(strip_tile_end(&t, tile_off, tile_cnt, MAX_STRIPS)?);
 
-        if let Some(next) = t.u32(ifd + 2 + count * 12)? {
+        if let Some(next) = t.ptr(ifd + cnt_size + count.saturating_mul(entry_size))? {
             if next != 0 {
-                queue.push(next as u64);
+                queue.push(next);
             }
         }
     }
 
-    if processed == 0 || max_end <= 8 || file_start + max_end > limit {
+    if processed == 0 || max_end <= header_end || file_start + max_end > limit {
         return Ok(None);
     }
     Ok(Some(max_end))
