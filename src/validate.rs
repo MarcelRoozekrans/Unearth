@@ -48,6 +48,7 @@ pub fn validate(sig: &Signature, data: &[u8]) -> Validity {
         "gif" => gif(data),
         "bmp" => bmp(data),
         "sqlite" => sqlite(data),
+        "elf" => elf(data),
         // No structural check for the remaining types; their length strategy
         // (footer search, atom walk, etc.) already rejects most spurious hits.
         _ => Validity::Unknown,
@@ -130,6 +131,19 @@ fn sqlite(d: &[u8]) -> Validity {
         return Validity::Invalid;
     }
     if d[21] != 64 || d[22] != 32 || d[23] != 32 {
+        return Validity::Invalid;
+    }
+    Validity::Valid
+}
+
+/// ELF: after the `\x7FELF` magic, the identification bytes are tightly
+/// constrained — class is 32/64-bit (1/2), data encoding is LE/BE (1/2), and
+/// the ELF version is 1.
+fn elf(d: &[u8]) -> Validity {
+    if d.len() < 7 {
+        return Validity::Unknown;
+    }
+    if !(1..=2).contains(&d[4]) || !(1..=2).contains(&d[5]) || d[6] != 1 {
         return Validity::Invalid;
     }
     Validity::Valid
@@ -221,6 +235,28 @@ mod tests {
         let mut bad = v.clone();
         bad[21] = 0;
         assert_eq!(validate(sig("sqlite"), &bad), Validity::Invalid);
+    }
+
+    #[test]
+    fn elf_identification_check() {
+        // \x7FELF + class=2 (64-bit), data=1 (LE), version=1.
+        assert_eq!(
+            validate(sig("elf"), &[0x7F, b'E', b'L', b'F', 2, 1, 1]),
+            Validity::Valid
+        );
+        // Bad class / data / version are all rejected.
+        assert_eq!(
+            validate(sig("elf"), &[0x7F, b'E', b'L', b'F', 9, 1, 1]),
+            Validity::Invalid
+        );
+        assert_eq!(
+            validate(sig("elf"), &[0x7F, b'E', b'L', b'F', 2, 1, 2]),
+            Validity::Invalid
+        );
+        assert_eq!(
+            validate(sig("elf"), &[0x7F, b'E', b'L', b'F']),
+            Validity::Unknown
+        );
     }
 
     #[test]

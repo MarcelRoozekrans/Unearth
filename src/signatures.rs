@@ -11,7 +11,9 @@
 //! * [`Extent::Sqlite`] — page size × page count from the SQLite header.
 //! * [`Extent::SevenZip`] — next-header offset + size from the 7z header.
 //! * [`Extent::Mp4Atoms`] — walk the ISO base-media box/atom structure (MP4,
-//!   MOV, HEIC, ...).
+//!   MOV, HEIC, AVIF, CR3, ...).
+//! * [`Extent::Elf`] — read the ELF header's section-header-table location to
+//!   find where the file ends.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -38,6 +40,10 @@ pub enum Extent {
     SevenZip,
     /// Parse the ISO base-media (MP4/QuickTime/HEIF) box structure to sum atoms.
     Mp4Atoms,
+    /// ELF object: total size = section-header-table offset + entry count ×
+    /// entry size (the section header table normally ends the file). Handles
+    /// 32/64-bit and either byte order from the ELF identification bytes.
+    Elf,
 }
 
 /// A recoverable file type.
@@ -243,6 +249,43 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 100 * MB,
     },
     Signature {
+        name: "AVIF image",
+        ext: "avif",
+        magic: b"ftyp",
+        magic_offset: 4,
+        secondary: Some((4, b"avif")),
+        extent: Extent::Mp4Atoms,
+        max_size: 100 * MB,
+    },
+    Signature {
+        name: "Canon CR3 raw image",
+        ext: "cr3",
+        magic: b"ftyp",
+        magic_offset: 4,
+        secondary: Some((4, b"crx ")),
+        extent: Extent::Mp4Atoms,
+        max_size: 200 * MB,
+    },
+    Signature {
+        name: "JPEG XL image",
+        ext: "jxl",
+        magic: b"ftyp",
+        magic_offset: 4,
+        secondary: Some((4, b"jxl ")),
+        extent: Extent::Mp4Atoms,
+        max_size: 200 * MB,
+    },
+    Signature {
+        name: "3GP video",
+        ext: "3gp",
+        magic: b"ftyp",
+        magic_offset: 4,
+        // A 3-byte tag matches the "3gp4"/"3gp5"/"3gp6" major brands.
+        secondary: Some((4, b"3gp")),
+        extent: Extent::Mp4Atoms,
+        max_size: 4 * GB,
+    },
+    Signature {
         name: "MP4/MOV/M4A media",
         ext: "mp4",
         magic: b"ftyp",
@@ -250,6 +293,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Mp4Atoms,
         max_size: 4 * GB,
+    },
+    Signature {
+        name: "ELF executable / shared object",
+        ext: "elf",
+        magic: &[0x7F, b'E', b'L', b'F'],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Elf,
+        max_size: 2 * GB,
     },
 ];
 
