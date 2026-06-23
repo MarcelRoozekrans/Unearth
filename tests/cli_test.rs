@@ -51,6 +51,60 @@ fn missing_source_fails() {
 }
 
 #[test]
+fn image_copies_a_source_exactly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("disk.img");
+    let out_img = tmp.path().join("copy.img");
+    let summary = tmp.path().join("summary.json");
+
+    let data: Vec<u8> = (0..20_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&src, &data).unwrap();
+
+    let out = run(&[
+        "image",
+        src.to_str().unwrap(),
+        out_img.to_str().unwrap(),
+        "--no-sparse",
+        "--quiet",
+        "--summary",
+        summary.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "image should succeed on a good source"
+    );
+    assert_eq!(std::fs::read(&out_img).unwrap(), data);
+
+    let report = std::fs::read_to_string(&summary).unwrap();
+    assert!(report.contains("\"command\": \"image\""));
+    assert!(report.contains("\"bad_regions\": 0"));
+}
+
+#[test]
+fn image_copies_only_the_requested_range() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("disk.img");
+    let out_img = tmp.path().join("slice.img");
+
+    let data: Vec<u8> = (0..8192u32).map(|i| i as u8).collect();
+    std::fs::write(&src, &data).unwrap();
+
+    let out = run(&[
+        "image",
+        src.to_str().unwrap(),
+        out_img.to_str().unwrap(),
+        "--no-sparse",
+        "--quiet",
+        "--start",
+        "2048",
+        "--end",
+        "4096",
+    ]);
+    assert!(out.status.success());
+    assert_eq!(std::fs::read(&out_img).unwrap(), data[2048..4096]);
+}
+
+#[test]
 fn info_reports_no_volume_on_garbage() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("garbage.img");

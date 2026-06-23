@@ -8,8 +8,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use clap::CommandFactory;
 use cli::{
-    Cli, Command, CompletionsArgs, IdentifyArgs, InfoArgs, ScanArgs, TriageArgs, UndeleteArgs,
-    VerifyArgs,
+    Cli, Command, CompletionsArgs, IdentifyArgs, ImageArgs, InfoArgs, ScanArgs, TriageArgs,
+    UndeleteArgs, VerifyArgs,
 };
 use filerecovery::carver::{self, CarveOptions, ProgressSink};
 use filerecovery::recover;
@@ -26,6 +26,7 @@ fn main() -> Result<()> {
         Command::Scan(args) => scan(args),
         Command::Undelete(args) => undelete(args),
         Command::Info(args) => info(args),
+        Command::Image(args) => image(args),
         Command::Verify(args) => verify(args),
         Command::Triage(args) => triage(args),
         Command::Identify(args) => identify(args),
@@ -527,6 +528,88 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
         ];
         write_summary(summary_path, &fields)?;
         eprintln!("Summary written to {}", summary_path.display());
+    }
+    Ok(())
+}
+
+fn image(args: ImageArgs) -> Result<()> {
+    use filerecovery::image::{self, ImageOptions};
+
+    let started = std::time::Instant::now();
+    let source = Source::open(&args.source)?;
+    eprintln!(
+        "Source: {} ({})",
+        args.source.display(),
+        human_bytes(source.size)
+    );
+    eprintln!("Image:  {}", args.output.display());
+
+    let opts = ImageOptions {
+        output: args.output.clone(),
+        start: args.start,
+        end: args.end,
+        sparse: !args.no_sparse,
+        sector_size: args.sector_size,
+    };
+
+    let progress: Box<dyn ProgressSink> = if args.quiet {
+        Box::new(carver::NoProgress)
+    } else {
+        Box::new(Bar::new())
+    };
+
+    let stats = image::image(&source, &opts, progress.as_ref())?;
+
+    eprintln!();
+    if stats.cancelled {
+        println!("Cancelled.");
+    }
+    println!(
+        "Done. Imaged {} ({} copied, {} sparse).",
+        human_bytes(stats.bytes_total),
+        human_bytes(stats.bytes_copied),
+        human_bytes(stats.bytes_sparse),
+    );
+    if !stats.bad_regions.is_empty() {
+        println!(
+            "WARNING: {} unreadable region(s), {} zero-filled:",
+            stats.bad_regions.len(),
+            human_bytes(stats.bytes_zeroed)
+        );
+        for r in stats.bad_regions.iter().take(20) {
+            println!("  offset {} length {}", r.offset, human_bytes(r.len));
+        }
+        if stats.bad_regions.len() > 20 {
+            println!("  ... and {} more", stats.bad_regions.len() - 20);
+        }
+    }
+
+    if let Some(summary_path) = &args.summary {
+        let fields = [
+            ("command", Sv::S("image".into())),
+            ("source", Sv::S(args.source.display().to_string())),
+            ("source_bytes", Sv::N(source.size)),
+            ("output", Sv::S(args.output.display().to_string())),
+            ("sparse", Sv::B(!args.no_sparse)),
+            ("sector_size", Sv::N(args.sector_size)),
+            ("bytes_total", Sv::N(stats.bytes_total)),
+            ("bytes_copied", Sv::N(stats.bytes_copied)),
+            ("bytes_sparse", Sv::N(stats.bytes_sparse)),
+            ("bytes_zeroed", Sv::N(stats.bytes_zeroed)),
+            ("bad_regions", Sv::N(stats.bad_regions.len() as u64)),
+            ("cancelled", Sv::B(stats.cancelled)),
+            ("elapsed_ms", Sv::N(started.elapsed().as_millis() as u64)),
+            ("timestamp_unix", Sv::N(unix_now())),
+        ];
+        write_summary(summary_path, &fields)?;
+        eprintln!("Summary written to {}", summary_path.display());
+    }
+
+    if !stats.bad_regions.is_empty() {
+        anyhow::bail!(
+            "{} unreadable region(s) were zero-filled",
+            stats.bad_regions.len()
+        );
     }
     Ok(())
 }

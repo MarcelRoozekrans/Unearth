@@ -45,6 +45,7 @@ pub mod ext4;
 pub mod fat;
 pub mod hash;
 pub mod identify;
+pub mod image;
 pub mod job;
 pub mod json;
 pub mod manifest;

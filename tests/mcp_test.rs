@@ -144,6 +144,46 @@ fn full_session_initializes_and_scans() {
 }
 
 #[test]
+fn image_runs_as_a_background_job() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    let out = tmp.path().join("copy.img");
+
+    let data: Vec<u8> = (0..50_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&img, &data).unwrap();
+
+    // `image` starts a background job and returns a job_id.
+    let image_req = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"image","arguments":{{"source":"{}","output":"{}","sparse":false}}}}}}"#,
+        img.display(),
+        out.display()
+    );
+    let started = call(&image_req);
+    let job_id = started.get("job_id").unwrap().as_u64().unwrap();
+
+    // Poll the shared job status API until done.
+    let status_req = format!(
+        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"scan_status","arguments":{{"job_id":{job_id}}}}}}}"#
+    );
+    let mut status = call(&status_req);
+    for _ in 0..2000 {
+        if !status.get("running").unwrap().as_bool().unwrap() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        status = call(&status_req);
+    }
+    assert_eq!(status.get("running").unwrap().as_bool(), Some(false));
+    assert_eq!(status.get("kind").unwrap().as_str(), Some("image"));
+
+    let result = status.get("result").unwrap();
+    assert_eq!(result.get("bytes_total").unwrap().as_u64(), Some(50_000));
+    assert_eq!(result.get("bad_region_count").unwrap().as_u64(), Some(0));
+    // The image is a byte-for-byte copy of the source.
+    assert_eq!(std::fs::read(&out).unwrap(), data);
+}
+
+#[test]
 fn scan_status_and_cancel_reject_unknown_jobs() {
     let status = mcp::handle_request(
         &json::parse(
