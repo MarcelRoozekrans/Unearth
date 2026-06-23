@@ -49,6 +49,8 @@ pub fn validate(sig: &Signature, data: &[u8]) -> Validity {
         "bmp" => bmp(data),
         "sqlite" => sqlite(data),
         "elf" => elf(data),
+        "emf" => emf(data),
+        "mid" => midi(data),
         // No structural check for the remaining types; their length strategy
         // (footer search, atom walk, etc.) already rejects most spurious hits.
         _ => Validity::Unknown,
@@ -144,6 +146,38 @@ fn elf(d: &[u8]) -> Validity {
         return Validity::Unknown;
     }
     if !(1..=2).contains(&d[4]) || !(1..=2).contains(&d[5]) || d[6] != 1 {
+        return Validity::Invalid;
+    }
+    Validity::Valid
+}
+
+/// EMF: the file begins with an `EMR_HEADER` record — record type `1`
+/// (little-endian u32 at offset 0) and a record size of at least 88 bytes.
+/// (The " EMF" signature that anchors the magic lives at offset 40.)
+fn emf(d: &[u8]) -> Validity {
+    if d.len() < 8 {
+        return Validity::Unknown;
+    }
+    let itype = u32::from_le_bytes([d[0], d[1], d[2], d[3]]);
+    let nsize = u32::from_le_bytes([d[4], d[5], d[6], d[7]]);
+    if itype != 1 || nsize < 88 {
+        return Validity::Invalid;
+    }
+    Validity::Valid
+}
+
+/// MIDI: the `MThd` header chunk has a big-endian length of exactly 6, a format
+/// of 0, 1, or 2, and at least one track.
+fn midi(d: &[u8]) -> Validity {
+    if d.len() < 12 {
+        return Validity::Unknown;
+    }
+    if u32::from_be_bytes([d[4], d[5], d[6], d[7]]) != 6 {
+        return Validity::Invalid;
+    }
+    let format = u16::from_be_bytes([d[8], d[9]]);
+    let ntrks = u16::from_be_bytes([d[10], d[11]]);
+    if format > 2 || ntrks == 0 {
         return Validity::Invalid;
     }
     Validity::Valid
@@ -257,6 +291,40 @@ mod tests {
             validate(sig("elf"), &[0x7F, b'E', b'L', b'F']),
             Validity::Unknown
         );
+    }
+
+    #[test]
+    fn emf_header_check() {
+        let mut v = vec![0u8; 52];
+        v[0..4].copy_from_slice(&1u32.to_le_bytes()); // EMR_HEADER
+        v[4..8].copy_from_slice(&88u32.to_le_bytes()); // nSize
+        assert_eq!(validate(sig("emf"), &v), Validity::Valid);
+
+        // Wrong record type, or an implausibly small header, are rejected.
+        let mut bad = v.clone();
+        bad[0..4].copy_from_slice(&2u32.to_le_bytes());
+        assert_eq!(validate(sig("emf"), &bad), Validity::Invalid);
+        let mut small = v.clone();
+        small[4..8].copy_from_slice(&8u32.to_le_bytes());
+        assert_eq!(validate(sig("emf"), &small), Validity::Invalid);
+    }
+
+    #[test]
+    fn midi_header_check() {
+        let mut v = b"MThd".to_vec();
+        v.extend_from_slice(&6u32.to_be_bytes());
+        v.extend_from_slice(&0u16.to_be_bytes()); // format
+        v.extend_from_slice(&1u16.to_be_bytes()); // ntrks
+        v.extend_from_slice(&96u16.to_be_bytes()); // division
+        assert_eq!(validate(sig("mid"), &v), Validity::Valid);
+
+        // A header length other than 6, or zero tracks, is rejected.
+        let mut bad_len = v.clone();
+        bad_len[4..8].copy_from_slice(&10u32.to_be_bytes());
+        assert_eq!(validate(sig("mid"), &bad_len), Validity::Invalid);
+        let mut no_tracks = v.clone();
+        no_tracks[10..12].copy_from_slice(&0u16.to_be_bytes());
+        assert_eq!(validate(sig("mid"), &no_tracks), Validity::Invalid);
     }
 
     #[test]

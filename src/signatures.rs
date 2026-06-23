@@ -28,6 +28,9 @@
 //!   the end of the module.
 //! * [`Extent::IcoCur`] — take the furthest `offset + size` across an ICO/CUR
 //!   image directory.
+//! * [`Extent::HeaderSizeBe32`] — read a big-endian u32 size field (WOFF fonts).
+//! * [`Extent::Sfnt`] — walk a TrueType/OpenType font's table directory.
+//! * [`Extent::Midi`] — walk a Standard MIDI file's `MThd`/`MTrk` chunks.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -81,6 +84,15 @@ pub enum Extent {
     /// ICO / CUR: the icon directory lists each image's size and offset; the
     /// file ends at the furthest `offset + size`.
     IcoCur,
+    /// The total file size is stored as a big-endian u32 at `offset` bytes into
+    /// the file (e.g. WOFF/WOFF2 web fonts store their length at offset 8).
+    HeaderSizeBe32 { offset: usize },
+    /// SFNT font (TrueType/OpenType): walk the table directory, taking the
+    /// furthest `offset + length` (padded to 4 bytes) across all tables.
+    Sfnt,
+    /// Standard MIDI file: an `MThd` header chunk followed by `MTrk` chunks, each
+    /// a 4-byte tag and a big-endian u32 length; walk them to the end.
+    Midi,
 }
 
 /// A recoverable file type.
@@ -452,6 +464,61 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::IcoCur,
+        max_size: 16 * MB,
+    },
+    Signature {
+        name: "TrueType font",
+        ext: "ttf",
+        magic: &[0x00, 0x01, 0x00, 0x00], // sfnt version 1.0
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Sfnt,
+        max_size: 64 * MB,
+    },
+    Signature {
+        name: "OpenType font",
+        ext: "otf",
+        magic: b"OTTO", // sfnt with CFF outlines
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Sfnt,
+        max_size: 64 * MB,
+    },
+    Signature {
+        name: "WOFF web font",
+        ext: "woff",
+        magic: b"wOFF",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::HeaderSizeBe32 { offset: 8 },
+        max_size: 64 * MB,
+    },
+    Signature {
+        name: "WOFF2 web font",
+        ext: "woff2",
+        magic: b"wOF2",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::HeaderSizeBe32 { offset: 8 },
+        max_size: 64 * MB,
+    },
+    Signature {
+        name: "Enhanced Metafile",
+        ext: "emf",
+        // The EMR_HEADER's dSignature " EMF" sits 40 bytes into the file.
+        magic: b" EMF",
+        magic_offset: 40,
+        secondary: None,
+        extent: Extent::HeaderSizeLe32 { offset: 48 },
+        max_size: 64 * MB,
+    },
+    Signature {
+        name: "Standard MIDI",
+        ext: "mid",
+        magic: b"MThd",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Midi,
         max_size: 16 * MB,
     },
 ];
