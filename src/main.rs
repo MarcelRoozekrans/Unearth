@@ -544,12 +544,26 @@ fn image(args: ImageArgs) -> Result<()> {
     );
     eprintln!("Image:  {}", args.output.display());
 
+    // A map file enables resume; default it next to the image when --resume is
+    // requested without an explicit --map.
+    let map = args.map.clone().or_else(|| {
+        if args.resume {
+            let mut p = args.output.clone().into_os_string();
+            p.push(".map");
+            Some(p.into())
+        } else {
+            None
+        }
+    });
+
     let opts = ImageOptions {
         output: args.output.clone(),
         start: args.start,
         end: args.end,
         sparse: !args.no_sparse,
         sector_size: args.sector_size,
+        map,
+        resume: args.resume,
     };
 
     let progress: Box<dyn ProgressSink> = if args.quiet {
@@ -592,6 +606,7 @@ fn image(args: ImageArgs) -> Result<()> {
             ("output", Sv::S(args.output.display().to_string())),
             ("sparse", Sv::B(!args.no_sparse)),
             ("sector_size", Sv::N(args.sector_size)),
+            ("resume", Sv::B(args.resume)),
             ("bytes_total", Sv::N(stats.bytes_total)),
             ("bytes_copied", Sv::N(stats.bytes_copied)),
             ("bytes_sparse", Sv::N(stats.bytes_sparse)),

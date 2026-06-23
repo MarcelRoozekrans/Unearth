@@ -9,9 +9,12 @@
 //!   granularity; sectors that still fail are left as holes and recorded, so one
 //!   unreadable spot does not abort the whole image,
 //! - **sparse output**: runs of zero bytes are skipped, so an image of a
-//!   mostly-empty drive stays small on a filesystem that supports holes.
+//!   mostly-empty drive stays small on a filesystem that supports holes,
+//! - **resumable**: an optional map file records how far the copy got (and which
+//!   regions were unreadable), persisted as it runs, so an interrupted copy of a
+//!   multi-hour drive resumes instead of starting over.
 
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
@@ -28,6 +31,8 @@ const IMAGE_CHUNK: usize = 4 * 1024 * 1024; // 4 MiB
 const SPARSE_BLOCK: usize = 64 * 1024; // 64 KiB
 /// Default bad-sector retry granularity.
 pub const DEFAULT_SECTOR: u64 = 512;
+/// Persist the map at least this often, so an abrupt kill loses little progress.
+const MAP_FLUSH_INTERVAL: u64 = 64 * 1024 * 1024; // 64 MiB
 
 /// Tunable knobs for an imaging run.
 pub struct ImageOptions {
@@ -41,6 +46,13 @@ pub struct ImageOptions {
     pub sparse: bool,
     /// Granularity to fall back to when a larger read fails.
     pub sector_size: u64,
+    /// Optional map/checkpoint file. When set, progress (high-water mark and
+    /// unreadable regions) is written here as the copy runs, enabling `resume`.
+    pub map: Option<PathBuf>,
+    /// Resume from the map file if it exists: skip the bytes already copied and
+    /// keep the previously-recorded unreadable regions. Requires the same
+    /// `start`/`end` as the original run.
+    pub resume: bool,
 }
 
 impl Default for ImageOptions {
@@ -51,6 +63,8 @@ impl Default for ImageOptions {
             end: None,
             sparse: true,
             sector_size: DEFAULT_SECTOR,
+            map: None,
+            resume: false,
         }
     }
 }
@@ -107,14 +121,40 @@ pub fn image<S: BlockSource>(
     let start = opts.start.min(end);
     let total = end - start;
 
+    // Resume from a prior map, if asked and one exists. A corrupt or stale map
+    // is treated as "start over" (always safe — at worst it re-copies).
+    let resume_path = if opts.resume {
+        opts.map.as_ref().filter(|p| p.exists())
+    } else {
+        None
+    };
+    let resuming = resume_path.is_some();
+    let mut bad: Vec<(u64, u64)> = Vec::new();
+    let mut resume_from = start;
+    if let Some(path) = resume_path {
+        let text = fs::read_to_string(path)
+            .with_context(|| format!("reading image map {}", path.display()))?;
+        let saved = parse_map(&text);
+        resume_from = saved.pos.clamp(start, end);
+        bad = saved.bad; // carry forward earlier unreadable regions
+    }
+
     if let Some(parent) = opts.output.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("creating image dir {}", parent.display()))?;
         }
     }
-    let mut out = File::create(&opts.output)
-        .with_context(|| format!("creating image {}", opts.output.display()))?;
+    // On resume keep the existing image; otherwise start a fresh (truncated) one.
+    let mut out = if resuming {
+        OpenOptions::new()
+            .write(true)
+            .open(&opts.output)
+            .with_context(|| format!("opening image {}", opts.output.display()))?
+    } else {
+        File::create(&opts.output)
+            .with_context(|| format!("creating image {}", opts.output.display()))?
+    };
     // Size the file up front so skipped (sparse) and unreadable regions become
     // real holes that read back as zero.
     out.set_len(total)
@@ -122,14 +162,15 @@ pub fn image<S: BlockSource>(
 
     let mut stats = ImageStats {
         bytes_total: total,
+        // Account for unreadable bytes carried over from a prior run.
+        bytes_zeroed: bad.iter().map(|&(_, len)| len).sum(),
         ..Default::default()
     };
-    // Bad sectors collected in source order, merged into `bad_regions` at the end.
-    let mut bad: Vec<(u64, u64)> = Vec::new();
     let mut buf = vec![0u8; IMAGE_CHUNK];
 
     progress.begin(total);
-    let mut abs = start;
+    let mut abs = resume_from;
+    let mut last_flush = abs;
     while abs < end {
         if progress.cancelled() {
             stats.cancelled = true;
@@ -172,12 +213,75 @@ pub fn image<S: BlockSource>(
             }
         }
         progress.update(abs - start);
+
+        // Checkpoint periodically so an abrupt kill loses little progress.
+        if let Some(path) = &opts.map {
+            if abs - last_flush >= MAP_FLUSH_INTERVAL {
+                out.flush().context("flushing image")?;
+                write_map(path, end, abs, &merge_regions(&bad))?;
+                last_flush = abs;
+            }
+        }
     }
     out.flush().context("flushing image")?;
     progress.finish(abs - start);
 
     stats.bad_regions = merge_regions(&bad);
+    // Always leave an up-to-date map (covers completion and cancellation).
+    if let Some(path) = &opts.map {
+        write_map(path, end, abs, &stats.bad_regions)?;
+    }
     Ok(stats)
+}
+
+/// Parsed contents of a map file: the high-water mark and unreadable regions.
+struct ImageMap {
+    pos: u64,
+    bad: Vec<(u64, u64)>,
+}
+
+/// Parse a map file leniently: unknown or malformed lines are ignored so a
+/// partially-written map (e.g. after a crash) is still usable.
+fn parse_map(text: &str) -> ImageMap {
+    let mut pos = 0u64;
+    let mut bad = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut it = line.split_whitespace();
+        match it.next() {
+            Some("pos") => {
+                if let Some(v) = it.next().and_then(|s| s.parse().ok()) {
+                    pos = v;
+                }
+            }
+            Some("bad") => {
+                if let (Some(off), Some(len)) = (
+                    it.next().and_then(|s| s.parse().ok()),
+                    it.next().and_then(|s| s.parse().ok()),
+                ) {
+                    bad.push((off, len));
+                }
+            }
+            _ => {}
+        }
+    }
+    ImageMap { pos, bad }
+}
+
+/// Write the map file: a human-readable record of total size, the high-water
+/// mark, and each unreadable region (absolute source offsets).
+fn write_map(path: &std::path::Path, total: u64, pos: u64, bad: &[BadRegion]) -> Result<()> {
+    let mut s = String::from("# filerecovery image map v1\n");
+    s.push_str(&format!("total {total}\n"));
+    s.push_str(&format!("pos {pos}\n"));
+    for r in bad {
+        s.push_str(&format!("bad {} {}\n", r.offset, r.len));
+    }
+    fs::write(path, s).with_context(|| format!("writing image map {}", path.display()))?;
+    Ok(())
 }
 
 /// Write one good span to the image at `out_off`. In sparse mode the span is
@@ -376,5 +480,98 @@ mod tests {
         assert_eq!(stats.bad_regions[0].offset, 1024);
         assert_eq!(stats.bad_regions[0].len, 1536); // three sectors
         assert_eq!(stats.bytes_zeroed, 1536);
+    }
+
+    /// A progress sink that requests cancellation after the first chunk, to
+    /// simulate an imaging run that is interrupted partway through.
+    struct CancelAfterFirstChunk {
+        updates: std::sync::atomic::AtomicU64,
+    }
+
+    impl ProgressSink for CancelAfterFirstChunk {
+        fn update(&self, _scanned: u64) {
+            self.updates
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        fn cancelled(&self) -> bool {
+            self.updates.load(std::sync::atomic::Ordering::Relaxed) >= 1
+        }
+    }
+
+    #[test]
+    fn map_file_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("disk.map");
+        let bad = vec![
+            BadRegion {
+                offset: 4096,
+                len: 512,
+            },
+            BadRegion {
+                offset: 1 << 30,
+                len: 1024,
+            },
+        ];
+        write_map(&path, 2_000_000, 1_234_567, &bad).unwrap();
+
+        let parsed = parse_map(&std::fs::read_to_string(&path).unwrap());
+        assert_eq!(parsed.pos, 1_234_567);
+        assert_eq!(parsed.bad, vec![(4096, 512), (1 << 30, 1024)]);
+    }
+
+    #[test]
+    fn corrupt_map_falls_back_to_a_full_copy() {
+        // A map that doesn't parse must not crash or skip data.
+        let parsed = parse_map("garbage\npos notanumber\n# ok\n");
+        assert_eq!(parsed.pos, 0);
+        assert!(parsed.bad.is_empty());
+    }
+
+    #[test]
+    fn resume_continues_an_interrupted_copy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_path = tmp.path().join("src.bin");
+        let out = tmp.path().join("out.img");
+        let map = tmp.path().join("out.map");
+        // Larger than one chunk so the run is cancelled with work left to do.
+        let data: Vec<u8> = (0..9_000_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&src_path, &data).unwrap();
+
+        // First run is interrupted after the first chunk; the map records how far
+        // it got, and the image is only partially written.
+        let source = Source::open(&src_path).unwrap();
+        let opts = ImageOptions {
+            output: out.clone(),
+            sparse: false,
+            map: Some(map.clone()),
+            ..Default::default()
+        };
+        let sink = CancelAfterFirstChunk {
+            updates: std::sync::atomic::AtomicU64::new(0),
+        };
+        let first = image(&source, &opts, &sink).unwrap();
+        assert!(first.cancelled, "first run should be cancelled");
+        assert!(
+            first.bytes_copied < data.len() as u64,
+            "first run should not finish"
+        );
+        let saved = parse_map(&std::fs::read_to_string(&map).unwrap());
+        assert!(saved.pos > 0 && saved.pos < data.len() as u64);
+
+        // Resume: only the remainder is copied, and the image ends up complete.
+        let resume_opts = ImageOptions {
+            output: out.clone(),
+            sparse: false,
+            map: Some(map.clone()),
+            resume: true,
+            ..Default::default()
+        };
+        let second = image(&source, &resume_opts, &NoProgress).unwrap();
+        assert!(!second.cancelled);
+        assert!(
+            second.bytes_copied < data.len() as u64,
+            "resume copies only the remainder, not the whole file"
+        );
+        assert_eq!(read_back(&out), data, "resumed image matches the source");
     }
 }

@@ -135,6 +135,17 @@ pub struct ImageArgs {
     #[arg(long, value_name = "BYTES", default_value_t = 512)]
     pub sector_size: u64,
 
+    /// Checkpoint/map file recording progress and unreadable regions, so an
+    /// interrupted copy can be resumed. Defaults to `<OUTPUT>.map` when
+    /// `--resume` is used.
+    #[arg(long, value_name = "FILE")]
+    pub map: Option<PathBuf>,
+
+    /// Resume a previous run from its map file (skips the bytes already copied).
+    /// Use the same SOURCE, OUTPUT, and --start/--end as the original run.
+    #[arg(long)]
+    pub resume: bool,
+
     /// Write a run summary (bytes copied/zeroed/sparse, bad regions) to this
     /// path. `.json` for JSON, otherwise plain text.
     #[arg(long, value_name = "FILE")]
