@@ -198,6 +198,15 @@ sudo filerecovery image /dev/sdb card.img --map card.map
 sudo filerecovery image /dev/sdb card.img --map card.map --resume
 ```
 
+A failing drive often returns data on a later attempt. `--retry-bad <N>` makes
+up to `N` extra passes over just the unreadable regions after the main copy,
+salvaging sectors the first pass had to zero-fill (it stops early once a pass
+recovers nothing):
+
+```sh
+sudo filerecovery image /dev/sdb card.img --map card.map --retry-bad 3
+```
+
 `image` options:
 
 ```text
@@ -207,6 +216,7 @@ sudo filerecovery image /dev/sdb card.img --map card.map --resume
     --sector-size <BYTES> Bad-sector retry granularity (default: 512)
     --map <FILE>          Checkpoint progress here for --resume
     --resume              Resume a prior run from its map file
+    --retry-bad <PASSES>  Re-read unreadable regions this many extra times
     --summary <FILE>      Write a run summary (.json => JSON, else text)
 -q, --quiet               Suppress the progress bar
 ```

@@ -125,6 +125,35 @@ fn image_writes_a_map_and_resume_completes() {
 }
 
 #[test]
+fn image_accepts_retry_bad_and_records_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("disk.img");
+    let out_img = tmp.path().join("copy.img");
+    let summary = tmp.path().join("summary.json");
+
+    let data: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&src, &data).unwrap();
+
+    // A healthy source has nothing to retry, but the flag must be wired through.
+    let out = run(&[
+        "image",
+        src.to_str().unwrap(),
+        out_img.to_str().unwrap(),
+        "--no-sparse",
+        "--quiet",
+        "--retry-bad",
+        "2",
+        "--summary",
+        summary.to_str().unwrap(),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(std::fs::read(&out_img).unwrap(), data);
+    let report = std::fs::read_to_string(&summary).unwrap();
+    assert!(report.contains("\"retry_bad\": 2"), "{report}");
+    assert!(report.contains("\"retry_passes\": 0"), "{report}");
+}
+
+#[test]
 fn image_copies_only_the_requested_range() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("disk.img");

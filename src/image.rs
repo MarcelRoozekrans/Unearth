@@ -53,6 +53,10 @@ pub struct ImageOptions {
     /// keep the previously-recorded unreadable regions. Requires the same
     /// `start`/`end` as the original run.
     pub resume: bool,
+    /// Number of extra passes to re-read unreadable regions after the main copy.
+    /// A failing drive sometimes returns data on a later attempt, so retrying
+    /// salvages bytes the first pass had to zero-fill. `0` disables retrying.
+    pub retries: u32,
 }
 
 impl Default for ImageOptions {
@@ -65,6 +69,7 @@ impl Default for ImageOptions {
             sector_size: DEFAULT_SECTOR,
             map: None,
             resume: false,
+            retries: 0,
         }
     }
 }
@@ -90,6 +95,10 @@ pub struct ImageStats {
     pub bytes_sparse: u64,
     /// Unreadable spans, merged where contiguous.
     pub bad_regions: Vec<BadRegion>,
+    /// Number of retry passes actually performed over unreadable regions.
+    pub retry_passes: u32,
+    /// Bytes salvaged by retry passes that the first pass had to zero-fill.
+    pub bytes_recovered_retry: u64,
     /// Whether the run stopped early because cancellation was requested.
     pub cancelled: bool,
 }
@@ -223,6 +232,15 @@ pub fn image<S: BlockSource>(
             }
         }
     }
+
+    // Retry passes: re-read the regions that failed, in case the drive returns
+    // data on a later attempt. Skipped if the main copy was cancelled.
+    if !stats.cancelled && opts.retries > 0 && !bad.is_empty() {
+        retry_bad_regions(
+            src, opts, &mut out, sector, start, &mut bad, &mut stats, progress,
+        )?;
+    }
+
     out.flush().context("flushing image")?;
     progress.finish(abs - start);
 
@@ -232,6 +250,72 @@ pub fn image<S: BlockSource>(
         write_map(path, end, abs, &stats.bad_regions)?;
     }
     Ok(stats)
+}
+
+/// Re-read the currently-bad regions up to `opts.retries` times. Sectors that
+/// now read are written and dropped from `bad`; sectors that still fail stay.
+/// Stops early once nothing remains bad or a whole pass recovers nothing.
+#[allow(clippy::too_many_arguments)]
+fn retry_bad_regions<S: BlockSource>(
+    src: &S,
+    opts: &ImageOptions,
+    out: &mut File,
+    sector: u64,
+    start: u64,
+    bad: &mut Vec<(u64, u64)>,
+    stats: &mut ImageStats,
+    progress: &dyn ProgressSink,
+) -> Result<()> {
+    let end = opts.end.unwrap_or(src.size()).min(src.size());
+    let mut buf = vec![0u8; IMAGE_CHUNK];
+    'passes: for _ in 0..opts.retries {
+        if bad.is_empty() {
+            break;
+        }
+        let regions = merge_regions(bad);
+        *bad = Vec::new();
+        let mut recovered_any = false;
+        for (ri, region) in regions.iter().enumerate() {
+            let region_end = region.offset + region.len;
+            let mut pos = region.offset;
+            while pos < region_end {
+                if progress.cancelled() {
+                    stats.cancelled = true;
+                    // Preserve this remainder and every region not yet retried.
+                    bad.push((pos, region_end - pos));
+                    for later in &regions[ri + 1..] {
+                        bad.push((later.offset, later.len));
+                    }
+                    break 'passes;
+                }
+                let len = sector.min(region_end - pos) as usize;
+                match src.read_at(pos, &mut buf[..len]) {
+                    Ok(n) if n > 0 => {
+                        write_region(out, pos - start, &buf[..n], opts.sparse, stats)?;
+                        stats.bytes_zeroed = stats.bytes_zeroed.saturating_sub(n as u64);
+                        stats.bytes_recovered_retry += n as u64;
+                        recovered_any = true;
+                        pos += n as u64;
+                    }
+                    _ => {
+                        bad.push((pos, len as u64));
+                        pos += len as u64;
+                    }
+                }
+            }
+        }
+        stats.retry_passes += 1;
+        // Persist progress after each pass so a later resume sees the smaller
+        // set. The copy is complete, so the high-water mark is `end`.
+        if let Some(path) = &opts.map {
+            out.flush().context("flushing image")?;
+            write_map(path, end, end, &merge_regions(bad))?;
+        }
+        if !recovered_any {
+            break; // no point trying again if a full pass salvaged nothing
+        }
+    }
+    Ok(())
 }
 
 /// Parsed contents of a map file: the high-water mark and unreadable regions.
@@ -330,12 +414,42 @@ fn merge_regions(sectors: &[(u64, u64)]) -> Vec<BadRegion> {
 mod tests {
     use super::*;
     use crate::carver::NoProgress;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
 
     /// An in-memory source that can be told to fail reads over a byte range, so
     /// the bad-sector path is exercised without real failing hardware.
     struct FaultySource {
         data: Vec<u8>,
         bad: std::ops::Range<u64>,
+    }
+
+    /// A source where each read overlapping `bad` fails the *first* time that
+    /// exact offset is read and succeeds afterward — a flaky drive that returns
+    /// data on a retry. Lets the retry-pass logic be tested deterministically.
+    struct TransientSource {
+        data: Vec<u8>,
+        bad: std::ops::Range<u64>,
+        attempted: Mutex<HashSet<u64>>,
+    }
+
+    impl BlockSource for TransientSource {
+        fn size(&self) -> u64 {
+            self.data.len() as u64
+        }
+        fn read_at(&self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
+            let len = buf.len() as u64;
+            if offset < self.bad.end && offset + len > self.bad.start {
+                // First attempt at this offset fails; later attempts succeed.
+                if self.attempted.lock().unwrap().insert(offset) {
+                    return Err(std::io::Error::other("EIO (transient)"));
+                }
+            }
+            let start = offset as usize;
+            let n = buf.len().min(self.data.len().saturating_sub(start));
+            buf[..n].copy_from_slice(&self.data[start..start + n]);
+            Ok(n)
+        }
     }
 
     impl BlockSource for FaultySource {
@@ -573,5 +687,55 @@ mod tests {
             "resume copies only the remainder, not the whole file"
         );
         assert_eq!(read_back(&out), data, "resumed image matches the source");
+    }
+
+    #[test]
+    fn retry_salvages_a_transiently_bad_sector() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out.img");
+        let data = vec![0xEEu8; 4096];
+        let source = TransientSource {
+            data: data.clone(),
+            bad: 1024..1536, // one sector that fails once, then reads
+            attempted: Mutex::new(HashSet::new()),
+        };
+        let opts = ImageOptions {
+            output: out.clone(),
+            sparse: false,
+            sector_size: 512,
+            retries: 1,
+            ..Default::default()
+        };
+        let stats = image(&source, &opts, &NoProgress).unwrap();
+
+        assert_eq!(stats.retry_passes, 1);
+        assert_eq!(stats.bytes_recovered_retry, 512);
+        assert_eq!(stats.bytes_zeroed, 0);
+        assert!(stats.bad_regions.is_empty(), "the sector was salvaged");
+        assert_eq!(read_back(&out), data, "image is complete after retry");
+    }
+
+    #[test]
+    fn retry_gives_up_on_a_permanently_bad_sector() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out.img");
+        let source = FaultySource {
+            data: vec![0x22u8; 4096],
+            bad: 2048..2560,
+        };
+        let opts = ImageOptions {
+            output: out,
+            sparse: false,
+            sector_size: 512,
+            retries: 3,
+            ..Default::default()
+        };
+        let stats = image(&source, &opts, &NoProgress).unwrap();
+
+        // A pass that recovers nothing stops the retry loop early (1 pass, not 3).
+        assert_eq!(stats.retry_passes, 1);
+        assert_eq!(stats.bytes_recovered_retry, 0);
+        assert_eq!(stats.bad_regions.len(), 1);
+        assert_eq!(stats.bytes_zeroed, 512);
     }
 }

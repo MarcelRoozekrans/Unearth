@@ -269,6 +269,10 @@ fn tool_definitions() -> Json {
                     "resume",
                     bool_prop("Resume from the map file if present (default false)."),
                 ),
+                (
+                    "retries",
+                    int_prop("Extra passes to re-read unreadable regions (default 0)."),
+                ),
             ],
             vec!["source", "output"],
         ),
@@ -579,6 +583,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             let sparse = arg_bool("sparse").unwrap_or(true);
             let sector_size = arg_u64("sector_size").unwrap_or(crate::image::DEFAULT_SECTOR);
             let resume = arg_bool("resume").unwrap_or(false);
+            let retries = arg_u64("retries").unwrap_or(0) as u32;
             // A map file enables checkpoint/resume; default it next to the image.
             let map: Option<String> = args
                 .and_then(|a| a.get("map"))
@@ -596,6 +601,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     sector_size,
                     map: map.clone().map(Into::into),
                     resume,
+                    retries,
                 };
                 let stats =
                     crate::image::image(&source, &opts, progress).map_err(|e| e.to_string())?;
@@ -612,6 +618,8 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     ("bytes_copied", n(stats.bytes_copied)),
                     ("bytes_sparse", n(stats.bytes_sparse)),
                     ("bytes_zeroed", n(stats.bytes_zeroed)),
+                    ("retry_passes", n(stats.retry_passes as u64)),
+                    ("bytes_recovered_retry", n(stats.bytes_recovered_retry)),
                     ("bad_region_count", n(stats.bad_regions.len() as u64)),
                     (
                         "bad_regions_truncated",
