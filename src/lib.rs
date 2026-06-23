@@ -36,6 +36,7 @@
 //!     progress: false,
 //!     checkpoint: None,
 //!     resume: false,
+//!     organize: false,
 //! };
 //! let stats = carver::carve(&src, &sigs, &opts, &carver::NoProgress).unwrap();
 //! println!("recovered {} files", stats.files_recovered);

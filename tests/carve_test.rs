@@ -99,6 +99,7 @@ fn recovers_embedded_files() {
         progress: false,
         checkpoint: None,
         resume: false,
+        organize: false,
     };
 
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
@@ -148,6 +149,7 @@ fn type_filter_limits_recovery() {
         progress: false,
         checkpoint: None,
         resume: false,
+        organize: false,
     };
 
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
@@ -189,6 +191,7 @@ fn footer_search_terminates_without_a_footer() {
         progress: false,
         checkpoint: None,
         resume: false,
+        organize: false,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 0, "no footer => nothing recovered");

@@ -214,6 +214,43 @@ fn scan_recovers_embedded_file() {
 }
 
 #[test]
+fn scan_organize_groups_files_by_type() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+    let report = tmp.path().join("manifest.csv");
+
+    let jpeg = common::jpeg(&vec![0x41u8; 2000]);
+    let mut data = vec![0u8; 1000];
+    data.extend_from_slice(&jpeg);
+    std::fs::write(&img, &data).unwrap();
+
+    let out = run(&[
+        "scan",
+        img.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--organize",
+        "--report",
+        report.to_str().unwrap(),
+        "-q",
+    ]);
+    assert!(out.status.success());
+
+    // The carved JPEG lands in a `jpg/` subdirectory, not the flat output dir.
+    let jpg_dir = out_dir.join("jpg");
+    assert!(jpg_dir.is_dir(), "expected a jpg/ subdirectory");
+    let in_jpg: Vec<_> = std::fs::read_dir(&jpg_dir).unwrap().collect();
+    assert_eq!(in_jpg.len(), 1);
+    let carved = std::fs::read(in_jpg[0].as_ref().unwrap().path()).unwrap();
+    assert_eq!(carved, jpeg);
+
+    // The manifest records the `jpg/` prefix so `verify` can resolve it.
+    let manifest = std::fs::read_to_string(&report).unwrap();
+    assert!(manifest.contains("jpg/"), "manifest: {manifest}");
+}
+
+#[test]
 fn undelete_dry_run_with_report_writes_no_files() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("ext.img");

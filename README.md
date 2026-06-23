@@ -362,6 +362,7 @@ filerecovery scan card.img -o recovered --type jpg --type png
     --allow-nested     Also recover files embedded in other files (e.g. thumbnails)
     --no-validate      Keep every signature match without structural validation
     --dedup            Write identical content (by SHA-256) only once
+    --organize         Group recovered files into per-type subdirs (jpg/, png/, ...)
     --report <FILE>    Write a manifest of carved files (.json => JSON, else CSV)
     --summary <FILE>   Write a run summary (.json => JSON, else text)
     --checkpoint <FILE> Checkpoint scan progress here for --resume

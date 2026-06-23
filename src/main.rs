@@ -371,6 +371,7 @@ fn scan(args: ScanArgs) -> Result<()> {
         progress: !args.quiet,
         checkpoint: checkpoint.clone(),
         resume: args.resume,
+        organize: args.organize,
     };
 
     let progress: Box<dyn ProgressSink> = if opts.progress {
