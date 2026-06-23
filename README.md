@@ -490,6 +490,10 @@ Common to both strategies:
   or whose catalog record has been overwritten, are not recovered by metadata —
   use `scan`. Recovered files are restored by name (parent-folder paths are not
   rebuilt).
+- **APFS** is *recognised* (so `info`/`list_volumes` report the container and its
+  size) but not recovered from metadata: its copy-on-write design reclaims the
+  object map and B-trees through checkpoints, leaving no stale record to
+  scavenge. Use `scan` (carving) to recover data from an APFS container.
 
 `scan` (carving) specifics:
 

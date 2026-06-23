@@ -3,14 +3,16 @@
 //! Detects the filesystem of each volume in a source and dispatches to the
 //! appropriate recovery backend ([`crate::fat`], [`crate::exfat`],
 //! [`crate::ntfs`], [`crate::ext4`], or [`crate::hfsplus`]), so the `undelete`
-//! command can treat every supported filesystem the same way.
+//! command can treat every supported filesystem the same way. APFS containers
+//! ([`crate::apfs`]) are recognised for reporting but not recovered from
+//! metadata — carving (`scan`) is the fallback there.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
 use crate::source::Source;
-use crate::{exfat, ext4, fat, hfsplus, ntfs};
+use crate::{apfs, exfat, ext4, fat, hfsplus, ntfs};
 
 /// Options controlling a recovery run.
 #[derive(Clone, Copy, Default)]
@@ -77,6 +79,7 @@ pub enum Volume {
     Ntfs(ntfs::Volume),
     Ext(ext4::Volume),
     Hfs(hfsplus::Volume),
+    Apfs(apfs::Volume),
 }
 
 impl Volume {
@@ -88,6 +91,7 @@ impl Volume {
             Volume::Ntfs(v) => v.offset,
             Volume::Ext(v) => v.offset,
             Volume::Hfs(v) => v.offset,
+            Volume::Apfs(v) => v.offset,
         }
     }
 
@@ -99,6 +103,7 @@ impl Volume {
             Volume::Ntfs(v) => v.size(),
             Volume::Ext(v) => v.size(),
             Volume::Hfs(v) => v.size(),
+            Volume::Apfs(v) => v.size(),
         }
     }
 
@@ -110,6 +115,7 @@ impl Volume {
             Volume::Ntfs(_) => "NTFS".to_string(),
             Volume::Ext(_) => "ext2/3/4".to_string(),
             Volume::Hfs(v) => v.fs_label().to_string(),
+            Volume::Apfs(v) => v.fs_label().to_string(),
         }
     }
 
@@ -126,6 +132,7 @@ impl Volume {
             Volume::Ntfs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Ext(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Hfs(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Apfs(v) => v.recover_deleted(src, out_dir, opts),
         }
     }
 }
@@ -170,7 +177,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ext2/3/4, or HFS+ volume found");
+        bail!("no FAT, exFAT, NTFS, ext2/3/4, HFS+, or APFS volume found");
     }
     Ok(volumes)
 }
@@ -200,6 +207,11 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     if hfsplus::is_hfsplus(src, offset) {
         if let Ok(v) = hfsplus::Volume::parse(src, offset) {
             return Ok(Some(Volume::Hfs(v)));
+        }
+    }
+    if apfs::is_apfs(src, offset) {
+        if let Ok(v) = apfs::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Apfs(v)));
         }
     }
     if fat::looks_like_fat_vbr(&boot) {
@@ -273,6 +285,11 @@ pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     if hfsplus::is_hfsplus(src, offset) {
         if let Ok(v) = hfsplus::Volume::parse(src, offset) {
             return Ok(Volume::Hfs(v));
+        }
+    }
+    if apfs::is_apfs(src, offset) {
+        if let Ok(v) = apfs::Volume::parse(src, offset) {
+            return Ok(Volume::Apfs(v));
         }
     }
     let v = fat::Volume::parse(src, offset)?;
