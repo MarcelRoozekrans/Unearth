@@ -231,6 +231,14 @@ fn tool_definitions() -> Json {
                     "dedup",
                     bool_prop("Skip byte-identical duplicates (default false)."),
                 ),
+                (
+                    "checkpoint",
+                    str_prop("Checkpoint file for resume (default: <output_dir>.checkpoint)."),
+                ),
+                (
+                    "resume",
+                    bool_prop("Resume from the checkpoint if present (default false)."),
+                ),
             ],
             vec!["source", "output_dir"],
         ),
@@ -486,6 +494,13 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             let validate = arg_bool("validate").unwrap_or(true);
             let dedup = arg_bool("dedup").unwrap_or(false);
             let include_files = arg_bool("include_files").unwrap_or(true);
+            let resume = arg_bool("resume").unwrap_or(false);
+            // A checkpoint file enables resume; default it next to the output.
+            let checkpoint: Option<String> = args
+                .and_then(|a| a.get("checkpoint"))
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| Some(format!("{output_dir}.checkpoint")));
 
             let id = crate::job::start("scan", move |progress| {
                 let source = open(&source_path)?;
@@ -500,6 +515,8 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     validate,
                     dedup,
                     progress: false,
+                    checkpoint: checkpoint.clone().map(Into::into),
+                    resume,
                 };
                 let stats =
                     carver::carve(&source, &active, &opts, progress).map_err(|e| e.to_string())?;

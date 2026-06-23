@@ -54,6 +54,8 @@ fn carve_buf(buf: &[u8], out_dir: &std::path::Path) {
         validate: true,
         dedup: false,
         progress: false,
+        checkpoint: None,
+        resume: false,
     };
     // Must not panic; result content is irrelevant.
     let _ = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();

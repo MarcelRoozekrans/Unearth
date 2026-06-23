@@ -116,6 +116,8 @@ fn recovers_new_signature_types() {
         validate: true,
         dedup: false,
         progress: false,
+        checkpoint: None,
+        resume: false,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 5, "wav, webp, sqlite, 7z, heic");

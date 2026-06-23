@@ -82,6 +82,8 @@ fn main() {
         validate: true,
         dedup: false,
         progress: false,
+        checkpoint: None,
+        resume: false,
     };
 
     let t = Instant::now();

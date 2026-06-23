@@ -364,7 +364,20 @@ filerecovery scan card.img -o recovered --type jpg --type png
     --dedup            Write identical content (by SHA-256) only once
     --report <FILE>    Write a manifest of carved files (.json => JSON, else CSV)
     --summary <FILE>   Write a run summary (.json => JSON, else text)
+    --checkpoint <FILE> Checkpoint scan progress here for --resume
+    --resume           Resume a prior scan from its checkpoint
 -q, --quiet            Hide the progress bar
+```
+
+Carving a whole drive can take a long time. Pass `--checkpoint` to record the
+scan position and recovered-file tally to a small file as it runs; if the scan
+is interrupted, `--resume` continues from where it stopped (reusing the prior
+run's tally and dedup set) instead of rescanning from the start:
+
+```sh
+filerecovery scan /dev/sdb -o recovered --checkpoint scan.ckpt
+# interrupted? continue where it left off:
+filerecovery scan /dev/sdb -o recovered --checkpoint scan.ckpt --resume
 ```
 
 The `--report` manifest lists one row per carved file: output name, type,

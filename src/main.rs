@@ -347,6 +347,18 @@ fn scan(args: ScanArgs) -> Result<()> {
     eprintln!("Recovering: {}", type_list.join(", "));
     eprintln!("Output:     {}", args.output.display());
 
+    // A checkpoint file enables resume; default it next to the output directory
+    // when --resume is requested without an explicit --checkpoint.
+    let checkpoint = args.checkpoint.clone().or_else(|| {
+        if args.resume {
+            let mut p = args.output.clone().into_os_string();
+            p.push(".checkpoint");
+            Some(p.into())
+        } else {
+            None
+        }
+    });
+
     let opts = CarveOptions {
         output_dir: args.output,
         start: args.start,
@@ -357,6 +369,8 @@ fn scan(args: ScanArgs) -> Result<()> {
         validate: !args.no_validate,
         dedup: args.dedup,
         progress: !args.quiet,
+        checkpoint: checkpoint.clone(),
+        resume: args.resume,
     };
 
     let progress: Box<dyn ProgressSink> = if opts.progress {
