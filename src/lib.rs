@@ -39,6 +39,7 @@
 //! println!("recovered {} files", stats.files_recovered);
 //! ```
 
+pub mod apfs;
 pub mod carver;
 pub mod exfat;
 pub mod ext4;
