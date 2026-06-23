@@ -349,6 +349,17 @@ you get the named files plus the extras carving finds, without duplicate copies.
 Accepts `--type`, `--min-size`, `--organize` (group `carved/` by type), and
 `--offset` (volume offset for the undelete pass).
 
+`--report <FILE>` writes a combined manifest of every recovered file (both
+passes), each row tagged `named` or `carved` with its path and SHA-256. It is
+directly verifiable:
+
+```sh
+filerecovery recover card.img -o recovered --report recovered/manifest.csv
+filerecovery verify recovered/manifest.csv --base recovered
+```
+
+`--summary <FILE>` writes a one-object run summary (counts, bytes, timing).
+
 ### Carve a disk image (filesystem-agnostic)
 
 ```sh
