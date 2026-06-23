@@ -81,6 +81,50 @@ fn image_copies_a_source_exactly() {
 }
 
 #[test]
+fn image_writes_a_map_and_resume_completes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("disk.img");
+    let out_img = tmp.path().join("copy.img");
+    let map = tmp.path().join("copy.map");
+
+    let data: Vec<u8> = (0..30_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&src, &data).unwrap();
+
+    // First run writes the image and a map recording it finished.
+    let out = run(&[
+        "image",
+        src.to_str().unwrap(),
+        out_img.to_str().unwrap(),
+        "--no-sparse",
+        "--quiet",
+        "--map",
+        map.to_str().unwrap(),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(std::fs::read(&out_img).unwrap(), data);
+    let map_text = std::fs::read_to_string(&map).unwrap();
+    assert!(
+        map_text.contains(&format!("pos {}", data.len())),
+        "{map_text}"
+    );
+
+    // Resuming an already-complete copy is a no-op that still succeeds and leaves
+    // the image intact.
+    let out = run(&[
+        "image",
+        src.to_str().unwrap(),
+        out_img.to_str().unwrap(),
+        "--no-sparse",
+        "--quiet",
+        "--map",
+        map.to_str().unwrap(),
+        "--resume",
+    ]);
+    assert!(out.status.success());
+    assert_eq!(std::fs::read(&out_img).unwrap(), data);
+}
+
+#[test]
 fn image_copies_only_the_requested_range() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("disk.img");

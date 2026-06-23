@@ -187,6 +187,17 @@ fail are left as zero-filled holes and reported (and the command exits non-zero
 so the partial image is obvious). Zero runs are skipped, so an image of a
 mostly-empty drive stays small on a filesystem that supports sparse files.
 
+Imaging a large drive can take hours. Pass `--map` to checkpoint progress (the
+high-water mark and any unreadable regions) to a small text file as the copy
+runs; if it is interrupted, `--resume` continues from where it left off instead
+of starting over:
+
+```sh
+sudo filerecovery image /dev/sdb card.img --map card.map
+# interrupted? pick up where it stopped:
+sudo filerecovery image /dev/sdb card.img --map card.map --resume
+```
+
 `image` options:
 
 ```text
@@ -194,6 +205,8 @@ mostly-empty drive stays small on a filesystem that supports sparse files.
     --end <BYTES>         Stop copying at this offset (exclusive)
     --no-sparse           Write every byte, including zero runs (no holes)
     --sector-size <BYTES> Bad-sector retry granularity (default: 512)
+    --map <FILE>          Checkpoint progress here for --resume
+    --resume              Resume a prior run from its map file
     --summary <FILE>      Write a run summary (.json => JSON, else text)
 -q, --quiet               Suppress the progress bar
 ```

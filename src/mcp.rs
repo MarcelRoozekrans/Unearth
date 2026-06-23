@@ -261,6 +261,14 @@ fn tool_definitions() -> Json {
                     "sector_size",
                     int_prop("Bad-sector retry granularity in bytes (default 512)."),
                 ),
+                (
+                    "map",
+                    str_prop("Checkpoint/map file for resume (default: <output>.map)."),
+                ),
+                (
+                    "resume",
+                    bool_prop("Resume from the map file if present (default false)."),
+                ),
             ],
             vec!["source", "output"],
         ),
@@ -570,6 +578,13 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             let end = arg_u64("end");
             let sparse = arg_bool("sparse").unwrap_or(true);
             let sector_size = arg_u64("sector_size").unwrap_or(crate::image::DEFAULT_SECTOR);
+            let resume = arg_bool("resume").unwrap_or(false);
+            // A map file enables checkpoint/resume; default it next to the image.
+            let map: Option<String> = args
+                .and_then(|a| a.get("map"))
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| Some(format!("{output}.map")));
 
             let id = crate::job::start("image", move |progress| {
                 let source = open(&source_path)?;
@@ -579,6 +594,8 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     end,
                     sparse,
                     sector_size,
+                    map: map.clone().map(Into::into),
+                    resume,
                 };
                 let stats =
                     crate::image::image(&source, &opts, progress).map_err(|e| e.to_string())?;
