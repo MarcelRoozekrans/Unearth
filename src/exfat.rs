@@ -166,17 +166,15 @@ impl Volume {
         for e in root.chunks_exact(ENTRY_SIZE) {
             match e[0] {
                 0x00 => break, // end of directory
-                0x81 => {
-                    // Use the first (primary) Allocation Bitmap; bit 0 of the
-                    // flags selects the bitmap, 0 = first.
-                    if e[1] & 0x01 == 0 {
-                        let first = u32::from_le_bytes([e[20], e[21], e[22], e[23]]);
-                        let len = u64::from_le_bytes([
-                            e[24], e[25], e[26], e[27], e[28], e[29], e[30], e[31],
-                        ]);
-                        bitmap_loc = Some((first, len));
-                        break;
-                    }
+                // Allocation Bitmap entry; flags bit 0 selects the bitmap (0 =
+                // the first, primary one).
+                0x81 if e[1] & 0x01 == 0 => {
+                    let first = u32::from_le_bytes([e[20], e[21], e[22], e[23]]);
+                    let len = u64::from_le_bytes([
+                        e[24], e[25], e[26], e[27], e[28], e[29], e[30], e[31],
+                    ]);
+                    bitmap_loc = Some((first, len));
+                    break;
                 }
                 _ => {}
             }
