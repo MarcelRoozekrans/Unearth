@@ -564,6 +564,7 @@ fn image(args: ImageArgs) -> Result<()> {
         sector_size: args.sector_size,
         map,
         resume: args.resume,
+        retries: args.retry_bad,
     };
 
     let progress: Box<dyn ProgressSink> = if args.quiet {
@@ -584,6 +585,13 @@ fn image(args: ImageArgs) -> Result<()> {
         human_bytes(stats.bytes_copied),
         human_bytes(stats.bytes_sparse),
     );
+    if stats.retry_passes > 0 {
+        println!(
+            "Retried unreadable regions {} pass(es), salvaging {}.",
+            stats.retry_passes,
+            human_bytes(stats.bytes_recovered_retry)
+        );
+    }
     if !stats.bad_regions.is_empty() {
         println!(
             "WARNING: {} unreadable region(s), {} zero-filled:",
@@ -607,10 +615,13 @@ fn image(args: ImageArgs) -> Result<()> {
             ("sparse", Sv::B(!args.no_sparse)),
             ("sector_size", Sv::N(args.sector_size)),
             ("resume", Sv::B(args.resume)),
+            ("retry_bad", Sv::N(args.retry_bad as u64)),
             ("bytes_total", Sv::N(stats.bytes_total)),
             ("bytes_copied", Sv::N(stats.bytes_copied)),
             ("bytes_sparse", Sv::N(stats.bytes_sparse)),
             ("bytes_zeroed", Sv::N(stats.bytes_zeroed)),
+            ("retry_passes", Sv::N(stats.retry_passes as u64)),
+            ("bytes_recovered_retry", Sv::N(stats.bytes_recovered_retry)),
             ("bad_regions", Sv::N(stats.bad_regions.len() as u64)),
             ("cancelled", Sv::B(stats.cancelled)),
             ("elapsed_ms", Sv::N(started.elapsed().as_millis() as u64)),

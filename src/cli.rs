@@ -146,6 +146,12 @@ pub struct ImageArgs {
     #[arg(long)]
     pub resume: bool,
 
+    /// After the main copy, re-read unreadable regions this many extra times.
+    /// A failing drive sometimes returns data on a later attempt, so retrying
+    /// can salvage sectors the first pass had to zero-fill.
+    #[arg(long = "retry-bad", value_name = "PASSES", default_value_t = 0)]
+    pub retry_bad: u32,
+
     /// Write a run summary (bytes copied/zeroed/sparse, bad regions) to this
     /// path. `.json` for JSON, otherwise plain text.
     #[arg(long, value_name = "FILE")]

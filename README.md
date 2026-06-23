@@ -95,7 +95,7 @@ offset where they were found.
 
 ## Install / build
 
-Requires a Rust toolchain (1.74+).
+Requires a Rust toolchain (1.75+).
 
 ```sh
 cargo build --release
@@ -198,6 +198,15 @@ sudo filerecovery image /dev/sdb card.img --map card.map
 sudo filerecovery image /dev/sdb card.img --map card.map --resume
 ```
 
+A failing drive often returns data on a later attempt. `--retry-bad <N>` makes
+up to `N` extra passes over just the unreadable regions after the main copy,
+salvaging sectors the first pass had to zero-fill (it stops early once a pass
+recovers nothing):
+
+```sh
+sudo filerecovery image /dev/sdb card.img --map card.map --retry-bad 3
+```
+
 `image` options:
 
 ```text
@@ -207,6 +216,7 @@ sudo filerecovery image /dev/sdb card.img --map card.map --resume
     --sector-size <BYTES> Bad-sector retry granularity (default: 512)
     --map <FILE>          Checkpoint progress here for --resume
     --resume              Resume a prior run from its map file
+    --retry-bad <PASSES>  Re-read unreadable regions this many extra times
     --summary <FILE>      Write a run summary (.json => JSON, else text)
 -q, --quiet               Suppress the progress bar
 ```
@@ -243,7 +253,7 @@ misleading extension. `identify` reports a file's type from its bytes (the same
 signatures and structural checks carving uses):
 
 ```sh
-filerecovery identify recovered/00000000_0x1000.bin
+filerecovery identify recovered/00000007_0x00000000003c1a00.jpg
 filerecovery identify mystery.dat --json
 ```
 
