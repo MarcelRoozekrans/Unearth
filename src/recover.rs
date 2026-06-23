@@ -126,6 +126,7 @@ impl Volume {
     pub fn free_extents(&self, src: &Source) -> Option<Vec<(u64, u64)>> {
         match self {
             Volume::Fat(v) => v.free_extents(src).ok(),
+            Volume::Exfat(v) => v.free_extents(src).ok(),
             _ => None,
         }
     }

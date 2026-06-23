@@ -358,9 +358,9 @@ noise (no copies of files that still exist), and the scan is faster:
 filerecovery recover card.img -o recovered --unallocated
 ```
 
-This reads the filesystem's allocation map (currently supported for FAT); for
-filesystems whose map isn't parsed yet it falls back to carving the whole source
-and says so.
+This reads the filesystem's allocation map (currently supported for FAT and
+exFAT); for filesystems whose map isn't parsed yet it falls back to carving the
+whole source and says so.
 
 `--report <FILE>` writes a combined manifest of every recovered file (both
 passes), each row tagged `named` or `carved` with its path and SHA-256. It is
