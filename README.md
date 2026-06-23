@@ -402,6 +402,7 @@ alongside the per-file manifest.
 | avi    | AVI video                                        | RIFF size field             |
 | mp4    | MP4 / MOV / M4A media                            | ISO box (atom) walk         |
 | 3gp    | 3GP video                                        | ISO box (atom) walk         |
+| flv    | Flash Video                                      | tag-chain walk              |
 | mkv    | Matroska / WebM video                            | EBML segment-size walk      |
 | ogg    | Ogg (Vorbis/Opus/Theora)                        | Ogg page-chain walk         |
 | asf    | ASF / WMV / WMA media                            | ASF object walk             |
@@ -414,6 +415,8 @@ alongside the per-file manifest.
 | woff2  | WOFF2 web font                                   | size field in header (BE)    |
 | emf    | Enhanced Metafile (vector)                       | size field in header         |
 | mid    | Standard MIDI file                               | MThd / MTrk chunk walk       |
+| pcap   | libpcap network capture                          | packet-record walk          |
+| pcapng | pcapng network capture                           | block walk                  |
 
 Run `filerecovery list-types` to see what your build supports.
 

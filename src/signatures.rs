@@ -31,6 +31,9 @@
 //! * [`Extent::HeaderSizeBe32`] — read a big-endian u32 size field (WOFF fonts).
 //! * [`Extent::Sfnt`] — walk a TrueType/OpenType font's table directory.
 //! * [`Extent::Midi`] — walk a Standard MIDI file's `MThd`/`MTrk` chunks.
+//! * [`Extent::Flv`] — walk a Flash Video tag chain.
+//! * [`Extent::Pcap`] / [`Extent::Pcapng`] — walk a network-capture file's
+//!   packet records / blocks.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -93,6 +96,17 @@ pub enum Extent {
     /// Standard MIDI file: an `MThd` header chunk followed by `MTrk` chunks, each
     /// a 4-byte tag and a big-endian u32 length; walk them to the end.
     Midi,
+    /// Flash Video (FLV): a 9-byte header then a chain of tags, each an 11-byte
+    /// tag header (with a 24-bit big-endian data size) plus a trailing 4-byte
+    /// previous-tag-size field; walk them to the end.
+    Flv,
+    /// libpcap capture: a 24-byte global header (whose magic also gives the byte
+    /// order) followed by packet records, each a 16-byte header with a captured
+    /// length; walk the records to the end.
+    Pcap,
+    /// pcapng capture: a chain of blocks, each carrying its own total length as a
+    /// u32 (byte order from the first Section Header Block); walk them to the end.
+    Pcapng,
 }
 
 /// A recoverable file type.
@@ -520,6 +534,64 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Midi,
         max_size: 16 * MB,
+    },
+    Signature {
+        name: "Flash Video",
+        ext: "flv",
+        magic: &[0x46, 0x4C, 0x56, 0x01], // "FLV" + version 1
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Flv,
+        max_size: 2 * GB,
+    },
+    // libpcap: the magic is written in the host byte order, so it appears on
+    // disk in either orientation; the microsecond and nanosecond variants
+    // differ in the low bytes. The walker reads the byte order back from it.
+    Signature {
+        name: "pcap capture",
+        ext: "pcap",
+        magic: &[0xD4, 0xC3, 0xB2, 0xA1], // microsecond, little-endian host
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Pcap,
+        max_size: 4 * GB,
+    },
+    Signature {
+        name: "pcap capture",
+        ext: "pcap",
+        magic: &[0xA1, 0xB2, 0xC3, 0xD4], // microsecond, big-endian host
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Pcap,
+        max_size: 4 * GB,
+    },
+    Signature {
+        name: "pcap capture",
+        ext: "pcap",
+        magic: &[0x4D, 0x3C, 0xB2, 0xA1], // nanosecond, little-endian host
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Pcap,
+        max_size: 4 * GB,
+    },
+    Signature {
+        name: "pcap capture",
+        ext: "pcap",
+        magic: &[0xA1, 0xB2, 0x3C, 0x4D], // nanosecond, big-endian host
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Pcap,
+        max_size: 4 * GB,
+    },
+    Signature {
+        name: "pcapng capture",
+        ext: "pcapng",
+        // Section Header Block type, then the byte-order magic follows at +8.
+        magic: &[0x0A, 0x0D, 0x0D, 0x0A],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Pcapng,
+        max_size: 4 * GB,
     },
 ];
 
