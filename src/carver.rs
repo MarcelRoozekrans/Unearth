@@ -210,6 +210,19 @@ fn file_length(
             }
             Ok(Some(size))
         }
+        Extent::HeaderSizeBe32 { offset } => {
+            let need = offset + 4;
+            let mut tmp = vec![0u8; need];
+            if source.read_at(file_start, &mut tmp)? < need {
+                return Ok(None);
+            }
+            let hdr: [u8; 4] = tmp[offset..offset + 4].try_into().unwrap();
+            let size = u32::from_be_bytes(hdr) as u64;
+            if size == 0 || file_start + size > limit {
+                return Ok(None);
+            }
+            Ok(Some(size))
+        }
         Extent::RiffSize => {
             let mut tmp = [0u8; 8];
             if source.read_at(file_start, &mut tmp)? < 8 {
@@ -262,7 +275,92 @@ fn file_length(
         Extent::Asf => Ok(asf_length(source, file_start, limit)?),
         Extent::Wasm => Ok(wasm_length(source, file_start, limit)?),
         Extent::IcoCur => Ok(icocur_length(source, file_start, limit)?),
+        Extent::Sfnt => Ok(sfnt_length(source, file_start, limit)?),
+        Extent::Midi => Ok(midi_length(source, file_start, limit)?),
     }
+}
+
+/// Walk an SFNT font's table directory: a 12-byte header (whose `numTables`
+/// u16 at offset 4 gives the table count) followed by 16-byte records of
+/// `tag, checksum, offset, length` (all big-endian). The file ends at the
+/// furthest `offset + length`, padded to a 4-byte boundary.
+fn sfnt_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let avail = limit - file_start;
+    let mut hdr = [0u8; 12];
+    if source.read_at(file_start, &mut hdr)? < 12 {
+        return Ok(None);
+    }
+    let num_tables = u16::from_be_bytes([hdr[4], hdr[5]]) as u64;
+    if num_tables == 0 || num_tables > 4096 {
+        return Ok(None);
+    }
+    let dir_end = 12 + num_tables * 16;
+    if dir_end > avail {
+        return Ok(None);
+    }
+
+    let mut max_end = dir_end;
+    let mut entry = [0u8; 16];
+    for i in 0..num_tables {
+        if source.read_at(file_start + 12 + i * 16, &mut entry)? < 16 {
+            return Ok(None);
+        }
+        let off = u32::from_be_bytes([entry[8], entry[9], entry[10], entry[11]]) as u64;
+        let len = u32::from_be_bytes([entry[12], entry[13], entry[14], entry[15]]) as u64;
+        // Each table must sit within the directory's file and not before it.
+        if off < 12 {
+            return Ok(None);
+        }
+        let end = off.saturating_add(len);
+        let padded = end.saturating_add(3) & !3;
+        if padded > avail {
+            return Ok(None);
+        }
+        max_end = max_end.max(padded);
+    }
+    Ok(Some(max_end))
+}
+
+/// Walk a Standard MIDI file: an `MThd` header chunk (whose big-endian u32
+/// length must be 6) followed by `MTrk` track chunks, each a 4-byte tag and a
+/// big-endian u32 length. The file ends after the last track chunk.
+fn midi_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAX_TRACKS: u64 = 1 << 20;
+    let avail = limit - file_start;
+    let mut hdr = [0u8; 8];
+    if source.read_at(file_start, &mut hdr)? < 8 {
+        return Ok(None);
+    }
+    if &hdr[0..4] != b"MThd" || u32::from_be_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) != 6 {
+        return Ok(None);
+    }
+
+    let mut pos = 14u64; // 8-byte chunk header + 6-byte MThd body
+    if pos > avail {
+        return Ok(None);
+    }
+    let mut tracks = 0u64;
+    while tracks < MAX_TRACKS {
+        if pos + 8 > avail {
+            break;
+        }
+        let mut chunk = [0u8; 8];
+        if source.read_at(file_start + pos, &mut chunk)? < 8 || &chunk[0..4] != b"MTrk" {
+            break;
+        }
+        let len = u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]) as u64;
+        let next = pos.saturating_add(8).saturating_add(len);
+        if next > avail {
+            break;
+        }
+        pos = next;
+        tracks += 1;
+    }
+
+    if tracks == 0 || file_start + pos > limit {
+        return Ok(None);
+    }
+    Ok(Some(pos))
 }
 
 /// Compute an ICO/CUR file's length from its image directory: each 16-byte entry
