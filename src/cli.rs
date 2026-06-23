@@ -270,6 +270,16 @@ pub struct ScanArgs {
     #[arg(long, value_name = "FILE")]
     pub summary: Option<PathBuf>,
 
+    /// Checkpoint scan progress to this file so an interrupted scan can be
+    /// resumed. Defaults to `<OUTPUT>.checkpoint` when `--resume` is used.
+    #[arg(long, value_name = "FILE")]
+    pub checkpoint: Option<PathBuf>,
+
+    /// Resume a previous scan from its checkpoint (continues from where it
+    /// stopped). Use the same SOURCE, OUTPUT, and options as the original run.
+    #[arg(long)]
+    pub resume: bool,
+
     /// Suppress the progress bar.
     #[arg(short, long)]
     pub quiet: bool,

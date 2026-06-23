@@ -291,6 +291,8 @@ fn carves_every_extent_strategy_in_one_pass() {
         validate: true,
         dedup: true,
         progress: false,
+        checkpoint: None,
+        resume: false,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
 

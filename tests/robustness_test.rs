@@ -39,6 +39,8 @@ fn run_all(src: &Source, out_dir: &Path) {
         validate: true,
         dedup: false,
         progress: false,
+        checkpoint: None,
+        resume: false,
     };
     let _ = carver::carve(src, &sigs, &opts, &NoProgress);
 }

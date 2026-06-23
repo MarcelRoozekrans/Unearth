@@ -15,6 +15,9 @@ use crate::validate::{self, HEADER_LEN};
 
 /// How much of the source we read per scan iteration.
 const SCAN_CHUNK: usize = 8 * 1024 * 1024; // 8 MiB
+/// Persist the scan checkpoint at least this often, so an interrupted scan of a
+/// large drive loses little progress.
+const CHECKPOINT_INTERVAL: u64 = 256 * 1024 * 1024; // 256 MiB
 /// Window used when streaming a recovered file to disk.
 const COPY_CHUNK: usize = 4 * 1024 * 1024; // 4 MiB
 
@@ -41,6 +44,13 @@ pub struct CarveOptions {
     pub dedup: bool,
     /// Report progress to stderr.
     pub progress: bool,
+    /// Optional checkpoint file. When set, the scan position and recovered-file
+    /// tally are written here periodically so an interrupted scan can `resume`.
+    pub checkpoint: Option<PathBuf>,
+    /// Resume from the checkpoint file if it exists: continue from the saved
+    /// position with the prior run's tally (and dedup set). Requires the same
+    /// output directory and options as the original run.
+    pub resume: bool,
 }
 
 /// One carved file, recorded for the recovery report.
@@ -90,11 +100,10 @@ pub fn carve(
     let overlap = index.max_lookahead + max_magic_offset as usize;
 
     let scan_end = opts.end.unwrap_or(source.size).min(source.size);
-    let scan_start = opts.start.min(scan_end);
+    let base_start = opts.start.min(scan_end);
 
     let mut stats = CarveStats::default();
     let mut buf = vec![0u8; SCAN_CHUNK + overlap];
-    let mut abs = scan_start;
     // Detected file starts below this offset are skipped (already inside a
     // recovered file). Disabled when `allow_nested` is set.
     let mut skip_until = 0u64;
@@ -104,7 +113,27 @@ pub fn carve(
     // Content digests of files already written, for `--dedup`.
     let mut seen: HashSet<[u8; 32]> = HashSet::new();
 
-    progress.begin(scan_end - scan_start);
+    // Resume from a checkpoint if asked and one exists: continue from the saved
+    // position with the prior run's tally, dedup set, and skip boundary. A
+    // corrupt checkpoint is treated as "start over" (always safe).
+    let mut scan_start = base_start;
+    let resume_path = opts
+        .checkpoint
+        .as_ref()
+        .filter(|p| opts.resume && p.exists());
+    if let Some(path) = resume_path {
+        if let Some(saved) = read_checkpoint(path) {
+            scan_start = saved.pos.clamp(base_start, scan_end);
+            skip_until = saved.skip_until;
+            seen = saved.seen;
+            stats = saved.stats;
+        }
+    }
+
+    let mut abs = scan_start;
+    let mut last_checkpoint = abs;
+    progress.begin(scan_end - base_start);
+    progress.update(abs - base_start);
 
     while abs < scan_end {
         if progress.cancelled() {
@@ -159,6 +188,12 @@ pub fn carve(
                                 if let Some(max) = opts.max_files {
                                     if stats.files_recovered >= max {
                                         progress.finish(stats.bytes_scanned);
+                                        if let Some(path) = &opts.checkpoint {
+                                            write_checkpoint(
+                                                path, abs, scan_end, skip_until, &stats, &seen,
+                                                opts.dedup,
+                                            )?;
+                                        }
                                         return Ok(stats);
                                     }
                                 }
@@ -173,12 +208,164 @@ pub fn carve(
         // Advance, leaving the overlap to be re-read (unless this was the tail).
         let advance = if scan_limit == n { n } else { scan_limit };
         abs += advance as u64;
-        stats.bytes_scanned = abs - scan_start;
+        stats.bytes_scanned = abs - base_start;
         progress.update(stats.bytes_scanned);
+
+        // Checkpoint periodically so an interrupted scan loses little progress.
+        if let Some(path) = &opts.checkpoint {
+            if abs - last_checkpoint >= CHECKPOINT_INTERVAL {
+                write_checkpoint(path, abs, scan_end, skip_until, &stats, &seen, opts.dedup)?;
+                last_checkpoint = abs;
+            }
+        }
     }
 
     progress.finish(stats.bytes_scanned);
+    // Persist a final checkpoint (covers completion and cancellation). On a
+    // completed scan `pos == scan_end`, so a later resume is a no-op.
+    if let Some(path) = &opts.checkpoint {
+        write_checkpoint(path, abs, scan_end, skip_until, &stats, &seen, opts.dedup)?;
+    }
     Ok(stats)
+}
+
+/// State restored from a scan checkpoint.
+struct LoadedCheckpoint {
+    pos: u64,
+    skip_until: u64,
+    seen: HashSet<[u8; 32]>,
+    stats: CarveStats,
+}
+
+/// Write the scan checkpoint atomically (temp file + rename) so a crash never
+/// leaves a half-written checkpoint. Records the scan position, the skip
+/// boundary, the running tally, the dedup digests (when deduping), and the
+/// per-file manifest rows so a resumed run's `--report` stays complete.
+fn write_checkpoint(
+    path: &std::path::Path,
+    pos: u64,
+    end: u64,
+    skip_until: u64,
+    stats: &CarveStats,
+    seen: &HashSet<[u8; 32]>,
+    dedup: bool,
+) -> Result<()> {
+    let mut s = String::from("# filerecovery scan checkpoint v1\n");
+    s.push_str(&format!("pos {pos}\n"));
+    s.push_str(&format!("end {end}\n"));
+    s.push_str(&format!("skip_until {skip_until}\n"));
+    s.push_str(&format!("files {}\n", stats.files_recovered));
+    s.push_str(&format!("bytes {}\n", stats.bytes_recovered));
+    s.push_str(&format!("rejected {}\n", stats.rejected));
+    s.push_str(&format!("duplicates {}\n", stats.duplicates));
+    if dedup {
+        for h in seen {
+            s.push_str(&format!("seen {}\n", crate::hash::to_hex(h)));
+        }
+    }
+    for f in &stats.files {
+        s.push_str(&format!(
+            "file {} {} {} {} {}\n",
+            f.ext,
+            f.offset,
+            f.size,
+            crate::hash::to_hex(&f.sha256),
+            f.name
+        ));
+    }
+
+    let tmp = path.with_extension("checkpoint.tmp");
+    fs::write(&tmp, s).with_context(|| format!("writing checkpoint {}", tmp.display()))?;
+    fs::rename(&tmp, path).with_context(|| format!("installing checkpoint {}", path.display()))?;
+    Ok(())
+}
+
+/// Read a scan checkpoint leniently: unparseable lines are skipped (so a
+/// truncated file degrades gracefully). Returns `None` only if the file cannot
+/// be read at all, in which case the caller starts a fresh scan.
+fn read_checkpoint(path: &std::path::Path) -> Option<LoadedCheckpoint> {
+    let text = fs::read_to_string(path).ok()?;
+    let mut pos = 0u64;
+    let mut skip_until = 0u64;
+    let mut seen: HashSet<[u8; 32]> = HashSet::new();
+    let mut stats = CarveStats::default();
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut it = line.splitn(6, ' ');
+        match it.next() {
+            Some("pos") => pos = it.next().and_then(|v| v.parse().ok()).unwrap_or(pos),
+            Some("skip_until") => {
+                skip_until = it.next().and_then(|v| v.parse().ok()).unwrap_or(skip_until)
+            }
+            Some("files") => {
+                stats.files_recovered = it.next().and_then(|v| v.parse().ok()).unwrap_or(0)
+            }
+            Some("bytes") => {
+                stats.bytes_recovered = it.next().and_then(|v| v.parse().ok()).unwrap_or(0)
+            }
+            Some("rejected") => {
+                stats.rejected = it.next().and_then(|v| v.parse().ok()).unwrap_or(0)
+            }
+            Some("duplicates") => {
+                stats.duplicates = it.next().and_then(|v| v.parse().ok()).unwrap_or(0)
+            }
+            Some("seen") => {
+                if let Some(h) = it.next().and_then(parse_hex32) {
+                    seen.insert(h);
+                }
+            }
+            Some("file") => {
+                if let (Some(ext), Some(offset), Some(size), Some(sha), Some(name)) = (
+                    it.next().and_then(intern_ext),
+                    it.next().and_then(|v| v.parse::<u64>().ok()),
+                    it.next().and_then(|v| v.parse::<u64>().ok()),
+                    it.next().and_then(parse_hex32),
+                    it.next(),
+                ) {
+                    *stats.per_type.entry(ext).or_insert(0) += 1;
+                    stats.files.push(CarvedFile {
+                        name: name.to_string(),
+                        ext,
+                        offset,
+                        size,
+                        sha256: sha,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(LoadedCheckpoint {
+        pos,
+        skip_until,
+        seen,
+        stats,
+    })
+}
+
+/// Resolve an extension string back to the `&'static str` from the signature
+/// table, so a restored [`CarvedFile`] keeps the same lifetime as a fresh one.
+fn intern_ext(s: &str) -> Option<&'static str> {
+    crate::signatures::SIGNATURES
+        .iter()
+        .map(|sig| sig.ext)
+        .find(|e| *e == s)
+}
+
+/// Parse 64 hex characters into a 32-byte digest.
+fn parse_hex32(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(s.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(out)
 }
 
 /// Compute the length of the file of type `sig` starting at `file_start`,

@@ -137,6 +137,8 @@ fn recovers_capture_and_video_types() {
         validate: true,
         dedup: false,
         progress: false,
+        checkpoint: None,
+        resume: false,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
 

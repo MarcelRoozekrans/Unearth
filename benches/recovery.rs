@@ -141,6 +141,8 @@ fn bench_carve(c: &mut Criterion) {
                     validate: true,
                     dedup: false,
                     progress: false,
+                    checkpoint: None,
+                    resume: false,
                 };
                 carver::carve(&source, &sigs, &opts, &NoProgress).unwrap()
             },
