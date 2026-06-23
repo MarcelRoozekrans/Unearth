@@ -279,7 +279,7 @@ fn tool_definitions() -> Json {
     );
     tool(
         "undelete",
-        "Recover deleted files from a FAT/exFAT/NTFS/ext volume into output_dir, \
+        "Recover deleted files from a FAT/exFAT/NTFS/ext/HFS+ volume into output_dir, \
          keeping original names where possible.",
         schema(
             vec![

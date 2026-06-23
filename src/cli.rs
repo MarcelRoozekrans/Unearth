@@ -21,12 +21,12 @@ pub enum Command {
     /// Works even after a format or partition loss, but cannot restore
     /// original filenames.
     Scan(ScanArgs),
-    /// Recover deleted files from a FAT or exFAT filesystem, keeping their
-    /// original names, paths, and sizes.
+    /// Recover deleted files from a FAT, exFAT, NTFS, ext, or HFS+ filesystem,
+    /// keeping their original names, paths, and sizes.
     ///
     /// More accurate than carving when the filesystem metadata is intact (e.g.
-    /// a file was just deleted), but requires a readable FAT12/16/32 or exFAT
-    /// volume.
+    /// a file was just deleted), but requires a readable FAT12/16/32, exFAT,
+    /// NTFS, ext2/3/4, or HFS+/HFSX volume.
     Undelete(UndeleteArgs),
     /// Show the partition / filesystem layout detected in a source.
     Info(InfoArgs),

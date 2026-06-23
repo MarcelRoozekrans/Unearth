@@ -79,6 +79,80 @@ pub fn ext_volume(name: &str, payload: &[u8]) -> Vec<u8> {
     v
 }
 
+// --- HFS+ ---------------------------------------------------------------
+
+const HFS_BS: usize = 512;
+const HFS_CATALOG_BLOCK: usize = 8; // catalog file starts here (2 nodes)
+const HFS_NODE_SIZE: usize = 512;
+const HFS_DATA_BLOCK: usize = 12; // file data starts here
+
+fn put_be16(v: &mut [u8], o: usize, x: u16) {
+    v[o..o + 2].copy_from_slice(&x.to_be_bytes());
+}
+fn put_be32(v: &mut [u8], o: usize, x: u32) {
+    v[o..o + 4].copy_from_slice(&x.to_be_bytes());
+}
+fn put_be64(v: &mut [u8], o: usize, x: u64) {
+    v[o..o + 8].copy_from_slice(&x.to_be_bytes());
+}
+
+/// A bare HFS+ volume (no partition table) with one deleted regular file named
+/// `name` holding `payload`, left as a stale record in a catalog leaf node's
+/// free space — the situation this backend recovers from.
+pub fn hfsplus_volume(name: &str, payload: &[u8]) -> Vec<u8> {
+    let name16: Vec<u16> = name.encode_utf16().collect();
+    let name_len = name16.len();
+    let block_count = payload.len().div_ceil(HFS_BS).max(1);
+    let total_blocks = HFS_DATA_BLOCK + block_count + 2;
+    let mut v = vec![0u8; total_blocks * HFS_BS];
+
+    // Volume header at offset 1024.
+    let vh = 1024;
+    put_be16(&mut v, vh, 0x482B); // "H+"
+    put_be16(&mut v, vh + 2, 4); // version
+    put_be32(&mut v, vh + 40, HFS_BS as u32); // allocation block size
+    put_be32(&mut v, vh + 44, total_blocks as u32);
+    // Catalog file fork: logicalSize, totalBlocks, then first extent.
+    put_be64(&mut v, vh + 272, (2 * HFS_NODE_SIZE) as u64); // two nodes
+    put_be32(&mut v, vh + 284, 2);
+    put_be32(&mut v, vh + 288, HFS_CATALOG_BLOCK as u32); // extent start block
+    put_be32(&mut v, vh + 292, 2); // extent block count
+
+    // Catalog node 0 (header node): the parser only needs the node size.
+    let n0 = HFS_CATALOG_BLOCK * HFS_BS;
+    v[n0 + 8] = 1; // kind = header node
+    put_be16(&mut v, n0 + 32, HFS_NODE_SIZE as u16); // BTHeaderRec.nodeSize
+
+    // Catalog node 1 (leaf node) with no live records; the deleted file record
+    // sits in its free space, starting right after the node descriptor.
+    let n1 = n0 + HFS_NODE_SIZE;
+    v[n1 + 8] = 0xFF; // kind = leaf node (-1)
+    put_be16(&mut v, n1 + 10, 0); // numRecords = 0
+    put_be16(&mut v, n1 + HFS_NODE_SIZE - 2, 14); // offset[0] -> free space at 14
+
+    // The stale file record at node offset 14.
+    let key = n1 + 14;
+    let key_len = 6 + 2 * name_len;
+    put_be16(&mut v, key, key_len as u16);
+    put_be32(&mut v, key + 2, 2); // parentID = root folder
+    put_be16(&mut v, key + 6, name_len as u16);
+    for (i, &u) in name16.iter().enumerate() {
+        put_be16(&mut v, key + 8 + i * 2, u);
+    }
+    let rec = key + 2 + key_len; // record data follows the key
+    put_be16(&mut v, rec, 0x0002); // recordType = file
+    put_be32(&mut v, rec + 8, 16); // fileID (CNID)
+    put_be32(&mut v, rec + 16, 2_082_844_800 + 1_000_000); // contentModDate
+    put_be64(&mut v, rec + 88, payload.len() as u64); // data fork logical size
+    put_be32(&mut v, rec + 104, HFS_DATA_BLOCK as u32); // extent start block
+    put_be32(&mut v, rec + 108, block_count as u32); // extent block count
+
+    // File data.
+    let data_off = HFS_DATA_BLOCK * HFS_BS;
+    v[data_off..data_off + payload.len()].copy_from_slice(payload);
+    v
+}
+
 // --- FAT32 --------------------------------------------------------------
 
 /// A bare FAT32 volume with a cluster-chained root directory containing one
