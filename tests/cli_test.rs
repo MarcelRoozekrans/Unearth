@@ -251,6 +251,52 @@ fn scan_organize_groups_files_by_type() {
 }
 
 #[test]
+fn recover_runs_undelete_then_dedup_carve() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img_path = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+
+    // An ext volume with a deleted JPEG (recoverable by name; kept within one
+    // 1 KiB block so the test helper's single-extent inode restores it intact),
+    // plus a *different* JPEG planted in the slack after it (only by carving).
+    let jpeg_named = common::jpeg(&vec![0x41u8; 800]);
+    let jpeg_carved = common::jpeg(&vec![0x42u8; 1500]);
+    let mut img = common::ext_volume("photo.jpg", &jpeg_named);
+    img.extend_from_slice(&vec![0u8; 500]);
+    img.extend_from_slice(&jpeg_carved);
+    img.extend_from_slice(&vec![0u8; 500]);
+    std::fs::write(&img_path, &img).unwrap();
+
+    let out = run(&[
+        "recover",
+        img_path.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "-q",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Undelete restored the named JPEG under named/.
+    assert_eq!(
+        std::fs::read(out_dir.join("named").join("photo.jpg")).unwrap(),
+        jpeg_named
+    );
+
+    // Carving added only the planted JPEG: the named one is deduped away because
+    // undelete already recovered that exact content.
+    let carved: Vec<Vec<u8>> = std::fs::read_dir(out_dir.join("carved"))
+        .unwrap()
+        .map(|e| std::fs::read(e.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(carved.len(), 1, "only the slack JPEG should be carved");
+    assert_eq!(carved[0], jpeg_carved);
+}
+
+#[test]
 fn undelete_dry_run_with_report_writes_no_files() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("ext.img");

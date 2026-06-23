@@ -28,6 +28,14 @@ pub enum Command {
     /// a file was just deleted), but requires a readable FAT12/16/32, exFAT,
     /// NTFS, ext2/3/4, or HFS+/HFSX volume.
     Undelete(UndeleteArgs),
+    /// Recover everything in one pass: filesystem-aware undelete, then carving
+    /// for whatever the filesystem metadata could not restore.
+    ///
+    /// Writes named files (with paths) under `<OUTPUT>/named/` and carved files
+    /// under `<OUTPUT>/carved/`. Carving is content-deduplicated against the
+    /// undelete results, so `carved/` only holds data not already recovered by
+    /// name.
+    Recover(RecoverArgs),
     /// Show the partition / filesystem layout detected in a source.
     Info(InfoArgs),
     /// Copy a device or image to an image file, read-only and bad-sector
@@ -156,6 +164,38 @@ pub struct ImageArgs {
     /// path. `.json` for JSON, otherwise plain text.
     #[arg(long, value_name = "FILE")]
     pub summary: Option<PathBuf>,
+
+    /// Suppress the progress bar.
+    #[arg(short, long)]
+    pub quiet: bool,
+}
+
+#[derive(Parser)]
+pub struct RecoverArgs {
+    /// Source to read: a disk image file or a block device. Opened read-only.
+    #[arg(value_name = "SOURCE")]
+    pub source: PathBuf,
+
+    /// Directory to write recovered files into (created if needed). Named files
+    /// go under `named/`, carved files under `carved/`.
+    #[arg(short, long, value_name = "DIR", default_value = "recovered")]
+    pub output: PathBuf,
+
+    /// Byte offset of the volume for the undelete pass (default: auto-detect).
+    #[arg(long, value_name = "BYTES")]
+    pub offset: Option<u64>,
+
+    /// Restrict the carving pass to these file types (extensions). Repeatable.
+    #[arg(short, long = "type", value_name = "EXT")]
+    pub types: Vec<String>,
+
+    /// Ignore files smaller than this many bytes (both passes).
+    #[arg(long, value_name = "BYTES", default_value_t = 0)]
+    pub min_size: u64,
+
+    /// Group carved files into per-type subdirectories under `carved/`.
+    #[arg(long)]
+    pub organize: bool,
 
     /// Suppress the progress bar.
     #[arg(short, long)]

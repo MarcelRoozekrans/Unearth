@@ -93,6 +93,19 @@ pub fn carve(
     opts: &CarveOptions,
     progress: &dyn ProgressSink,
 ) -> Result<CarveStats> {
+    carve_seeded(source, active, opts, progress, HashSet::new())
+}
+
+/// Like [`carve`], but pre-seed the `--dedup` set with content digests already
+/// recovered elsewhere (e.g. by `undelete`), so carving only writes files whose
+/// content is new. Has no effect unless [`CarveOptions::dedup`] is set.
+pub fn carve_seeded(
+    source: &Source,
+    active: &[&'static Signature],
+    opts: &CarveOptions,
+    progress: &dyn ProgressSink,
+    seed: HashSet<[u8; 32]>,
+) -> Result<CarveStats> {
     fs::create_dir_all(&opts.output_dir)
         .with_context(|| format!("creating output dir {}", opts.output_dir.display()))?;
 
@@ -113,8 +126,9 @@ pub fn carve(
     // Scratch buffers reused across files to avoid per-file allocations.
     let mut footer_buf: Vec<u8> = Vec::new();
     let mut copy_buf: Vec<u8> = Vec::new();
-    // Content digests of files already written, for `--dedup`.
-    let mut seen: HashSet<[u8; 32]> = HashSet::new();
+    // Content digests of files already written, for `--dedup` (pre-seeded with
+    // any digests the caller already recovered by other means).
+    let mut seen: HashSet<[u8; 32]> = seed;
 
     // Resume from a checkpoint if asked and one exists: continue from the saved
     // position with the prior run's tally, dedup set, and skip boundary. A
@@ -128,7 +142,7 @@ pub fn carve(
         if let Some(saved) = read_checkpoint(path) {
             scan_start = saved.pos.clamp(base_start, scan_end);
             skip_until = saved.skip_until;
-            seen = saved.seen;
+            seen.extend(saved.seen);
             stats = saved.stats;
         }
     }
