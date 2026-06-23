@@ -277,7 +277,195 @@ fn file_length(
         Extent::IcoCur => Ok(icocur_length(source, file_start, limit)?),
         Extent::Sfnt => Ok(sfnt_length(source, file_start, limit)?),
         Extent::Midi => Ok(midi_length(source, file_start, limit)?),
+        Extent::Flv => Ok(flv_length(source, file_start, limit)?),
+        Extent::Pcap => Ok(pcap_length(source, file_start, limit)?),
+        Extent::Pcapng => Ok(pcapng_length(source, file_start, limit)?),
     }
+}
+
+/// Walk a Flash Video tag chain. After the 9-byte header (which records its own
+/// size and must be 9), each tag is an 11-byte header — a 1-byte type and a
+/// 24-bit big-endian data size — followed by the data and a 4-byte
+/// previous-tag-size field. The file ends after the last valid tag.
+fn flv_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAX_TAGS: u64 = 1 << 24;
+    let avail = limit - file_start;
+    let mut hdr = [0u8; 9];
+    if source.read_at(file_start, &mut hdr)? < 9 {
+        return Ok(None);
+    }
+    let data_offset = u32::from_be_bytes([hdr[5], hdr[6], hdr[7], hdr[8]]) as u64;
+    if &hdr[0..3] != b"FLV" || data_offset != 9 {
+        return Ok(None);
+    }
+
+    // The header is followed by PreviousTagSize0 (always 0).
+    let mut pos = 9u64;
+    let mut tag = [0u8; 11];
+    let mut tags = 0u64;
+    loop {
+        // 4-byte previous-tag-size precedes each tag (the first must be zero).
+        if pos + 4 > avail {
+            break;
+        }
+        let mut prev = [0u8; 4];
+        source.read_at(file_start + pos, &mut prev)?;
+        if tags == 0 && prev != [0, 0, 0, 0] {
+            return Ok(None);
+        }
+        pos += 4;
+
+        if pos + 11 > avail || tags >= MAX_TAGS {
+            break;
+        }
+        if source.read_at(file_start + pos, &mut tag)? < 11 {
+            break;
+        }
+        // Tag types: 8 audio, 9 video, 18 script data.
+        if !matches!(tag[0], 8 | 9 | 18) {
+            break;
+        }
+        let data_size = u32::from_be_bytes([0, tag[1], tag[2], tag[3]]) as u64;
+        let next = pos.saturating_add(11).saturating_add(data_size);
+        if next > avail {
+            break;
+        }
+        pos = next;
+        tags += 1;
+    }
+
+    if tags == 0 || file_start + pos > limit {
+        return Ok(None);
+    }
+    Ok(Some(pos))
+}
+
+/// Walk a libpcap capture: a 24-byte global header (the magic gives the byte
+/// order and microsecond/nanosecond flavour) then packet records, each a
+/// 16-byte header whose captured length is bounded by the snap length. The file
+/// ends at the first byte that is not a plausible record.
+fn pcap_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAX_RECORDS: u64 = 1 << 28;
+    let avail = limit - file_start;
+    let mut hdr = [0u8; 24];
+    if source.read_at(file_start, &mut hdr)? < 24 {
+        return Ok(None);
+    }
+    // Determine byte order from the magic; reject anything else.
+    let be = match hdr[0..4] {
+        [0xA1, 0xB2, 0xC3, 0xD4] | [0xA1, 0xB2, 0x3C, 0x4D] => true,
+        [0xD4, 0xC3, 0xB2, 0xA1] | [0x4D, 0x3C, 0xB2, 0xA1] => false,
+        _ => return Ok(None),
+    };
+    let rd32 = |b: &[u8]| -> u32 {
+        let a = [b[0], b[1], b[2], b[3]];
+        if be {
+            u32::from_be_bytes(a)
+        } else {
+            u32::from_le_bytes(a)
+        }
+    };
+    // snaplen bounds each record's captured length; clamp it so a corrupt
+    // header cannot wave through arbitrary garbage.
+    let snaplen = (rd32(&hdr[16..20]) as u64).clamp(1, 256 * 1024);
+
+    let mut pos = 24u64;
+    let mut recs = 0u64;
+    let mut rh = [0u8; 16];
+    while recs < MAX_RECORDS {
+        if pos + 16 > avail {
+            break;
+        }
+        if source.read_at(file_start + pos, &mut rh)? < 16 {
+            break;
+        }
+        let incl_len = rd32(&rh[8..12]) as u64;
+        let orig_len = rd32(&rh[12..16]) as u64;
+        // A real record captures at least one byte, no more than was on the wire
+        // or the snap length, and the timestamp's microseconds field is bounded.
+        if incl_len == 0 || incl_len > snaplen || incl_len > orig_len {
+            break;
+        }
+        let next = pos.saturating_add(16).saturating_add(incl_len);
+        if next > avail {
+            break;
+        }
+        pos = next;
+        recs += 1;
+    }
+
+    if recs == 0 || file_start + pos > limit {
+        return Ok(None);
+    }
+    Ok(Some(pos))
+}
+
+/// Walk a pcapng capture: a chain of blocks, each `type(4), total_length(4),
+/// body, total_length(4)`. The byte order comes from the first Section Header
+/// Block's byte-order magic. The file ends at the first malformed block.
+fn pcapng_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAX_BLOCKS: u64 = 1 << 24;
+    const SHB_TYPE: [u8; 4] = [0x0A, 0x0D, 0x0D, 0x0A];
+    const BYTE_ORDER_MAGIC: u32 = 0x1A2B_3C4D;
+    let avail = limit - file_start;
+
+    // The first block must be a Section Header Block; its byte-order magic at
+    // offset 8 tells us the endianness of every length field.
+    let mut shb = [0u8; 12];
+    if source.read_at(file_start, &mut shb)? < 12 || shb[0..4] != SHB_TYPE {
+        return Ok(None);
+    }
+    let be = if u32::from_be_bytes([shb[8], shb[9], shb[10], shb[11]]) == BYTE_ORDER_MAGIC {
+        true
+    } else if u32::from_le_bytes([shb[8], shb[9], shb[10], shb[11]]) == BYTE_ORDER_MAGIC {
+        false
+    } else {
+        return Ok(None);
+    };
+    let rd32 = |b: &[u8]| -> u32 {
+        let a = [b[0], b[1], b[2], b[3]];
+        if be {
+            u32::from_be_bytes(a)
+        } else {
+            u32::from_le_bytes(a)
+        }
+    };
+
+    let mut pos = 0u64;
+    let mut blocks = 0u64;
+    let mut head = [0u8; 8];
+    while blocks < MAX_BLOCKS {
+        if pos + 12 > avail {
+            break;
+        }
+        if source.read_at(file_start + pos, &mut head)? < 8 {
+            break;
+        }
+        let total = rd32(&head[4..8]) as u64;
+        // Every block is a multiple of 4 bytes and at least the 12-byte frame.
+        if total < 12 || total % 4 != 0 {
+            break;
+        }
+        let next = pos.saturating_add(total);
+        if next > avail {
+            break;
+        }
+        // The trailing total-length must match the leading one.
+        let mut tail = [0u8; 4];
+        source.read_at(file_start + next - 4, &mut tail)?;
+        if rd32(&tail) as u64 != total {
+            break;
+        }
+        pos = next;
+        blocks += 1;
+    }
+
+    // The first block (the SHB) is required; without a second block the file is
+    // just a header, which is still a valid (if empty) capture.
+    if blocks == 0 || file_start + pos > limit {
+        return Ok(None);
+    }
+    Ok(Some(pos))
 }
 
 /// Walk an SFNT font's table directory: a 12-byte header (whose `numTables`
