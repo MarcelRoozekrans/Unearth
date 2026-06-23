@@ -119,6 +119,17 @@ impl Volume {
         }
     }
 
+    /// Absolute byte ranges of the volume's free (unallocated) space, if this
+    /// backend can compute it. Carving only these ranges recovers deleted
+    /// content without re-finding files that are still allocated. Returns
+    /// `None` for filesystems whose allocation map is not yet parsed.
+    pub fn free_extents(&self, src: &Source) -> Option<Vec<(u64, u64)>> {
+        match self {
+            Volume::Fat(v) => v.free_extents(src).ok(),
+            _ => None,
+        }
+    }
+
     /// Recover all deleted files from this volume into `out_dir`.
     pub fn recover_deleted(
         &self,

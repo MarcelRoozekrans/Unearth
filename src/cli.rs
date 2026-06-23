@@ -197,6 +197,13 @@ pub struct RecoverArgs {
     #[arg(long)]
     pub organize: bool,
 
+    /// Carve only the volume's unallocated (free) space, skipping data that is
+    /// still allocated to live files. Recovers deleted content with much less
+    /// noise. Falls back to carving the whole source if the filesystem's
+    /// free-space map cannot be read (currently supported for FAT).
+    #[arg(long)]
+    pub unallocated: bool,
+
     /// Write a combined manifest of every recovered file (named and carved) to
     /// this path. `.json` for JSON, otherwise CSV. Verifiable with
     /// `filerecovery verify <FILE> --base <OUTPUT>`.

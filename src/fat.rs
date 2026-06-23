@@ -57,6 +57,7 @@ pub struct Volume {
     first_root_dir_sector: u32,
     root_dir_sectors: u32,
     count_of_clusters: u32,
+    fat_size_sectors: u32,
 }
 
 /// One deleted file we intend to recover, with its reconstructed path.
@@ -125,6 +126,34 @@ pub fn detect_volumes(src: &Source) -> Result<Vec<Volume>> {
 }
 
 /// Heuristic: does this sector look like a FAT volume boot record?
+/// Read cluster `cluster`'s raw FAT entry value from an in-memory copy of the
+/// FAT. Returns `None` if the entry lies past the buffer. The width and packing
+/// depend on the FAT type (FAT12 packs 1.5 bytes per entry).
+fn fat_entry(fat: &[u8], fat_type: FatType, cluster: u32) -> Option<u32> {
+    match fat_type {
+        FatType::Fat32 => {
+            let i = cluster as usize * 4;
+            let b = fat.get(i..i + 4)?;
+            Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]) & 0x0FFF_FFFF)
+        }
+        FatType::Fat16 => {
+            let i = cluster as usize * 2;
+            let b = fat.get(i..i + 2)?;
+            Some(u16::from_le_bytes([b[0], b[1]]) as u32)
+        }
+        FatType::Fat12 => {
+            let i = (cluster as usize * 3) / 2;
+            let b = fat.get(i..i + 2)?;
+            let raw = u16::from_le_bytes([b[0], b[1]]);
+            Some(if cluster & 1 == 0 {
+                (raw & 0x0FFF) as u32
+            } else {
+                (raw >> 4) as u32
+            })
+        }
+    }
+}
+
 pub(crate) fn looks_like_fat_vbr(s: &[u8]) -> bool {
     let jump_ok = s[0] == 0xEB || s[0] == 0xE9;
     let bps = u16::from_le_bytes([s[11], s[12]]);
@@ -208,6 +237,7 @@ impl Volume {
             first_root_dir_sector,
             root_dir_sectors,
             count_of_clusters,
+            fat_size_sectors,
         })
     }
 
@@ -273,6 +303,38 @@ impl Volume {
     /// Total size of the volume in bytes.
     pub fn size(&self) -> u64 {
         self.total_sectors as u64 * self.bytes_per_sector as u64
+    }
+
+    /// Absolute byte ranges of the volume's **free** (unallocated) clusters,
+    /// merged where contiguous. A free cluster is one whose FAT entry is 0;
+    /// these hold whatever data was there before, including deleted files, so
+    /// carving them recovers deleted content without re-finding live files.
+    pub fn free_extents(&self, src: &Source) -> Result<Vec<(u64, u64)>> {
+        let fat_base = self.offset + self.reserved_sectors as u64 * self.bytes_per_sector as u64;
+        let fat_bytes = self.fat_size_sectors as u64 * self.bytes_per_sector as u64;
+        // Read the FAT into memory (bounded) so scanning it is one pass, not one
+        // tiny positioned read per cluster.
+        const MAX_FAT: u64 = 256 * 1024 * 1024;
+        let mut fat = vec![0u8; fat_bytes.min(MAX_FAT) as usize];
+        let n = src.read_at(fat_base, &mut fat)?;
+        fat.truncate(n);
+
+        let cluster_bytes = self.cluster_bytes();
+        let mut out: Vec<(u64, u64)> = Vec::new();
+        for cluster in 2..=self.max_valid_cluster() {
+            match fat_entry(&fat, self.fat_type, cluster) {
+                Some(0) => {
+                    let start = self.cluster_offset(cluster);
+                    match out.last_mut() {
+                        Some(last) if last.0 + last.1 == start => last.1 += cluster_bytes,
+                        _ => out.push((start, cluster_bytes)),
+                    }
+                }
+                Some(_) => {}
+                None => break, // FAT truncated by the cap; stop here
+            }
+        }
+        Ok(out)
     }
 
     /// Recover all deleted files on this volume into `out_dir`.

@@ -613,37 +613,99 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
         }
     }
 
+    // With --unallocated, carve only each volume's free space (so live files
+    // aren't re-found). Available only when every volume can report its free
+    // map; otherwise fall back to carving the whole source.
+    let carve_regions: Option<Vec<(u64, u64)>> = if args.unallocated {
+        let mut regions = Vec::new();
+        let mut supported = !volumes.is_empty();
+        for v in &volumes {
+            match v.free_extents(&source) {
+                Some(r) => regions.extend(r),
+                None => {
+                    supported = false;
+                    break;
+                }
+            }
+        }
+        if supported {
+            Some(regions)
+        } else {
+            eprintln!(
+                "--unallocated: free-space map unavailable for the detected filesystem(s); \
+                 carving the whole source instead."
+            );
+            None
+        }
+    } else {
+        None
+    };
+
     // Pass 2: carving for whatever the metadata could not restore.
     let active = signatures::select(&args.types)?;
     let carved_dir = args.output.join("carved");
-    eprintln!("Carve:    into {}", carved_dir.display());
-    let copts = CarveOptions {
-        output_dir: carved_dir,
-        start: 0,
-        end: None,
+    let mk_opts = |start: u64, end: Option<u64>, progress: bool| CarveOptions {
+        output_dir: carved_dir.clone(),
+        start,
+        end,
         min_size: args.min_size,
         max_files: None,
         allow_nested: false,
         validate: true,
         dedup: true,
-        progress: !args.quiet,
+        progress,
         checkpoint: None,
         resume: false,
         organize: args.organize,
     };
-    let progress: Box<dyn ProgressSink> = if copts.progress {
-        Box::new(Bar::new())
-    } else {
-        Box::new(carver::NoProgress)
+    let (mut carved_files, mut carved_bytes, mut carved_dups) = (0u64, 0u64, 0u64);
+    let push_carved = |files: &[carver::CarvedFile],
+                       rows: &mut Vec<(&str, String, u64, String)>| {
+        for f in files {
+            rows.push((
+                "carved",
+                format!("carved/{}", f.name),
+                f.size,
+                filerecovery::hash::to_hex(&f.sha256),
+            ));
+        }
     };
-    let cstats = carver::carve_seeded(&source, &active, &copts, progress.as_ref(), seen)?;
-    for f in &cstats.files {
-        report_rows.push((
-            "carved",
-            format!("carved/{}", f.name),
-            f.size,
-            filerecovery::hash::to_hex(&f.sha256),
-        ));
+    match carve_regions {
+        Some(regions) => {
+            eprintln!(
+                "Carve:    {} unallocated region(s) into {}",
+                regions.len(),
+                carved_dir.display()
+            );
+            for (rstart, rlen) in regions {
+                let opts = mk_opts(rstart, Some(rstart + rlen), false);
+                let cs = carver::carve_seeded(
+                    &source,
+                    &active,
+                    &opts,
+                    &carver::NoProgress,
+                    seen.clone(),
+                )?;
+                carved_files += cs.files_recovered;
+                carved_bytes += cs.bytes_recovered;
+                carved_dups += cs.duplicates;
+                push_carved(&cs.files, &mut report_rows);
+            }
+        }
+        None => {
+            eprintln!("Carve:    into {}", carved_dir.display());
+            let opts = mk_opts(0, None, !args.quiet);
+            let progress: Box<dyn ProgressSink> = if opts.progress {
+                Box::new(Bar::new())
+            } else {
+                Box::new(carver::NoProgress)
+            };
+            let cs = carver::carve_seeded(&source, &active, &opts, progress.as_ref(), seen)?;
+            carved_files += cs.files_recovered;
+            carved_bytes += cs.bytes_recovered;
+            carved_dups += cs.duplicates;
+            push_carved(&cs.files, &mut report_rows);
+        }
     }
 
     eprintln!();
@@ -654,9 +716,9 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
     );
     println!(
         "Carving recovered {} additional file(s), {} ({} duplicate(s) of already-recovered content skipped).",
-        cstats.files_recovered,
-        human_bytes(cstats.bytes_recovered),
-        cstats.duplicates
+        carved_files,
+        human_bytes(carved_bytes),
+        carved_dups
     );
 
     if let Some(report_path) = &args.report {
@@ -671,9 +733,10 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
             ("output", Sv::S(args.output.display().to_string())),
             ("named_recovered", Sv::N(named_recovered)),
             ("named_bytes", Sv::N(named_bytes)),
-            ("carved_recovered", Sv::N(cstats.files_recovered)),
-            ("carved_bytes", Sv::N(cstats.bytes_recovered)),
-            ("carved_duplicates", Sv::N(cstats.duplicates)),
+            ("unallocated_only", Sv::B(args.unallocated)),
+            ("carved_recovered", Sv::N(carved_files)),
+            ("carved_bytes", Sv::N(carved_bytes)),
+            ("carved_duplicates", Sv::N(carved_dups)),
             ("elapsed_ms", Sv::N(started.elapsed().as_millis() as u64)),
             ("timestamp_unix", Sv::N(unix_now())),
         ];
