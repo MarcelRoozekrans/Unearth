@@ -6,7 +6,7 @@ Recover deleted files from SD cards, USB sticks, hard drives, and disk images.
 
 | Command    | Strategy                               | Restores names? | Works after format? |
 |------------|----------------------------------------|-----------------|---------------------|
-| `undelete` | Filesystem-aware (FAT/exFAT/NTFS/ext)  | **Yes**         | No (needs metadata) |
+| `undelete` | Filesystem-aware (FAT/exFAT/NTFS/ext/HFS+) | **Yes**     | No (needs metadata) |
 | `scan`     | Signature carving                      | No              | **Yes**             |
 
 **Use `undelete` first** if the filesystem is still intact (e.g. you just
@@ -21,11 +21,11 @@ its partition table is gone.
 
 ## How each strategy works
 
-### `undelete` — filesystem-aware recovery (FAT12/16/32, exFAT, NTFS, ext2/3/4)
+### `undelete` — filesystem-aware recovery (FAT12/16/32, exFAT, NTFS, ext2/3/4, HFS+)
 
 The filesystem type is auto-detected (bare volume, or a GPT or MBR partition
-table), and FAT, exFAT, NTFS, and ext2/3/4 are all handled by the same
-`undelete` command.
+table), and FAT, exFAT, NTFS, ext2/3/4, and HFS+/HFSX are all handled by the
+same `undelete` command.
 
 **FAT.** When a file is deleted, only the first byte of its 32-byte directory
 entry is overwritten (with `0xE5`) and its cluster chain is freed. The entry
@@ -62,6 +62,19 @@ live inode's extent tree on deletion, it scans the filesystem **journal
 the extents — and recovers from that. Only when neither the live inode nor any
 journaled copy has an intact block map (the journal wrapped, or the inode was
 reused) is the file unrecoverable by metadata; fall back to `scan`.
+
+**HFS+/HFSX** (Mac drives). Every file and folder lives in the **catalog file**,
+a B-tree whose leaf nodes hold one record per object — its name, CNID, and the
+data fork's first eight extents inline. Deleting a file removes its record from
+the leaf node and shifts the rest down, but the removed record's bytes usually
+linger in the node's *free space* until the node is rewritten, and the data
+blocks stay put until reused. `filerecovery` reads the catalog, walks every leaf
+node, and scans the free space below the live records for stale **file records**
+that pass a strict structural check, recovering each one whose data fork is fully
+described by its inline extents. (This is the catalog-slack analogue of the ext
+directory-slack technique.) A file fragmented beyond its eight inline extents —
+its tail lived in the extents-overflow B-tree — is reported skipped rather than
+written truncated; fall back to `scan`.
 
 ### `scan` — signature-based file carving
 
@@ -112,7 +125,7 @@ they are built automatically by the release workflow when a `v*` tag is pushed.
 filerecovery <COMMAND>
 
 Commands:
-  undelete    Recover deleted files from FAT/exFAT/NTFS/ext (keeps names/paths)
+  undelete    Recover deleted files from FAT/exFAT/NTFS/ext/HFS+ (keeps names/paths)
   scan        Carve files from a device or image by signature
   image       Copy a device/image to an image file (read-only, bad-sector tolerant)
   info        Show the partition / filesystem layout of a source
@@ -267,7 +280,7 @@ filerecovery triage recovered
 filerecovery triage recovered --json   # machine-readable
 ```
 
-### Undelete from a FAT/exFAT/NTFS/ext card/image (keeps original names)
+### Undelete from a FAT/exFAT/NTFS/ext/HFS+ card/image (keeps original names)
 
 ```sh
 filerecovery undelete card.img -o recovered
@@ -448,11 +461,11 @@ Common to both strategies:
 
 `undelete` specifics:
 
-- Supports **FAT12/16/32**, **exFAT**, **NTFS**, and **ext2/3/4**.
+- Supports **FAT12/16/32**, **exFAT**, **NTFS**, **ext2/3/4**, and **HFS+/HFSX**.
 - Recovered files keep their original **modification and access times**. (FAT and
   exFAT store these in local time with no recorded zone, so they are treated as
   UTC — the date is exact but the wall-clock time may be off by your local
-  offset. NTFS and ext store UTC, restored exactly.)
+  offset. NTFS, ext, and HFS+ store UTC, restored exactly.)
 - FAT only: if a deleted file had no long name, the first character of its short
   (8.3) name is lost to the deletion marker and is shown as `_`. exFAT and NTFS
   preserve the full name.
@@ -462,6 +475,12 @@ Common to both strategies:
   falls back to an older inode-table copy in the **journal (jbd2)**. If the
   journal has wrapped past it (or the inode was reused), the file is
   unrecoverable by metadata — use `scan`.
+- HFS+ only: recovers deleted files from stale **catalog** records left in
+  B-tree leaf-node free space, following the eight extents stored inline in the
+  record. Files fragmented beyond those (tail in the extents-overflow B-tree),
+  or whose catalog record has been overwritten, are not recovered by metadata —
+  use `scan`. Recovered files are restored by name (parent-folder paths are not
+  rebuilt).
 
 `scan` (carving) specifics:
 

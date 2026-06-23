@@ -3,12 +3,12 @@
 //!
 //! Two complementary strategies are provided:
 //!
-//! * [`fat`] / [`exfat`] / [`ntfs`] / [`ext4`] — **filesystem-aware** recovery
-//!   for FAT12/16/32, exFAT, NTFS, and ext2/3/4. Reads the directory/MFT/inode
-//!   metadata that survives deletion to restore files with their original names,
-//!   paths, and sizes. Use this when the filesystem metadata is still intact
-//!   (e.g. a file was just deleted). The [`recover`] module auto-detects which
-//!   one applies.
+//! * [`fat`] / [`exfat`] / [`ntfs`] / [`ext4`] / [`hfsplus`] — **filesystem-aware**
+//!   recovery for FAT12/16/32, exFAT, NTFS, ext2/3/4, and HFS+/HFSX. Reads the
+//!   directory/MFT/inode/catalog metadata that survives deletion to restore
+//!   files with their original names, paths, and sizes. Use this when the
+//!   filesystem metadata is still intact (e.g. a file was just deleted). The
+//!   [`recover`] module auto-detects which one applies.
 //! * [`carver`] — **filesystem-agnostic** signature carving. Scans the raw
 //!   bytes of a device for known file signatures and reconstructs each file's
 //!   extent. Recovers data even after a quick format or partition-table loss,
@@ -44,6 +44,7 @@ pub mod exfat;
 pub mod ext4;
 pub mod fat;
 pub mod hash;
+pub mod hfsplus;
 pub mod identify;
 pub mod image;
 pub mod job;

@@ -25,6 +25,7 @@ device or image is always accessed **read-only**.
 | `exfat`            | exFAT undelete. |
 | `ntfs`             | NTFS undelete (MFT + data runs). |
 | `ext4`            | ext2/3/4 undelete, including jbd2 journal recovery. |
+| `hfsplus`          | HFS+/HFSX undelete by scanning catalog B-tree leaf-node free space for stale file records (the catalog-slack analogue of ext directory-slack recovery). |
 | `times`            | Timestamp conversions (Unix / FILETIME / DOS) and applying them to recovered files. |
 
 ## Two recovery strategies
