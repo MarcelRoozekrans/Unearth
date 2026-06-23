@@ -183,3 +183,48 @@ fn recovers_file_in_subdirectory() {
     let recovered = std::fs::read(out_dir.join("DCIM").join("clip.mov")).unwrap();
     assert_eq!(recovered, payload);
 }
+
+/// An Allocation Bitmap directory entry (0x81) pointing at `first_cluster`.
+fn bitmap_entry(first_cluster: u32, length: u64) -> [u8; 32] {
+    let mut e = [0u8; 32];
+    e[0] = 0x81; // Allocation Bitmap, in use
+    e[1] = 0; // flags: the first (primary) bitmap
+    e[20..24].copy_from_slice(&first_cluster.to_le_bytes());
+    e[24..32].copy_from_slice(&length.to_le_bytes());
+    e
+}
+
+#[test]
+fn free_extents_reports_unallocated_clusters() {
+    let mut img = vec![0u8; VOLUME_SECTORS as usize * BPS];
+    write_boot(&mut img);
+    // Root directory (cluster 2) and the Allocation Bitmap (cluster 4) are both
+    // end-of-chain.
+    write_fat(&mut img, ROOT_CLUSTER, 0xFFFF_FFFF);
+    write_fat(&mut img, 4, 0xFFFF_FFFF);
+
+    // Root holds a single Allocation Bitmap entry → cluster 4, 4 bytes (covers
+    // the 32 clusters of this volume).
+    let root_off = cluster_byte_offset(ROOT_CLUSTER);
+    img[root_off..root_off + 32].copy_from_slice(&bitmap_entry(4, 4));
+
+    // Bitmap: bit (cluster - 2). Mark cluster 2 (root) and cluster 4 (bitmap)
+    // allocated; everything else — including cluster 3 — free.
+    let bmp_off = cluster_byte_offset(4);
+    img[bmp_off] = 0b0000_0101; // bits 0 and 2 set
+
+    let tmp = tempfile::tempdir().unwrap();
+    let img_path = tmp.path().join("card.img");
+    std::fs::write(&img_path, &img).unwrap();
+    let source = Source::open(&img_path).unwrap();
+    let vol = exfat::Volume::parse(&source, 0).unwrap();
+
+    let free = vol.free_extents(&source).unwrap();
+    let covered = |c: u32| {
+        let off = cluster_byte_offset(c) as u64;
+        free.iter().any(|&(s, l)| off >= s && off < s + l)
+    };
+    assert!(covered(3), "cluster 3 is unallocated");
+    assert!(!covered(2), "cluster 2 (root) is allocated");
+    assert!(!covered(4), "cluster 4 (bitmap) is allocated");
+}

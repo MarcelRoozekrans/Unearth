@@ -155,6 +155,63 @@ impl Volume {
             .saturating_mul(self.bytes_per_sector)
     }
 
+    /// Absolute byte ranges of the volume's **free** clusters, merged where
+    /// contiguous, from the exFAT Allocation Bitmap (a `0x81` entry in the root
+    /// directory points to it). A clear bit means the cluster is free, so
+    /// carving those ranges recovers deleted data without re-finding live files.
+    pub fn free_extents(&self, src: &Source) -> Result<Vec<(u64, u64)>> {
+        // The Allocation Bitmap is described by a directory entry in the root.
+        let root = self.read_directory(src, self.root_cluster, None, false)?;
+        let mut bitmap_loc: Option<(u32, u64)> = None;
+        for e in root.chunks_exact(ENTRY_SIZE) {
+            match e[0] {
+                0x00 => break, // end of directory
+                // Allocation Bitmap entry; flags bit 0 selects the bitmap (0 =
+                // the first, primary one).
+                0x81 if e[1] & 0x01 == 0 => {
+                    let first = u32::from_le_bytes([e[20], e[21], e[22], e[23]]);
+                    let len = u64::from_le_bytes([
+                        e[24], e[25], e[26], e[27], e[28], e[29], e[30], e[31],
+                    ]);
+                    bitmap_loc = Some((first, len));
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let (first, len) = match bitmap_loc {
+            Some(x) => x,
+            None => return Ok(Vec::new()), // no bitmap found; treat as unknown
+        };
+        if first < 2 || first > self.max_valid_cluster() {
+            return Ok(Vec::new());
+        }
+
+        // The bitmap is a contiguous run in the cluster heap; read it directly.
+        const MAX_BITMAP: u64 = 256 * 1024 * 1024;
+        let mut bitmap = vec![0u8; len.min(MAX_BITMAP) as usize];
+        let n = src.read_at(self.cluster_offset(first), &mut bitmap)?;
+        bitmap.truncate(n);
+
+        let cb = self.cluster_bytes();
+        let mut out: Vec<(u64, u64)> = Vec::new();
+        for i in 0..self.cluster_count as u64 {
+            // A bit past the end of what we read is treated as allocated (safe).
+            let allocated = bitmap
+                .get((i / 8) as usize)
+                .map(|b| b & (1 << (i % 8)) != 0)
+                .unwrap_or(true);
+            if !allocated {
+                let start = self.cluster_offset(2 + i as u32);
+                match out.last_mut() {
+                    Some(last) if last.0 + last.1 == start => last.1 += cb,
+                    _ => out.push((start, cb)),
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Recover all deleted files into `out_dir`.
     pub fn recover_deleted(
         &self,
