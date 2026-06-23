@@ -127,6 +127,7 @@ impl Volume {
         match self {
             Volume::Fat(v) => v.free_extents(src).ok(),
             Volume::Exfat(v) => v.free_extents(src).ok(),
+            Volume::Ext(v) => v.free_extents(src).ok(),
             _ => None,
         }
     }

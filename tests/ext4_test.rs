@@ -88,6 +88,37 @@ fn write_dirent(
 }
 
 #[test]
+fn free_extents_reads_the_block_bitmap() {
+    let mut img = vec![0u8; TOTAL_BLOCKS * BS];
+    write_superblock(&mut img);
+    // Group descriptor: inode table at block 5, block bitmap at (unused) block 3.
+    let d = GDT_BLOCK * BS;
+    img[d + 8..d + 12].copy_from_slice(&(INODE_TABLE_BLOCK as u32).to_le_bytes());
+    img[d..d + 4].copy_from_slice(&3u32.to_le_bytes()); // bg_block_bitmap
+
+    // Block bitmap at block 3: blocks 1..=31 allocated, except block 11 free.
+    // Bit i corresponds to block (first_data_block + i) = 1 + i.
+    let bmp = 3 * BS;
+    img[bmp..bmp + 4].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+    img[bmp + 1] &= !(1 << 2); // clear bit 10 => block 11 is free
+
+    let tmp = tempfile::tempdir().unwrap();
+    let p = tmp.path().join("ext.img");
+    std::fs::write(&p, &img).unwrap();
+    let src = Source::open(&p).unwrap();
+    let vol = ext4::Volume::parse(&src, 0).unwrap();
+
+    let free = vol.free_extents(&src).unwrap();
+    let covered = |block: u64| {
+        let off = block * BS as u64;
+        free.iter().any(|&(s, l)| off >= s && off < s + l)
+    };
+    assert!(covered(11), "block 11 is free");
+    assert!(!covered(5), "block 5 (inode table) is allocated");
+    assert!(!covered(2), "block 2 (group descriptors) is allocated");
+}
+
+#[test]
 fn recovers_deleted_ext4_files() {
     let mut img = vec![0u8; TOTAL_BLOCKS * BS];
     write_superblock(&mut img);
