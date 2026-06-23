@@ -8,8 +8,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use clap::CommandFactory;
 use cli::{
-    Cli, Command, CompletionsArgs, IdentifyArgs, ImageArgs, InfoArgs, ScanArgs, TriageArgs,
-    UndeleteArgs, VerifyArgs,
+    Cli, Command, CompletionsArgs, IdentifyArgs, ImageArgs, InfoArgs, RecoverArgs, ScanArgs,
+    TriageArgs, UndeleteArgs, VerifyArgs,
 };
 use filerecovery::carver::{self, CarveOptions, ProgressSink};
 use filerecovery::recover;
@@ -25,6 +25,7 @@ fn main() -> Result<()> {
         }
         Command::Scan(args) => scan(args),
         Command::Undelete(args) => undelete(args),
+        Command::Recover(args) => recover_all(args),
         Command::Info(args) => info(args),
         Command::Image(args) => image(args),
         Command::Verify(args) => verify(args),
@@ -544,6 +545,97 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
         write_summary(summary_path, &fields)?;
         eprintln!("Summary written to {}", summary_path.display());
     }
+    Ok(())
+}
+
+/// One-pass recovery: filesystem-aware undelete into `named/`, then carving
+/// into `carved/` (content-deduplicated against the undelete results).
+fn recover_all(args: RecoverArgs) -> Result<()> {
+    use std::collections::HashSet;
+
+    let source = Source::open(&args.source)?;
+    eprintln!(
+        "Source: {} ({})",
+        args.source.display(),
+        human_bytes(source.size)
+    );
+
+    // Pass 1: filesystem-aware undelete (restores names and paths).
+    let named_dir = args.output.join("named");
+    let volumes = match args.offset {
+        Some(off) => vec![recover::parse_at(&source, off)?],
+        None => recover::detect(&source).unwrap_or_default(),
+    };
+    if volumes.is_empty() {
+        eprintln!("No supported filesystem detected; carving only.");
+    }
+    let ropts = recover::RecoverOptions {
+        min_size: args.min_size,
+        dry_run: false,
+    };
+    let mut named_recovered = 0u64;
+    let mut named_bytes = 0u64;
+    // Digests of everything undelete restored, so carving skips that content.
+    let mut seen: HashSet<[u8; 32]> = HashSet::new();
+    for (i, vol) in volumes.iter().enumerate() {
+        let out = if volumes.len() > 1 {
+            named_dir.join(format!("volume_{i}"))
+        } else {
+            named_dir.clone()
+        };
+        eprintln!(
+            "Undelete: {} at offset {} -> {}",
+            vol.fs_label(),
+            vol.offset(),
+            out.display()
+        );
+        let st = vol.recover_deleted(&source, &out, &ropts)?;
+        named_recovered += st.recovered;
+        named_bytes += st.bytes_recovered;
+        for f in &st.files {
+            if let Some(d) = f.sha256 {
+                seen.insert(d);
+            }
+        }
+    }
+
+    // Pass 2: carving for whatever the metadata could not restore.
+    let active = signatures::select(&args.types)?;
+    let carved_dir = args.output.join("carved");
+    eprintln!("Carve:    into {}", carved_dir.display());
+    let copts = CarveOptions {
+        output_dir: carved_dir,
+        start: 0,
+        end: None,
+        min_size: args.min_size,
+        max_files: None,
+        allow_nested: false,
+        validate: true,
+        dedup: true,
+        progress: !args.quiet,
+        checkpoint: None,
+        resume: false,
+        organize: args.organize,
+    };
+    let progress: Box<dyn ProgressSink> = if copts.progress {
+        Box::new(Bar::new())
+    } else {
+        Box::new(carver::NoProgress)
+    };
+    let cstats = carver::carve_seeded(&source, &active, &copts, progress.as_ref(), seen)?;
+
+    eprintln!();
+    println!(
+        "Done. Undelete recovered {} named file(s), {}.",
+        named_recovered,
+        human_bytes(named_bytes)
+    );
+    println!(
+        "Carving recovered {} additional file(s), {} ({} duplicate(s) of already-recovered content skipped).",
+        cstats.files_recovered,
+        human_bytes(cstats.bytes_recovered),
+        cstats.duplicates
+    );
     Ok(())
 }
 

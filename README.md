@@ -127,6 +127,7 @@ filerecovery <COMMAND>
 Commands:
   undelete    Recover deleted files from FAT/exFAT/NTFS/ext/HFS+ (keeps names/paths)
   scan        Carve files from a device or image by signature
+  recover     Undelete then carve in one pass (named/ + carved/)
   image       Copy a device/image to an image file (read-only, bad-sector tolerant)
   info        Show the partition / filesystem layout of a source
   verify      Re-hash recovered files against a --report manifest
@@ -330,6 +331,23 @@ directory), re-hashes the file, and prints a `MISMATCH` or `MISSING` line for
 anything that fails. The command exits non-zero if any file mismatched or is
 missing, so it can gate a script. Rows without a digest (skipped files, dry
 runs) are counted but not checked. Both CSV and JSON manifests are accepted.
+
+### Recover everything in one pass
+
+`recover` runs both strategies for maximum coverage: a filesystem-aware
+`undelete` first (restoring names and paths), then carving for whatever the
+metadata could not. It writes named files under `<OUTPUT>/named/` and carved
+files under `<OUTPUT>/carved/`:
+
+```sh
+filerecovery recover card.img -o recovered
+```
+
+The carving pass is **content-deduplicated against the undelete results** (by
+SHA-256), so `carved/` only holds data that wasn't already recovered by name —
+you get the named files plus the extras carving finds, without duplicate copies.
+Accepts `--type`, `--min-size`, `--organize` (group `carved/` by type), and
+`--offset` (volume offset for the undelete pass).
 
 ### Carve a disk image (filesystem-agnostic)
 
