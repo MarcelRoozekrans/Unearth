@@ -350,6 +350,18 @@ you get the named files plus the extras carving finds, without duplicate copies.
 Accepts `--type`, `--min-size`, `--organize` (group `carved/` by type), and
 `--offset` (volume offset for the undelete pass).
 
+Add `--unallocated` to carve **only the volume's free space**, skipping clusters
+still allocated to live files — so `carved/` holds deleted content with far less
+noise (no copies of files that still exist), and the scan is faster:
+
+```sh
+filerecovery recover card.img -o recovered --unallocated
+```
+
+This reads the filesystem's allocation map (currently supported for FAT); for
+filesystems whose map isn't parsed yet it falls back to carving the whole source
+and says so.
+
 `--report <FILE>` writes a combined manifest of every recovered file (both
 passes), each row tagged `named` or `carved` with its path and SHA-256. It is
 directly verifiable:

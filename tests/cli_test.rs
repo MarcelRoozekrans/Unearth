@@ -317,6 +317,69 @@ fn recover_runs_undelete_then_dedup_carve() {
 }
 
 #[test]
+fn recover_unallocated_skips_live_clusters() {
+    // Geometry of common::fat32_volume: 512-byte sectors, 32 reserved + 512 FAT
+    // sectors, so the data region starts at sector 544 and the FAT at byte 16384.
+    const BPS: usize = 512;
+    const FIRST_DATA: usize = 544;
+    const FAT_BASE: usize = 32 * BPS;
+    let cluster_off = |c: usize| (FIRST_DATA + (c - 2)) * BPS;
+
+    let jpeg_free = common::jpeg(&vec![0x41u8; 400]); // lives in free cluster 3
+    let jpeg_alloc = common::jpeg(&vec![0x42u8; 400]); // lives in allocated cluster 4
+
+    // The builder plants jpeg_free in cluster 3 (left free in the FAT).
+    let mut img = common::fat32_volume(b"PHOTO   ", b"JPG", &jpeg_free);
+    // Remove the deleted directory entry, so undelete finds nothing and the only
+    // way to recover jpeg_free is by carving cluster 3 (which is unallocated).
+    let root = cluster_off(2);
+    for b in &mut img[root..root + 32] {
+        *b = 0;
+    }
+    // Mark cluster 4 allocated (EOC) and put a *live* JPEG there; --unallocated
+    // must skip it.
+    let fat4 = FAT_BASE + 4 * 4;
+    img[fat4..fat4 + 4].copy_from_slice(&0x0FFF_FFFFu32.to_le_bytes());
+    let c4 = cluster_off(4);
+    img[c4..c4 + jpeg_alloc.len()].copy_from_slice(&jpeg_alloc);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let img_path = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+    std::fs::write(&img_path, &img).unwrap();
+
+    let out = run(&[
+        "recover",
+        img_path.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--unallocated",
+        "-q",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Only the free-cluster JPEG is carved; the allocated one is skipped.
+    let carved: Vec<Vec<u8>> = std::fs::read_dir(out_dir.join("carved"))
+        .unwrap()
+        .map(|e| std::fs::read(e.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(
+        carved.len(),
+        1,
+        "only the unallocated JPEG should be carved"
+    );
+    assert_eq!(carved[0], jpeg_free);
+    assert!(
+        !carved.contains(&jpeg_alloc),
+        "the live cluster must be skipped"
+    );
+}
+
+#[test]
 fn undelete_dry_run_with_report_writes_no_files() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("ext.img");
