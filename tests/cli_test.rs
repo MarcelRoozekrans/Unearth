@@ -266,12 +266,15 @@ fn recover_runs_undelete_then_dedup_carve() {
     img.extend_from_slice(&jpeg_carved);
     img.extend_from_slice(&vec![0u8; 500]);
     std::fs::write(&img_path, &img).unwrap();
+    let report = tmp.path().join("manifest.csv");
 
     let out = run(&[
         "recover",
         img_path.to_str().unwrap(),
         "-o",
         out_dir.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
         "-q",
     ]);
     assert!(
@@ -294,6 +297,23 @@ fn recover_runs_undelete_then_dedup_carve() {
         .collect();
     assert_eq!(carved.len(), 1, "only the slack JPEG should be carved");
     assert_eq!(carved[0], jpeg_carved);
+
+    // The combined manifest lists both passes and is verifiable against the
+    // output directory.
+    let manifest = std::fs::read_to_string(&report).unwrap();
+    assert!(manifest.contains("named/photo.jpg"), "{manifest}");
+    assert!(manifest.contains("carved/"), "{manifest}");
+    let verify = run(&[
+        "verify",
+        report.to_str().unwrap(),
+        "--base",
+        out_dir.to_str().unwrap(),
+    ]);
+    assert!(
+        verify.status.success(),
+        "verify failed: {}",
+        String::from_utf8_lossy(&verify.stdout)
+    );
 }
 
 #[test]

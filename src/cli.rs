@@ -197,6 +197,17 @@ pub struct RecoverArgs {
     #[arg(long)]
     pub organize: bool,
 
+    /// Write a combined manifest of every recovered file (named and carved) to
+    /// this path. `.json` for JSON, otherwise CSV. Verifiable with
+    /// `filerecovery verify <FILE> --base <OUTPUT>`.
+    #[arg(long, value_name = "FILE")]
+    pub report: Option<PathBuf>,
+
+    /// Write a run summary (source, options, counts, timing) to this path.
+    /// `.json` for JSON, otherwise plain text.
+    #[arg(long, value_name = "FILE")]
+    pub summary: Option<PathBuf>,
+
     /// Suppress the progress bar.
     #[arg(short, long)]
     pub quiet: bool,

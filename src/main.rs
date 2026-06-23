@@ -553,6 +553,7 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
 fn recover_all(args: RecoverArgs) -> Result<()> {
     use std::collections::HashSet;
 
+    let started = std::time::Instant::now();
     let source = Source::open(&args.source)?;
     eprintln!(
         "Source: {} ({})",
@@ -573,12 +574,15 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
         min_size: args.min_size,
         dry_run: false,
     };
+    let multi = volumes.len() > 1;
     let mut named_recovered = 0u64;
     let mut named_bytes = 0u64;
     // Digests of everything undelete restored, so carving skips that content.
     let mut seen: HashSet<[u8; 32]> = HashSet::new();
+    // Combined manifest rows: (kind, path-relative-to-output, size, sha256-hex).
+    let mut report_rows: Vec<(&str, String, u64, String)> = Vec::new();
     for (i, vol) in volumes.iter().enumerate() {
-        let out = if volumes.len() > 1 {
+        let out = if multi {
             named_dir.join(format!("volume_{i}"))
         } else {
             named_dir.clone()
@@ -596,6 +600,16 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
             if let Some(d) = f.sha256 {
                 seen.insert(d);
             }
+            let rel = if multi {
+                format!("named/volume_{i}/{}", f.path.to_string_lossy())
+            } else {
+                format!("named/{}", f.path.to_string_lossy())
+            };
+            let sha = f
+                .sha256
+                .map(|d| filerecovery::hash::to_hex(&d))
+                .unwrap_or_default();
+            report_rows.push(("named", rel, f.size, sha));
         }
     }
 
@@ -623,6 +637,14 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
         Box::new(carver::NoProgress)
     };
     let cstats = carver::carve_seeded(&source, &active, &copts, progress.as_ref(), seen)?;
+    for f in &cstats.files {
+        report_rows.push((
+            "carved",
+            format!("carved/{}", f.name),
+            f.size,
+            filerecovery::hash::to_hex(&f.sha256),
+        ));
+    }
 
     eprintln!();
     println!(
@@ -636,6 +658,66 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
         human_bytes(cstats.bytes_recovered),
         cstats.duplicates
     );
+
+    if let Some(report_path) = &args.report {
+        write_recover_report(report_path, &report_rows)?;
+        eprintln!("Report written to {}", report_path.display());
+    }
+    if let Some(summary_path) = &args.summary {
+        let fields = [
+            ("command", Sv::S("recover".into())),
+            ("source", Sv::S(args.source.display().to_string())),
+            ("source_bytes", Sv::N(source.size)),
+            ("output", Sv::S(args.output.display().to_string())),
+            ("named_recovered", Sv::N(named_recovered)),
+            ("named_bytes", Sv::N(named_bytes)),
+            ("carved_recovered", Sv::N(cstats.files_recovered)),
+            ("carved_bytes", Sv::N(cstats.bytes_recovered)),
+            ("carved_duplicates", Sv::N(cstats.duplicates)),
+            ("elapsed_ms", Sv::N(started.elapsed().as_millis() as u64)),
+            ("timestamp_unix", Sv::N(unix_now())),
+        ];
+        write_summary(summary_path, &fields)?;
+        eprintln!("Summary written to {}", summary_path.display());
+    }
+    Ok(())
+}
+
+/// Write the combined `recover` manifest as CSV, or JSON when the path ends in
+/// `.json`. Each row records whether a file came from the undelete pass
+/// (`named`) or carving (`carved`), its path relative to the output directory,
+/// its size, and its SHA-256 — so `verify --base <OUTPUT>` can re-check it.
+fn write_recover_report(
+    path: &std::path::Path,
+    rows: &[(&str, String, u64, String)],
+) -> Result<()> {
+    let is_json = path
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+    let mut out = String::new();
+    if is_json {
+        out.push_str("[\n");
+        for (i, (kind, p, size, sha)) in rows.iter().enumerate() {
+            let comma = if i + 1 < rows.len() { "," } else { "" };
+            out.push_str(&format!(
+                "  {{\"kind\": \"{}\", \"path\": \"{}\", \"size\": {}, \"sha256\": \"{}\"}}{}\n",
+                kind,
+                json_escape(p),
+                size,
+                sha,
+                comma
+            ));
+        }
+        out.push_str("]\n");
+    } else {
+        out.push_str("kind,path,size,sha256\n");
+        for (kind, p, size, sha) in rows {
+            out.push_str(&format!("{},{},{},{}\n", kind, csv_escape(p), size, sha));
+        }
+    }
+    std::fs::write(path, out)
+        .map_err(|e| anyhow::anyhow!("writing report {}: {e}", path.display()))?;
     Ok(())
 }
 
