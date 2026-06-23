@@ -95,7 +95,7 @@ offset where they were found.
 
 ## Install / build
 
-Requires a Rust toolchain (1.74+).
+Requires a Rust toolchain (1.75+).
 
 ```sh
 cargo build --release
@@ -253,7 +253,7 @@ misleading extension. `identify` reports a file's type from its bytes (the same
 signatures and structural checks carving uses):
 
 ```sh
-filerecovery identify recovered/00000000_0x1000.bin
+filerecovery identify recovered/00000007_0x00000000003c1a00.jpg
 filerecovery identify mystery.dat --json
 ```
 
