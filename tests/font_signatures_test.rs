@@ -118,6 +118,7 @@ fn recovers_font_metafile_and_midi_types() {
         progress: false,
         checkpoint: None,
         resume: false,
+        organize: false,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
 

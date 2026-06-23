@@ -41,6 +41,7 @@ fn run_all(src: &Source, out_dir: &Path) {
         progress: false,
         checkpoint: None,
         resume: false,
+        organize: false,
     };
     let _ = carver::carve(src, &sigs, &opts, &NoProgress);
 }

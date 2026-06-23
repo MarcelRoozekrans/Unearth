@@ -42,6 +42,7 @@ fn carve(img: &[u8], dedup: bool) -> (carver::CarveStats, usize) {
         progress: false,
         checkpoint: None,
         resume: false,
+        organize: false,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     let written = std::fs::read_dir(&out_dir).unwrap().count();

@@ -51,6 +51,9 @@ pub struct CarveOptions {
     /// position with the prior run's tally (and dedup set). Requires the same
     /// output directory and options as the original run.
     pub resume: bool,
+    /// Group recovered files into a per-type subdirectory of the output
+    /// directory (e.g. `jpg/`, `png/`) instead of a single flat directory.
+    pub organize: bool,
 }
 
 /// One carved file, recorded for the recovery report.
@@ -1733,11 +1736,23 @@ fn write_file(
     buf: &mut Vec<u8>,
     seen: &mut HashSet<[u8; 32]>,
 ) -> Result<()> {
-    let name = format!(
+    let base = format!(
         "{:08}_{:#016x}.{}",
         stats.files_recovered, file_start, sig.ext
     );
-    let path: PathBuf = opts.output_dir.join(&name);
+    // With `--organize`, group files into a per-type subdirectory; the manifest
+    // name keeps the `<ext>/` prefix so `verify` still resolves it.
+    let (name, path): (String, PathBuf) = if opts.organize {
+        (
+            format!("{}/{}", sig.ext, base),
+            opts.output_dir.join(sig.ext).join(&base),
+        )
+    } else {
+        (base.clone(), opts.output_dir.join(&base))
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
     let mut out =
         fs::File::create(&path).with_context(|| format!("creating {}", path.display()))?;
 

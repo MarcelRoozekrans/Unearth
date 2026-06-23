@@ -260,6 +260,12 @@ pub struct ScanArgs {
     #[arg(long)]
     pub dedup: bool,
 
+    /// Group recovered files into a per-type subdirectory of the output
+    /// directory (e.g. `recovered/jpg/`, `recovered/png/`) instead of one flat
+    /// directory.
+    #[arg(long)]
+    pub organize: bool,
+
     /// Write a manifest of carved files to this path. The format is chosen by
     /// extension: `.json` for JSON, otherwise CSV.
     #[arg(long, value_name = "FILE")]

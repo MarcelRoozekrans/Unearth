@@ -232,6 +232,12 @@ fn tool_definitions() -> Json {
                     bool_prop("Skip byte-identical duplicates (default false)."),
                 ),
                 (
+                    "organize",
+                    bool_prop(
+                        "Group recovered files into per-type subdirectories (default false).",
+                    ),
+                ),
+                (
                     "checkpoint",
                     str_prop("Checkpoint file for resume (default: <output_dir>.checkpoint)."),
                 ),
@@ -493,6 +499,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             let min_size = arg_u64("min_size").unwrap_or(0);
             let validate = arg_bool("validate").unwrap_or(true);
             let dedup = arg_bool("dedup").unwrap_or(false);
+            let organize = arg_bool("organize").unwrap_or(false);
             let include_files = arg_bool("include_files").unwrap_or(true);
             let resume = arg_bool("resume").unwrap_or(false);
             // A checkpoint file enables resume; default it next to the output.
@@ -517,6 +524,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     progress: false,
                     checkpoint: checkpoint.clone().map(Into::into),
                     resume,
+                    organize,
                 };
                 let stats =
                     carver::carve(&source, &active, &opts, progress).map_err(|e| e.to_string())?;
