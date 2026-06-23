@@ -418,6 +418,8 @@ alongside the per-file manifest.
 | bmp    | BMP image                                        | size field in header        |
 | ico    | Windows icon                                     | image-directory walk        |
 | cur    | Windows cursor                                   | image-directory walk        |
+| ani    | Windows animated cursor                          | RIFF size field             |
+| jp2    | JPEG 2000 image                                  | ISO box (atom) walk         |
 | webp   | WebP image                                       | RIFF size field             |
 | heic   | HEIC / HEIF image                               | ISO box (atom) walk         |
 | avif   | AVIF image                                       | ISO box (atom) walk         |
@@ -443,6 +445,7 @@ alongside the per-file manifest.
 | wasm   | WebAssembly module                               | section (LEB128) walk        |
 | ttf    | TrueType font                                    | SFNT table-directory walk    |
 | otf    | OpenType font                                    | SFNT table-directory walk    |
+| ttc    | TrueType Collection                              | per-font table-directory walk|
 | woff   | WOFF web font                                    | size field in header (BE)    |
 | woff2  | WOFF2 web font                                   | size field in header (BE)    |
 | emf    | Enhanced Metafile (vector)                       | size field in header         |

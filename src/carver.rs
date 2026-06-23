@@ -484,6 +484,7 @@ fn file_length(
         Extent::Flv => Ok(flv_length(source, file_start, limit)?),
         Extent::Pcap => Ok(pcap_length(source, file_start, limit)?),
         Extent::Pcapng => Ok(pcapng_length(source, file_start, limit)?),
+        Extent::Ttc => Ok(ttc_length(source, file_start, limit)?),
     }
 }
 
@@ -672,21 +673,29 @@ fn pcapng_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<
     Ok(Some(pos))
 }
 
-/// Walk an SFNT font's table directory: a 12-byte header (whose `numTables`
-/// u16 at offset 4 gives the table count) followed by 16-byte records of
-/// `tag, checksum, offset, length` (all big-endian). The file ends at the
-/// furthest `offset + length`, padded to a 4-byte boundary.
-fn sfnt_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
-    let avail = limit - file_start;
+/// Walk one SFNT table directory at `dir_rel` bytes into the font/collection
+/// file: a 12-byte header (whose `numTables` u16 at offset 4 gives the table
+/// count) followed by 16-byte records of `tag, checksum, offset, length` (all
+/// big-endian). Returns the furthest `offset + length` (padded to 4 bytes) — a
+/// file-relative end, since table offsets are measured from the file start.
+fn sfnt_tables_end(
+    source: &Source,
+    file_start: u64,
+    dir_rel: u64,
+    avail: u64,
+) -> Result<Option<u64>> {
+    if dir_rel + 12 > avail {
+        return Ok(None);
+    }
     let mut hdr = [0u8; 12];
-    if source.read_at(file_start, &mut hdr)? < 12 {
+    if source.read_at(file_start + dir_rel, &mut hdr)? < 12 {
         return Ok(None);
     }
     let num_tables = u16::from_be_bytes([hdr[4], hdr[5]]) as u64;
     if num_tables == 0 || num_tables > 4096 {
         return Ok(None);
     }
-    let dir_end = 12 + num_tables * 16;
+    let dir_end = dir_rel + 12 + num_tables * 16;
     if dir_end > avail {
         return Ok(None);
     }
@@ -694,21 +703,62 @@ fn sfnt_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
     let mut max_end = dir_end;
     let mut entry = [0u8; 16];
     for i in 0..num_tables {
-        if source.read_at(file_start + 12 + i * 16, &mut entry)? < 16 {
+        if source.read_at(file_start + dir_rel + 12 + i * 16, &mut entry)? < 16 {
             return Ok(None);
         }
         let off = u32::from_be_bytes([entry[8], entry[9], entry[10], entry[11]]) as u64;
         let len = u32::from_be_bytes([entry[12], entry[13], entry[14], entry[15]]) as u64;
-        // Each table must sit within the directory's file and not before it.
+        // Each table must sit within the file and after at least a header.
         if off < 12 {
             return Ok(None);
         }
-        let end = off.saturating_add(len);
-        let padded = end.saturating_add(3) & !3;
+        let padded = off.saturating_add(len).saturating_add(3) & !3;
         if padded > avail {
             return Ok(None);
         }
         max_end = max_end.max(padded);
+    }
+    Ok(Some(max_end))
+}
+
+/// A standalone SFNT font is a single table directory at the file start.
+fn sfnt_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    sfnt_tables_end(source, file_start, 0, limit - file_start)
+}
+
+/// Walk a TrueType Collection (`ttcf`): a header with a `numFonts` u32 at offset
+/// 8 and then that many u32 offsets to each member font's table directory. The
+/// file ends at the furthest table end across all member fonts.
+fn ttc_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let avail = limit - file_start;
+    let mut hdr = [0u8; 12];
+    if source.read_at(file_start, &mut hdr)? < 12 || &hdr[0..4] != b"ttcf" {
+        return Ok(None);
+    }
+    let num_fonts = u32::from_be_bytes([hdr[8], hdr[9], hdr[10], hdr[11]]) as u64;
+    if num_fonts == 0 || num_fonts > 1024 {
+        return Ok(None);
+    }
+    let offsets_end = 12 + num_fonts * 4;
+    if offsets_end > avail {
+        return Ok(None);
+    }
+
+    let mut max_end = offsets_end;
+    let mut off4 = [0u8; 4];
+    for i in 0..num_fonts {
+        if source.read_at(file_start + 12 + i * 4, &mut off4)? < 4 {
+            return Ok(None);
+        }
+        let font_off = u32::from_be_bytes(off4) as u64;
+        // Member directories sit after the offset table.
+        if font_off < offsets_end || font_off >= avail {
+            return Ok(None);
+        }
+        match sfnt_tables_end(source, file_start, font_off, avail)? {
+            Some(end) => max_end = max_end.max(end),
+            None => return Ok(None),
+        }
     }
     Ok(Some(max_end))
 }

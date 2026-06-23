@@ -34,6 +34,7 @@
 //! * [`Extent::Flv`] — walk a Flash Video tag chain.
 //! * [`Extent::Pcap`] / [`Extent::Pcapng`] — walk a network-capture file's
 //!   packet records / blocks.
+//! * [`Extent::Ttc`] — walk a TrueType Collection's member font directories.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -107,6 +108,9 @@ pub enum Extent {
     /// pcapng capture: a chain of blocks, each carrying its own total length as a
     /// u32 (byte order from the first Section Header Block); walk them to the end.
     Pcapng,
+    /// TrueType Collection (`ttcf`): a header listing each member font's table
+    /// directory; walk every font's tables to the furthest `offset + length`.
+    Ttc,
 }
 
 /// A recoverable file type.
@@ -592,6 +596,36 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Pcapng,
         max_size: 4 * GB,
+    },
+    Signature {
+        name: "TrueType Collection",
+        ext: "ttc",
+        magic: b"ttcf",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Ttc,
+        max_size: 256 * MB,
+    },
+    Signature {
+        name: "JPEG 2000 image",
+        ext: "jp2",
+        // The 12-byte JP2 signature box: length 12, "jP  ", then 0D 0A 87 0A.
+        magic: &[
+            0x00, 0x00, 0x00, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A,
+        ],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Mp4Atoms,
+        max_size: 512 * MB,
+    },
+    Signature {
+        name: "Windows animated cursor",
+        ext: "ani",
+        magic: b"RIFF",
+        magic_offset: 0,
+        secondary: Some((8, b"ACON")),
+        extent: Extent::RiffSize,
+        max_size: 16 * MB,
     },
 ];
 
