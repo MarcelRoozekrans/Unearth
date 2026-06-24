@@ -532,6 +532,7 @@ alongside the per-file manifest.
 | mid    | Standard MIDI file                               | MThd / MTrk chunk walk       |
 | pcap   | libpcap network capture                          | packet-record walk          |
 | pcapng | pcapng network capture                           | block walk                  |
+| evtx   | Windows Event Log                                | chunk count in header       |
 
 Run `filerecovery list-types` to see what your build supports.
 

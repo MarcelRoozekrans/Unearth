@@ -503,6 +503,7 @@ fn file_length(
         Extent::Psd => Ok(psd_length(source, file_start, limit)?),
         Extent::Wmf => Ok(wmf_length(source, file_start, limit)?),
         Extent::Djvu => Ok(djvu_length(source, file_start, limit)?),
+        Extent::Evtx => Ok(evtx_length(source, file_start, limit)?),
     }
 }
 
@@ -823,6 +824,31 @@ fn lz4_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(pos))
+}
+
+/// Windows Event Log (EVTX) length. A 4096-byte `ElfFile` header records the
+/// number of 64 KiB chunks at offset 0x2A, so the file ends at
+/// `4096 + chunks * 65536`. The header block size (0x1000) and header size
+/// (0x80) are checked to reject a coincidental magic.
+fn evtx_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 48];
+    if source.read_at(file_start, &mut h)? < 48 || &h[0..8] != b"ElfFile\x00" {
+        return Ok(None);
+    }
+    let header_size = u32::from_le_bytes([h[0x20], h[0x21], h[0x22], h[0x23]]);
+    let header_block_size = u16::from_le_bytes([h[0x28], h[0x29]]);
+    if header_size != 0x80 || header_block_size != 0x1000 {
+        return Ok(None);
+    }
+    let chunks = u16::from_le_bytes([h[0x2A], h[0x2B]]) as u64;
+    if chunks == 0 {
+        return Ok(None);
+    }
+    let total = 4096 + chunks.saturating_mul(65536);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
 }
 
 /// DjVu document length. The file is an IFF `FORM` wrapped in a 4-byte `AT&T`
