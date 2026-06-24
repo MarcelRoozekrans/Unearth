@@ -124,11 +124,12 @@ impl Volume {
         }
     }
 
-    /// Names of sub-volumes contained in this volume. APFS containers list the
-    /// volumes inside them here; other filesystems have none.
+    /// Names of sub-volumes contained in this volume: APFS volumes inside a
+    /// container, or Btrfs subvolumes. Other filesystems have none.
     pub fn contained_volumes(&self) -> Vec<String> {
         match self {
             Volume::Apfs(v) => v.volume_names().to_vec(),
+            Volume::Btrfs(v) => v.subvolumes().to_vec(),
             _ => Vec::new(),
         }
     }
