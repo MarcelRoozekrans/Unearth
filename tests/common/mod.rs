@@ -264,6 +264,81 @@ pub fn hfsplus_fragmented_volume(name: &str, payload: &[u8]) -> Vec<u8> {
     v
 }
 
+/// A bare HFS+ volume with one **live folder** (named `folder`, CNID 100) in the
+/// root and one **deleted file** (`name`, holding `payload`) inside it, left as a
+/// stale record in the catalog leaf node's free space. Exercises folder-path
+/// reconstruction: the file should be recovered under `folder/name`. `payload`
+/// must fit one block.
+pub fn hfsplus_nested_volume(folder: &str, name: &str, payload: &[u8]) -> Vec<u8> {
+    assert!(payload.len() <= HFS_BS, "nested payload must fit one block");
+    const FOLDER_ID: u32 = 100;
+    let fname16: Vec<u16> = folder.encode_utf16().collect();
+    let name16: Vec<u16> = name.encode_utf16().collect();
+    let total_blocks = HFS_DATA_BLOCK + 1 + 2;
+    let mut v = vec![0u8; total_blocks * HFS_BS];
+
+    // Volume header.
+    let vh = 1024;
+    put_be16(&mut v, vh, 0x482B);
+    put_be16(&mut v, vh + 2, 4);
+    put_be32(&mut v, vh + 40, HFS_BS as u32);
+    put_be32(&mut v, vh + 44, total_blocks as u32);
+    put_be64(&mut v, vh + 272, (2 * HFS_NODE_SIZE) as u64);
+    put_be32(&mut v, vh + 284, 2);
+    put_be32(&mut v, vh + 288, HFS_CATALOG_BLOCK as u32);
+    put_be32(&mut v, vh + 292, 2);
+
+    // Catalog node 0 (header).
+    let n0 = HFS_CATALOG_BLOCK * HFS_BS;
+    v[n0 + 8] = 1;
+    put_be16(&mut v, n0 + 32, HFS_NODE_SIZE as u16);
+
+    // Catalog node 1 (leaf): one live folder record, then the deleted file
+    // record in the free space below it.
+    let n1 = n0 + HFS_NODE_SIZE;
+    v[n1 + 8] = 0xFF; // leaf node
+    put_be16(&mut v, n1 + 10, 1); // numRecords = 1 (the folder)
+    put_be16(&mut v, n1 + HFS_NODE_SIZE - 2, 14); // offset[0] -> folder record
+
+    // Live folder record at node offset 14.
+    let fkey = n1 + 14;
+    let fkey_len = 6 + 2 * fname16.len();
+    put_be16(&mut v, fkey, fkey_len as u16);
+    put_be32(&mut v, fkey + 2, 2); // parentID = root
+    put_be16(&mut v, fkey + 6, fname16.len() as u16);
+    for (i, &u) in fname16.iter().enumerate() {
+        put_be16(&mut v, fkey + 8 + i * 2, u);
+    }
+    let frec = fkey + 2 + fkey_len;
+    put_be16(&mut v, frec, 0x0001); // recordType = folder
+    put_be32(&mut v, frec + 8, FOLDER_ID); // folderID (CNID)
+    let folder_rec_len = 88; // HFSPlusCatalogFolder
+    let free_start = (frec + folder_rec_len) - n1;
+    put_be16(&mut v, n1 + HFS_NODE_SIZE - 4, free_start as u16); // offset[1] -> free space
+
+    // Deleted file record at the start of the free space.
+    let key = n1 + free_start;
+    let key_len = 6 + 2 * name16.len();
+    put_be16(&mut v, key, key_len as u16);
+    put_be32(&mut v, key + 2, FOLDER_ID); // parentID = the folder
+    put_be16(&mut v, key + 6, name16.len() as u16);
+    for (i, &u) in name16.iter().enumerate() {
+        put_be16(&mut v, key + 8 + i * 2, u);
+    }
+    let rec = key + 2 + key_len;
+    put_be16(&mut v, rec, 0x0002); // recordType = file
+    put_be32(&mut v, rec + 8, 16); // fileID
+    put_be32(&mut v, rec + 16, 2_082_844_800 + 1_000_000);
+    put_be64(&mut v, rec + 88, payload.len() as u64);
+    put_be32(&mut v, rec + 104, HFS_DATA_BLOCK as u32);
+    put_be32(&mut v, rec + 108, 1);
+
+    // File data.
+    let data_off = HFS_DATA_BLOCK * HFS_BS;
+    v[data_off..data_off + payload.len()].copy_from_slice(payload);
+    v
+}
+
 // --- FAT32 --------------------------------------------------------------
 
 /// A bare FAT32 volume with a cluster-chained root directory containing one

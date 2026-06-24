@@ -11,9 +11,10 @@
 //! This backend reads the catalog file, walks every leaf node, and scans the
 //! free space below the live records for stale **file records** that pass a
 //! strict structural check. For each one it reconstructs the file with its
-//! original name, following the eight extents stored inline in the catalog
-//! record and, for a file fragmented beyond them, the remaining extents from
-//! the **extents-overflow B-tree** (keyed by the file's CNID).
+//! original name and **folder path** (rebuilt from the live folder hierarchy via
+//! each record's parent CNID), following the eight extents stored inline in the
+//! catalog record and, for a file fragmented beyond them, the remaining extents
+//! from the **extents-overflow B-tree** (keyed by the file's CNID).
 //!
 //! ## What this cannot do
 //!
@@ -40,6 +41,8 @@ const SIG_HFSPLUS: u16 = 0x482B; // "H+"
 const SIG_HFSX: u16 = 0x4858; // "HX"
 /// B-tree leaf node kind (`kBTLeafNode`), stored as an `i8`.
 const KIND_LEAF: i8 = -1;
+/// `kHFSPlusFolderRecord`.
+const RECORD_FOLDER: u16 = 0x0001;
 /// `kHFSPlusFileRecord`.
 const RECORD_FILE: u16 = 0x0002;
 /// Root folder CNID; the smallest valid parent for a user object's parent is 2.
@@ -287,9 +290,11 @@ impl Volume {
         let node_size = node_size(&catalog)?;
         let total_nodes = catalog.len() / node_size;
 
-        // Pass 1: collect the CNIDs of files that are still live, so a stale copy
-        // of a record for a file that still exists is not mistaken for deleted.
+        // Pass 1: collect the CNIDs of files that are still live (so a stale copy
+        // of a record for a file that still exists is not mistaken for deleted),
+        // and index every live folder by CNID to rebuild original paths.
         let mut live: HashSet<u32> = HashSet::new();
+        let mut folders: HashMap<u32, (String, u32)> = HashMap::new();
         for idx in 0..total_nodes {
             let node = &catalog[idx * node_size..(idx + 1) * node_size];
             if node_kind(node) != KIND_LEAF {
@@ -298,6 +303,8 @@ impl Volume {
             for off in live_record_offsets(node, node_size) {
                 if let Some(rec) = parse_file_record(node, off, self) {
                     live.insert(rec.file_id);
+                } else if let Some((cnid, name, parent)) = parse_folder_record(node, off, self) {
+                    folders.insert(cnid, (name, parent));
                 }
             }
         }
@@ -329,7 +336,7 @@ impl Volume {
                 if live.contains(&rec.file_id) || !seen.insert(rec.file_id) {
                     continue;
                 }
-                let rel = PathBuf::from(sanitize_component(&rec.name));
+                let rel = resolve_path(&folders, rec.parent_id).join(sanitize_component(&rec.name));
                 let size = rec.logical_size;
                 if size < opts.min_size {
                     continue;
@@ -553,6 +560,9 @@ impl Volume {
 struct FileRecord {
     name: String,
     file_id: u32,
+    /// CNID of the folder containing this file (the catalog key's parentID),
+    /// used to rebuild the original folder path.
+    parent_id: u32,
     logical_size: u64,
     mod_date: u32,
     access_date: u32,
@@ -617,22 +627,56 @@ fn parse_file_record(node: &[u8], off: usize, vol: &Volume) -> Option<FileRecord
         return None;
     }
 
-    // Decode the UTF-16BE name.
-    let mut name = String::new();
-    let mut units = Vec::with_capacity(name_len as usize);
-    for i in 0..name_len as usize {
-        units.push(be16(node, off + 8 + i * 2));
-    }
-    name.extend(char::decode_utf16(units).map(|r| r.unwrap_or('\u{FFFD}')));
+    let name = decode_name(node, off, name_len);
 
     Some(FileRecord {
         name,
         file_id,
+        parent_id,
         logical_size,
         mod_date,
         access_date,
         extents,
     })
+}
+
+/// Decode a catalog key's UTF-16BE node name (`name_len` units at `off + 8`).
+fn decode_name(node: &[u8], off: usize, name_len: u16) -> String {
+    let mut units = Vec::with_capacity(name_len as usize);
+    for i in 0..name_len as usize {
+        units.push(be16(node, off + 8 + i * 2));
+    }
+    char::decode_utf16(units)
+        .map(|r| r.unwrap_or('\u{FFFD}'))
+        .collect()
+}
+
+/// Parse a catalog **folder** record at `off`: returns `(folderID, name,
+/// parentID)`. Used to rebuild the live folder hierarchy so deleted files can
+/// be restored under their original paths.
+fn parse_folder_record(node: &[u8], off: usize, _vol: &Volume) -> Option<(u32, String, u32)> {
+    let key_len = be16(node, off);
+    if !(6..=MAX_CATALOG_KEY).contains(&key_len) {
+        return None;
+    }
+    let parent_id = be32(node, off + 2);
+    if parent_id == 0 {
+        return None;
+    }
+    let name_len = be16(node, off + 6);
+    if name_len == 0 || name_len > 255 || key_len != 6 + 2 * name_len {
+        return None;
+    }
+    let key_end = off + 2 + key_len as usize;
+    // HFSPlusCatalogFolder: recordType @0, folderID @8.
+    if key_end + 16 > node.len() || be16(node, key_end) != RECORD_FOLDER {
+        return None;
+    }
+    let folder_id = be32(node, key_end + 8);
+    if folder_id == 0 {
+        return None;
+    }
+    Some((folder_id, decode_name(node, off, name_len), parent_id))
 }
 
 /// Parse an extents-overflow leaf record at `off`: an `HFSPlusExtentKey`
@@ -735,6 +779,27 @@ fn be64(b: &[u8], o: usize) -> u64 {
         Some(s) => u64::from_be_bytes(s.try_into().unwrap()),
         None => 0,
     }
+}
+
+/// Rebuild the folder path of a deleted file from its parent CNID, walking the
+/// live-folder map (CNID -> (name, parentID)) up to the root folder. Stops at an
+/// unknown parent (a deleted ancestor folder) so the file lands under whatever
+/// of its path survives, and is cycle-bounded against a corrupt hierarchy.
+fn resolve_path(folders: &HashMap<u32, (String, u32)>, parent_id: u32) -> PathBuf {
+    let mut components = Vec::new();
+    let mut cur = parent_id;
+    let mut guard = 0;
+    while cur != ROOT_FOLDER_ID && guard < 256 {
+        match folders.get(&cur) {
+            Some((name, parent)) => {
+                components.push(sanitize_component(name));
+                cur = *parent;
+            }
+            None => break,
+        }
+        guard += 1;
+    }
+    components.iter().rev().collect()
 }
 
 fn sanitize_component(name: &str) -> String {
@@ -895,5 +960,50 @@ mod tests {
         bad_ext[12..16].copy_from_slice(&9999u32.to_be_bytes());
         bad_ext[16..20].copy_from_slice(&1u32.to_be_bytes());
         assert!(parse_extent_record(&bad_ext, 0, &vol).is_none());
+    }
+
+    #[test]
+    fn resolves_nested_and_partial_folder_paths() {
+        let mut folders: HashMap<u32, (String, u32)> = HashMap::new();
+        folders.insert(20, ("Users".to_string(), ROOT_FOLDER_ID));
+        folders.insert(21, ("alice".to_string(), 20));
+        folders.insert(22, ("Photos".to_string(), 21));
+
+        // Full chain up to the root folder.
+        assert_eq!(
+            resolve_path(&folders, 22),
+            PathBuf::from("Users").join("alice").join("Photos")
+        );
+        // A file directly in the root has no path components.
+        assert_eq!(resolve_path(&folders, ROOT_FOLDER_ID), PathBuf::new());
+        // An unknown parent (deleted ancestor) yields an empty/partial path
+        // rather than looping or panicking.
+        assert_eq!(resolve_path(&folders, 999), PathBuf::new());
+    }
+
+    #[test]
+    fn parses_a_folder_record() {
+        // key: parentID=2, name="Docs"; record: recordType=folder, folderID=100.
+        let name: Vec<u16> = "Docs".encode_utf16().collect();
+        let key_len = 6 + 2 * name.len();
+        let mut buf = vec![0u8; key_len + 2 + 88];
+        buf[0..2].copy_from_slice(&(key_len as u16).to_be_bytes());
+        buf[2..6].copy_from_slice(&2u32.to_be_bytes()); // parentID
+        buf[6..8].copy_from_slice(&(name.len() as u16).to_be_bytes());
+        for (i, &u) in name.iter().enumerate() {
+            buf[8 + i * 2..10 + i * 2].copy_from_slice(&u.to_be_bytes());
+        }
+        let rec = 2 + key_len;
+        buf[rec..rec + 2].copy_from_slice(&RECORD_FOLDER.to_be_bytes());
+        buf[rec + 8..rec + 12].copy_from_slice(&100u32.to_be_bytes());
+
+        let (cnid, fname, parent) =
+            parse_folder_record(&buf, 0, &test_vol()).expect("should parse");
+        assert_eq!(cnid, 100);
+        assert_eq!(fname, "Docs");
+        assert_eq!(parent, 2);
+        // A file record (wrong recordType) must not parse as a folder.
+        let file = build_record("x.txt", 10, 12, 1);
+        assert!(parse_folder_record(&file, 0, &test_vol()).is_none());
     }
 }

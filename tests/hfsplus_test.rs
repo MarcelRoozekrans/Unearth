@@ -67,6 +67,31 @@ fn dry_run_reports_without_writing() {
 }
 
 #[test]
+fn restores_the_original_folder_path() {
+    // The deleted file lived inside a live folder "Documents"; recovery should
+    // rebuild that path from the catalog's folder hierarchy.
+    let payload = b"nested file body";
+    let (tmp, img) = write_img(&common::hfsplus_nested_volume(
+        "Documents",
+        "memo.txt",
+        payload,
+    ));
+    let src = Source::open(&img).unwrap();
+
+    let vols = recover::detect(&src).unwrap();
+    let out = tmp.path().join("out");
+    let stats = vols[0]
+        .recover_deleted(&src, &out, &RecoverOptions::default())
+        .unwrap();
+
+    assert_eq!(stats.recovered, 1);
+    assert_eq!(
+        std::fs::read(out.join("Documents").join("memo.txt")).unwrap(),
+        payload
+    );
+}
+
+#[test]
 fn recovers_a_fragmented_file_via_the_extents_overflow_tree() {
     // The file's tail lives in a non-contiguous extent recorded only in the
     // extents-overflow B-tree, not inline in the catalog record.
