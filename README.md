@@ -577,6 +577,11 @@ Common to both strategies:
   physical addresses through the chunk map. But — like APFS — its copy-on-write
   design leaves no stale metadata to scavenge, so it is not recovered from
   metadata. Use `scan` (carving).
+- **Encrypted volumes** — **LUKS** (LUKS1/LUKS2) and **BitLocker** — are
+  *recognised* and reported by `info`/`list_volumes`, but they hold only
+  ciphertext until unlocked, so nothing can be recovered (and carving the raw
+  container is useless). Unlock first — `cryptsetup open` on Linux, or Windows
+  for BitLocker — then image the mapped plaintext device and recover from that.
 
 `scan` (carving) specifics:
 

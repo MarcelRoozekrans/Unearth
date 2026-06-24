@@ -45,6 +45,7 @@
 pub mod apfs;
 pub mod btrfs;
 pub mod carver;
+pub mod encrypted;
 pub mod exfat;
 pub mod ext4;
 pub mod fat;
