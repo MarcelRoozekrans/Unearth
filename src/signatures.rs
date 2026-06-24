@@ -51,6 +51,7 @@
 //! * [`Extent::Rtf`] — match an RTF document's outer `{ ... }` group.
 //! * [`Extent::Mp3`] — walk MPEG audio frames from an ID3v2 tag to the end.
 //! * [`Extent::MachO`] — sum a Mach-O binary's segments and link-edit tables.
+//! * [`Extent::Regf`] — Windows registry hive: base block + hive-bins data.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -177,6 +178,11 @@ pub enum Extent {
     /// byte order from the magic. Fat/universal binaries (`0xCAFEBABE`, which
     /// collides with Java class files) are not carved.
     MachO,
+    /// Windows registry hive (`regf`): the 4096-byte base block records the
+    /// total size of the hive-bins data area at offset 0x28, so the file ends at
+    /// `4096 + hive_bins_data_size`. The version and file-type fields are checked
+    /// to reject a coincidental magic.
+    Regf,
 }
 
 /// A recoverable file type.
@@ -624,6 +630,15 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::MachO,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "Windows registry hive",
+        ext: "regf",
+        magic: b"regf",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Regf,
         max_size: 2 * GB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag

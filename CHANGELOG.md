@@ -35,8 +35,9 @@ formats.
   (v4 and v5), Zstandard (`.zst`), LZ4 (`.lz4`), Photoshop documents (PSD/PSB),
   Windows Metafiles (WMF), DjVu documents, binary glTF (`.glb`), Windows Event
   Logs (EVTX), Rich Text Format (RTF), MP3 audio (ID3v2-anchored MPEG-frame
-  walk), and Mach-O binaries (macOS/iOS, sized from segment and link-edit
-  extents) — each with a deterministic length strategy.
+  walk), Mach-O binaries (macOS/iOS, sized from segment and link-edit
+  extents), and Windows registry hives (`regf`, base block + hive-bins data
+  size) — each with a deterministic length strategy.
 
 ## [0.2.0] - 2026-06-23
 
