@@ -50,6 +50,7 @@
 //! * [`Extent::Evtx`] — size a Windows Event Log from its chunk count.
 //! * [`Extent::Rtf`] — match an RTF document's outer `{ ... }` group.
 //! * [`Extent::Mp3`] — walk MPEG audio frames from an ID3v2 tag to the end.
+//! * [`Extent::MachO`] — sum a Mach-O binary's segments and link-edit tables.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -168,6 +169,14 @@ pub enum Extent {
     /// which the frame length is computed — to the end of the stream, including
     /// a trailing 128-byte ID3v1 (`TAG`) tag when present.
     Mp3,
+    /// Mach-O binary (macOS/iOS executables, dylibs, bundles): parse the header
+    /// to read the load commands, then take the furthest extent of every
+    /// `LC_SEGMENT`/`LC_SEGMENT_64` (`fileoff + filesize`) and link-edit table
+    /// (symbol/string tables and `dataoff + datasize` blobs such as the code
+    /// signature, which normally ends the file). Handles 32/64-bit and either
+    /// byte order from the magic. Fat/universal binaries (`0xCAFEBABE`, which
+    /// collides with Java class files) are not carved.
+    MachO,
 }
 
 /// A recoverable file type.
@@ -577,6 +586,44 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::Pe,
+        max_size: 2 * GB,
+    },
+    // Mach-O thin binaries: one entry per magic (32/64-bit × byte order). Fat
+    // (universal) binaries share Java's 0xCAFEBABE magic and are not carved.
+    Signature {
+        name: "Mach-O binary (64-bit LE)",
+        ext: "macho",
+        magic: &[0xCF, 0xFA, 0xED, 0xFE],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::MachO,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "Mach-O binary (32-bit LE)",
+        ext: "macho",
+        magic: &[0xCE, 0xFA, 0xED, 0xFE],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::MachO,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "Mach-O binary (64-bit BE)",
+        ext: "macho",
+        magic: &[0xFE, 0xED, 0xFA, 0xCF],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::MachO,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "Mach-O binary (32-bit BE)",
+        ext: "macho",
+        magic: &[0xFE, 0xED, 0xFA, 0xCE],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::MachO,
         max_size: 2 * GB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
