@@ -509,6 +509,7 @@ fn file_length(
         Extent::MachO => Ok(macho_length(source, file_start, limit)?),
         Extent::Regf => Ok(regf_length(source, file_start, limit)?),
         Extent::Aac => Ok(aac_length(source, file_start, limit)?),
+        Extent::Dex => Ok(dex_length(source, file_start, limit)?),
     }
 }
 
@@ -2580,6 +2581,29 @@ fn aac_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(pos))
+}
+
+/// Android Dalvik executable (DEX) length. The header stores the total file
+/// size as a little-endian u32 at offset 0x20, so the file ends there. The
+/// header size (0x70 at offset 0x24) and endian tag (0x12345678 at offset 0x28)
+/// are checked to reject a coincidental `dex\n` magic.
+fn dex_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x2C];
+    if source.read_at(file_start, &mut h)? < 0x2C || &h[0..4] != b"dex\n" {
+        return Ok(None);
+    }
+    let file_size = u32::from_le_bytes([h[0x20], h[0x21], h[0x22], h[0x23]]) as u64;
+    let header_size = u32::from_le_bytes([h[0x24], h[0x25], h[0x26], h[0x27]]);
+    let endian_tag = u32::from_le_bytes([h[0x28], h[0x29], h[0x2A], h[0x2B]]);
+    // header_size is fixed at 0x70; the standard (little-endian) DEX endian tag
+    // is 0x12345678.
+    if header_size != 0x70 || endian_tag != 0x1234_5678 {
+        return Ok(None);
+    }
+    if file_size < 0x70 || file_start.saturating_add(file_size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(file_size))
 }
 
 /// Search forward from `file_start` for `marker`, returning the file length
