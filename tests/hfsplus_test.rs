@@ -67,6 +67,26 @@ fn dry_run_reports_without_writing() {
 }
 
 #[test]
+fn free_extents_reads_the_allocation_bitmap() {
+    // The builder marks the volume header, allocation, catalog, and data blocks
+    // allocated (MSB-first) and leaves the rest free.
+    let (_tmp, img) = write_img(&common::hfsplus_volume("notes.txt", b"hi"));
+    let src = Source::open(&img).unwrap();
+    let vol = filerecovery::hfsplus::Volume::parse(&src, 0).unwrap();
+
+    let free = vol.free_extents(&src).unwrap();
+    let bs = 512u64;
+    let covered = |block: u64| {
+        let off = block * bs;
+        free.iter().any(|&(s, l)| off >= s && off < s + l)
+    };
+    assert!(covered(11), "block 11 is free");
+    assert!(!covered(2), "block 2 (volume header) is allocated");
+    assert!(!covered(8), "block 8 (catalog) is allocated");
+    assert!(!covered(12), "block 12 (file data) is allocated");
+}
+
+#[test]
 fn unicode_name_is_preserved() {
     let (tmp, img) = write_img(&common::hfsplus_volume("café — not.txt", b"unicode body"));
     let src = Source::open(&img).unwrap();

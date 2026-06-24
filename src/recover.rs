@@ -129,6 +129,7 @@ impl Volume {
             Volume::Exfat(v) => v.free_extents(src).ok(),
             Volume::Ext(v) => v.free_extents(src).ok(),
             Volume::Ntfs(v) => v.free_extents(src).ok(),
+            Volume::Hfs(v) => v.free_extents(src).ok(),
             _ => None,
         }
     }

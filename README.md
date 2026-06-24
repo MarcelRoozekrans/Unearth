@@ -359,8 +359,8 @@ filerecovery recover card.img -o recovered --unallocated
 ```
 
 This reads the filesystem's allocation map (currently supported for FAT, exFAT,
-ext2/3/4, and NTFS); for filesystems whose map isn't parsed yet it falls back to
-carving the whole source and says so.
+ext2/3/4, NTFS, and HFS+/HFSX); for filesystems whose map isn't parsed yet it
+falls back to carving the whole source and says so.
 
 `--report <FILE>` writes a combined manifest of every recovered file (both
 passes), each row tagged `named` or `carved` with its path and SHA-256. It is

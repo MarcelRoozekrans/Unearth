@@ -48,6 +48,8 @@ const MAX_CATALOG_KEY: u16 = 516;
 const HFS_TO_UNIX_EPOCH: u32 = 2_082_844_800;
 /// Cap on the catalog bytes read into memory, to bound work/allocations.
 const MAX_CATALOG: usize = 64 * 1024 * 1024;
+/// Cap on the allocation bitmap bytes read into memory, to bound allocations.
+const MAX_BITMAP: usize = 256 * 1024 * 1024;
 
 /// A parsed HFS+/HFSX volume.
 pub struct Volume {
@@ -58,6 +60,9 @@ pub struct Volume {
     /// Allocation-block extents of the catalog file (start, count), inline only.
     catalog_extents: Vec<(u32, u32)>,
     catalog_size: u64,
+    /// Allocation-block extents of the allocation file (the volume bitmap),
+    /// inline only. Empty when the fork could not be parsed plausibly.
+    allocation_extents: Vec<(u32, u32)>,
     hfsx: bool,
 }
 
@@ -120,12 +125,34 @@ impl Volume {
             bail!("HFS+ catalog file has no extents");
         }
 
+        // Allocation file fork (the volume bitmap) at offset 112: extents @128
+        // (8 x start,count). Parsed non-fatally — a volume that recovers files
+        // but whose bitmap is implausible should still work, just without
+        // free-space carving. Any out-of-range extent clears the whole set.
+        let mut allocation_extents = Vec::new();
+        for i in 0..8 {
+            let o = 128 + i * 8;
+            let start = be32(&vh, o);
+            let count = be32(&vh, o + 4);
+            if count == 0 {
+                break;
+            }
+            if start as u64 >= total_blocks
+                || start as u64 + count as u64 > total_blocks.saturating_add(1)
+            {
+                allocation_extents.clear();
+                break;
+            }
+            allocation_extents.push((start, count));
+        }
+
         Ok(Volume {
             offset,
             block_size,
             total_blocks,
             catalog_extents,
             catalog_size,
+            allocation_extents,
             hfsx,
         })
     }
@@ -133,6 +160,67 @@ impl Volume {
     /// Total size of the volume in bytes.
     pub fn size(&self) -> u64 {
         self.total_blocks.saturating_mul(self.block_size)
+    }
+
+    /// Absolute byte ranges of the volume's free (unallocated) space, derived
+    /// from the allocation file (the volume bitmap). Each bit maps one
+    /// allocation block, **most-significant bit first** (bit 7 of byte 0 is
+    /// block 0). Returns an empty vec when the bitmap could not be read; bits
+    /// past the end of the bitmap (or blocks with no bit) are treated as
+    /// allocated, never free.
+    pub fn free_extents(&self, src: &Source) -> Result<Vec<(u64, u64)>> {
+        if self.allocation_extents.is_empty() {
+            return Ok(Vec::new());
+        }
+        let bitmap = self.read_allocation_bitmap(src)?;
+
+        let mut free: Vec<(u64, u64)> = Vec::new();
+        for b in 0..self.total_blocks {
+            let byte = (b / 8) as usize;
+            let bit = (b % 8) as u32;
+            let allocated = bitmap
+                .get(byte)
+                .map(|&v| v & (0x80 >> bit) != 0)
+                .unwrap_or(true);
+            if allocated {
+                continue;
+            }
+            let start = self.offset + b * self.block_size;
+            match free.last_mut() {
+                Some(last) if last.0 + last.1 == start => last.1 += self.block_size,
+                _ => free.push((start, self.block_size)),
+            }
+        }
+        Ok(free)
+    }
+
+    /// Read the allocation file (volume bitmap) into memory via its inline
+    /// extents, bounded by [`MAX_BITMAP`].
+    fn read_allocation_bitmap(&self, src: &Source) -> Result<Vec<u8>> {
+        let extents_bytes: u64 = self
+            .allocation_extents
+            .iter()
+            .map(|&(_, c)| c as u64 * self.block_size)
+            .sum();
+        let want = extents_bytes.min(MAX_BITMAP as u64) as usize;
+
+        let mut buf = Vec::with_capacity(want.min(1 << 20));
+        let mut block = vec![0u8; self.block_size as usize];
+        'outer: for &(start, count) in &self.allocation_extents {
+            for b in 0..count as u64 {
+                if buf.len() >= want {
+                    break 'outer;
+                }
+                let off = self.offset + (start as u64 + b) * self.block_size;
+                let n = src.read_at(off, &mut block)?;
+                if n == 0 {
+                    break 'outer;
+                }
+                buf.extend_from_slice(&block[..n]);
+            }
+        }
+        buf.truncate(want);
+        Ok(buf)
     }
 
     /// `"HFS+"` or `"HFSX"`.
@@ -514,6 +602,7 @@ mod tests {
             total_blocks: 64,
             catalog_extents: vec![(8, 2)],
             catalog_size: 1024,
+            allocation_extents: vec![],
             hfsx: false,
         }
     }
