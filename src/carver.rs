@@ -497,6 +497,7 @@ fn file_length(
         Extent::Pcap => Ok(pcap_length(source, file_start, limit)?),
         Extent::Pcapng => Ok(pcapng_length(source, file_start, limit)?),
         Extent::Ttc => Ok(ttc_length(source, file_start, limit)?),
+        Extent::Rar => Ok(rar_length(source, file_start, limit)?),
     }
 }
 
@@ -555,6 +556,152 @@ fn flv_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(pos))
+}
+
+/// Defensive cap on the number of RAR blocks walked.
+const MAX_RAR_BLOCKS: u64 = 1 << 24;
+
+/// RAR archive length. The 6-byte `Rar!\x1A\x07` signature is shared by v4 and
+/// v5; the next byte selects the layout (`0x00` => v4, `0x01 0x00` => v5). Each
+/// format is a chain of blocks ending in an end-of-archive marker block.
+fn rar_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut sig = [0u8; 8];
+    let n = source.read_at(file_start, &mut sig)?;
+    if n < 7 || &sig[0..6] != b"Rar!\x1a\x07" {
+        return Ok(None);
+    }
+    match sig[6] {
+        0x00 => rar4_length(source, file_start, limit),
+        0x01 if n >= 8 && sig[7] == 0x00 => rar5_length(source, file_start, limit),
+        _ => Ok(None),
+    }
+}
+
+/// RAR v4: a 7-byte marker block then a chain of blocks. Each block header is
+/// `HEAD_CRC(2) HEAD_TYPE(1) HEAD_FLAGS(2) HEAD_SIZE(2)`, with an extra
+/// `ADD_SIZE(4)` when `HEAD_FLAGS & 0x8000` is set. The block spans
+/// `HEAD_SIZE + ADD_SIZE`; the terminator block has type `0x7B`.
+fn rar4_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut pos = 7u64; // past the marker
+    for _ in 0..MAX_RAR_BLOCKS {
+        let mut hdr = [0u8; 11];
+        let got = source.read_at(file_start + pos, &mut hdr)?;
+        if got < 7 {
+            return Ok(None);
+        }
+        let htype = hdr[2];
+        let flags = u16::from_le_bytes([hdr[3], hdr[4]]);
+        let head_size = u16::from_le_bytes([hdr[5], hdr[6]]) as u64;
+        if head_size < 7 {
+            return Ok(None);
+        }
+        let add_size = if flags & 0x8000 != 0 {
+            if got < 11 {
+                return Ok(None);
+            }
+            u32::from_le_bytes([hdr[7], hdr[8], hdr[9], hdr[10]]) as u64
+        } else {
+            0
+        };
+        let block_len = match head_size.checked_add(add_size) {
+            Some(b) if b > 0 => b,
+            _ => return Ok(None),
+        };
+        pos = match pos.checked_add(block_len) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        if file_start + pos > limit {
+            return Ok(None);
+        }
+        if htype == 0x7B {
+            return Ok(Some(pos)); // end-of-archive block consumed
+        }
+    }
+    Ok(None)
+}
+
+/// RAR v5: an 8-byte signature then a chain of blocks. Each block is
+/// `CRC32(4)`, a vint `header_size`, the header (that many bytes), then an
+/// optional data area. The header begins `vint type, vint flags`, with a vint
+/// `extra_area_size` when `flags & 1` and a vint `data_size` when `flags & 2`;
+/// the block spans `4 + len(header_size) + header_size + data_size`. The
+/// terminator block has type `5`.
+fn rar5_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut pos = 8u64; // past the signature
+    for _ in 0..MAX_RAR_BLOCKS {
+        let crc_end = pos + 4;
+        let (header_size, hs_len) = match read_vint(source, file_start + crc_end)? {
+            Some(x) => x,
+            None => return Ok(None),
+        };
+        let header_start = crc_end + hs_len;
+        let (htype, t_len) = match read_vint(source, file_start + header_start)? {
+            Some(x) => x,
+            None => return Ok(None),
+        };
+        let (flags, f_len) = match read_vint(source, file_start + header_start + t_len)? {
+            Some(x) => x,
+            None => return Ok(None),
+        };
+        let mut cursor = header_start + t_len + f_len;
+        if flags & 0x0001 != 0 {
+            // extra_area_size vint (its bytes live inside header_size).
+            match read_vint(source, file_start + cursor)? {
+                Some((_, e_len)) => cursor += e_len,
+                None => return Ok(None),
+            }
+        }
+        let data_size = if flags & 0x0002 != 0 {
+            match read_vint(source, file_start + cursor)? {
+                Some((ds, _)) => ds,
+                None => return Ok(None),
+            }
+        } else {
+            0
+        };
+        let block_len = 4u64
+            .checked_add(hs_len)
+            .and_then(|b| b.checked_add(header_size))
+            .and_then(|b| b.checked_add(data_size));
+        let block_len = match block_len {
+            Some(b) if b > 0 => b,
+            _ => return Ok(None),
+        };
+        pos = match pos.checked_add(block_len) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        if file_start + pos > limit {
+            return Ok(None);
+        }
+        if htype == 5 {
+            return Ok(Some(pos)); // end-of-archive block consumed
+        }
+    }
+    Ok(None)
+}
+
+/// Read a RAR5 variable-length integer (base-128, low group first, high bit =
+/// continue) at `pos`. Returns the value and the number of bytes it occupied.
+fn read_vint(source: &Source, pos: u64) -> Result<Option<(u64, u64)>> {
+    let mut value = 0u64;
+    let mut shift = 0u32;
+    for i in 0..10u64 {
+        let mut b = [0u8; 1];
+        if source.read_at(pos + i, &mut b)? < 1 {
+            return Ok(None);
+        }
+        value |= ((b[0] & 0x7F) as u64) << shift;
+        if b[0] & 0x80 == 0 {
+            return Ok(Some((value, i + 1)));
+        }
+        shift += 7;
+        if shift >= 64 {
+            return Ok(None);
+        }
+    }
+    Ok(None)
 }
 
 /// Walk a libpcap capture: a 24-byte global header (the magic gives the byte
