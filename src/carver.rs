@@ -510,6 +510,7 @@ fn file_length(
         Extent::Regf => Ok(regf_length(source, file_start, limit)?),
         Extent::Aac => Ok(aac_length(source, file_start, limit)?),
         Extent::Dex => Ok(dex_length(source, file_start, limit)?),
+        Extent::Icc => Ok(icc_length(source, file_start, limit)?),
     }
 }
 
@@ -2604,6 +2605,26 @@ fn dex_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(file_size))
+}
+
+/// ICC colour profile length. The 128-byte profile header opens with the total
+/// profile size as a big-endian u32 at offset 0 (the `acsp` file signature sits
+/// at offset 36). The size must be at least the 128-byte header and a multiple
+/// of 4 (profiles are padded to a 4-byte boundary), which rejects a coincidental
+/// `acsp` match.
+fn icc_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 4];
+    if source.read_at(file_start, &mut h)? < 4 {
+        return Ok(None);
+    }
+    let size = u32::from_be_bytes(h) as u64;
+    if size < 128 || size % 4 != 0 {
+        return Ok(None);
+    }
+    if file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
 }
 
 /// Search forward from `file_start` for `marker`, returning the file length
