@@ -8,6 +8,8 @@
 //! * [`Extent::HeaderSizeLe32`] — read a little-endian u32 size field (BMP, CAB).
 //! * [`Extent::RiffSize`] — RIFF container size at offset 4, plus the 8-byte
 //!   chunk header (WAV, AVI, WEBP).
+//! * [`Extent::FormSize`] — IFF "FORM" container size (big-endian) at offset 4,
+//!   plus the 8-byte chunk header (AIFF, AIFF-C).
 //! * [`Extent::Sqlite`] — page size × page count from the SQLite header.
 //! * [`Extent::SevenZip`] — next-header offset + size from the 7z header.
 //! * [`Extent::Mp4Atoms`] — walk the ISO base-media box/atom structure (MP4,
@@ -53,6 +55,10 @@ pub enum Extent {
     HeaderSizeLe32 { offset: usize },
     /// RIFF container: total size = (little-endian u32 at offset 4) + 8.
     RiffSize,
+    /// IFF "FORM" container (AIFF/AIFF-C, and other EA-IFF-85 types): total size
+    /// = (big-endian u32 at offset 4) + 8. The big-endian sibling of
+    /// [`Extent::RiffSize`].
+    FormSize,
     /// SQLite database: total size = page_size × page_count (big-endian fields
     /// in the file header).
     Sqlite,
@@ -257,6 +263,34 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: Some((8, b"WEBP")),
         extent: Extent::RiffSize,
         max_size: 100 * MB,
+    },
+    Signature {
+        name: "AIFF audio",
+        ext: "aiff",
+        magic: b"FORM",
+        magic_offset: 0,
+        secondary: Some((8, b"AIFF")),
+        extent: Extent::FormSize,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "AIFF-C audio",
+        ext: "aifc",
+        magic: b"FORM",
+        magic_offset: 0,
+        secondary: Some((8, b"AIFC")),
+        extent: Extent::FormSize,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "Apple icon image",
+        ext: "icns",
+        magic: b"icns",
+        magic_offset: 0,
+        secondary: None,
+        // Total file size is a big-endian u32 at offset 4 (includes the header).
+        extent: Extent::HeaderSizeBe32 { offset: 4 },
+        max_size: 50 * MB,
     },
     Signature {
         name: "SQLite database",
