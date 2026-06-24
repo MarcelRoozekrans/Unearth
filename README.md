@@ -451,6 +451,7 @@ alongside the per-file manifest.
 | webp   | WebP image                                       | RIFF size field             |
 | heic   | HEIC / HEIF image                               | ISO box (atom) walk         |
 | avif   | AVIF image                                       | ISO box (atom) walk         |
+| icns   | Apple icon image                                 | size field in header (BE)    |
 | cr3    | Canon CR3 raw image                              | ISO box (atom) walk         |
 | jxl    | JPEG XL image                                    | ISO box (atom) walk         |
 | tif    | TIFF / BigTIFF / raw (DNG/NEF/ARW)              | IFD / strip-tile walk       |
@@ -462,6 +463,8 @@ alongside the per-file manifest.
 | sqlite | SQLite database                                 | page size × page count      |
 | wav    | WAV audio                                        | RIFF size field             |
 | avi    | AVI video                                        | RIFF size field             |
+| aiff   | AIFF audio                                        | IFF FORM size field (BE)     |
+| aifc   | AIFF-C audio                                      | IFF FORM size field (BE)     |
 | mp4    | MP4 / MOV / M4A media                            | ISO box (atom) walk         |
 | 3gp    | 3GP video                                        | ISO box (atom) walk         |
 | flv    | Flash Video                                      | tag-chain walk              |

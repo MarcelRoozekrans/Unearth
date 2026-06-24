@@ -439,6 +439,18 @@ fn file_length(
             }
             Ok(Some(size))
         }
+        Extent::FormSize => {
+            let mut tmp = [0u8; 8];
+            if source.read_at(file_start, &mut tmp)? < 8 {
+                return Ok(None);
+            }
+            let chunk = u32::from_be_bytes([tmp[4], tmp[5], tmp[6], tmp[7]]) as u64;
+            let size = chunk + 8;
+            if chunk == 0 || file_start + size > limit {
+                return Ok(None);
+            }
+            Ok(Some(size))
+        }
         Extent::Sqlite => {
             let mut hdr = [0u8; 32];
             if source.read_at(file_start, &mut hdr)? < 32 {
