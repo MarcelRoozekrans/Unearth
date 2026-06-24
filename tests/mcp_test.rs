@@ -275,3 +275,46 @@ fn list_volumes_and_undelete_tools() {
     // "hello mcp" base64-encodes to "aGVsbG8gbWNw".
     assert_eq!(read.get("data").unwrap().as_str(), Some("aGVsbG8gbWNw"));
 }
+
+#[test]
+fn list_volumes_scan_finds_a_lost_partition() {
+    // An ext volume at 1 MiB with garbage (no partition table) before it:
+    // ordinary detection finds nothing, but list_volumes with scan=true locates
+    // it via the whole-source signature scan.
+    const MIB: usize = 1024 * 1024;
+    let ext = common::ext_volume("notes.txt", b"hello mcp");
+    let mut img = vec![0xA5u8; MIB + ext.len()];
+    img[MIB..MIB + ext.len()].copy_from_slice(&ext);
+    img[510] = 0;
+    img[511] = 0;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("nopart.img");
+    std::fs::write(&path, &img).unwrap();
+
+    // Without scan: nothing found.
+    let plain = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"list_volumes","arguments":{{"source":"{}"}}}}}}"#,
+        path.display()
+    );
+    let scanned = format!(
+        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"list_volumes","arguments":{{"source":"{}","scan":true}}}}}}"#,
+        path.display()
+    );
+    let resps = session(&[&plain, &scanned]);
+
+    let plain_vols = tool_result(&resps[0]);
+    assert_eq!(
+        plain_vols.get("volumes").unwrap().as_array().unwrap().len(),
+        0
+    );
+
+    let scan_vols = tool_result(&resps[1]);
+    let vols = scan_vols.get("volumes").unwrap().as_array().unwrap();
+    assert_eq!(vols.len(), 1, "scan should find the orphaned ext volume");
+    assert_eq!(
+        vols[0].get("filesystem").unwrap().as_str(),
+        Some("ext2/3/4")
+    );
+    assert_eq!(vols[0].get("offset").unwrap().as_u64(), Some(MIB as u64));
+}
