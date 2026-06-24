@@ -75,6 +75,12 @@ pub struct Volume {
     journal_inum: u32,
     /// Block number of each group's inode table.
     inode_tables: Vec<u64>,
+    /// Block number of each group's block bitmap.
+    block_bitmaps: Vec<u64>,
+    /// Blocks per group (`s_blocks_per_group`).
+    blocks_per_group: u32,
+    /// First data block (`s_first_data_block`: 1 for 1 KiB blocks, else 0).
+    first_data_block: u64,
 }
 
 /// Does the superblock at `vol_offset + 1024` carry the ext magic?
@@ -166,6 +172,7 @@ impl Volume {
         // Reserve conservatively; the loop stops early once reads run past the
         // source, so a corrupt `group_count` can't drive a huge reservation.
         let mut inode_tables = Vec::with_capacity((group_count as usize).min(4096));
+        let mut block_bitmaps = Vec::with_capacity((group_count as usize).min(4096));
         for g in 0..group_count {
             let desc_off = gdt_start + g * desc_size;
             let mut d = vec![0u8; desc_size as usize];
@@ -179,6 +186,15 @@ impl Volume {
                 0
             };
             inode_tables.push(lo | (hi << 32));
+
+            // Block bitmap: bg_block_bitmap_lo at offset 0, _hi at 0x20 (64-bit).
+            let bb_lo = u32::from_le_bytes([d[0], d[1], d[2], d[3]]) as u64;
+            let bb_hi = if desc_size >= 64 && is_64bit {
+                u32::from_le_bytes([d[0x20], d[0x21], d[0x22], d[0x23]]) as u64
+            } else {
+                0
+            };
+            block_bitmaps.push(bb_lo | (bb_hi << 32));
         }
         if inode_tables.is_empty() {
             bail!("ext volume has no block groups");
@@ -193,6 +209,9 @@ impl Volume {
             total_blocks,
             journal_inum,
             inode_tables,
+            block_bitmaps,
+            blocks_per_group,
+            first_data_block,
         })
     }
 
@@ -239,6 +258,47 @@ impl Volume {
     /// Total size of the volume in bytes.
     pub fn size(&self) -> u64 {
         self.total_blocks.saturating_mul(self.block_size)
+    }
+
+    /// Absolute byte ranges of the volume's **free** blocks, merged where
+    /// contiguous, from each block group's block bitmap (a clear bit means the
+    /// block is free). Carving these recovers deleted data without re-finding
+    /// blocks still allocated to live files.
+    pub fn free_extents(&self, src: &Source) -> Result<Vec<(u64, u64)>> {
+        if self.blocks_per_group == 0 {
+            return Ok(Vec::new());
+        }
+        let mut out: Vec<(u64, u64)> = Vec::new();
+        let mut cur_group = u64::MAX;
+        let mut bitmap: Vec<u8> = Vec::new();
+        let mut block = self.first_data_block;
+        while block < self.total_blocks {
+            let rel = block - self.first_data_block;
+            let group = rel / self.blocks_per_group as u64;
+            if group != cur_group {
+                let bmp_block = match self.block_bitmaps.get(group as usize) {
+                    Some(&b) => b,
+                    None => break,
+                };
+                bitmap = self.read_block(src, bmp_block)?;
+                cur_group = group;
+            }
+            let bit = (rel % self.blocks_per_group as u64) as usize;
+            // A bit past the bitmap we read is treated as allocated (safe).
+            let allocated = bitmap
+                .get(bit / 8)
+                .map(|b| b & (1 << (bit % 8)) != 0)
+                .unwrap_or(true);
+            if !allocated {
+                let start = self.offset + block * self.block_size;
+                match out.last_mut() {
+                    Some(last) if last.0 + last.1 == start => last.1 += self.block_size,
+                    _ => out.push((start, self.block_size)),
+                }
+            }
+            block += 1;
+        }
+        Ok(out)
     }
 
     /// Recover all deleted files into `out_dir`.
