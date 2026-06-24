@@ -530,6 +530,7 @@ alongside the per-file manifest.
 | elf    | ELF executable / shared object                   | section-header table offset |
 | exe    | PE executable (EXE/DLL)                          | PE/COFF section table        |
 | macho  | Mach-O binary (macOS/iOS)                        | segment + link-edit extents  |
+| dex    | Android Dalvik executable                        | file-size field in header   |
 | wasm   | WebAssembly module                               | section (LEB128) walk        |
 | ttf    | TrueType font                                    | SFNT table-directory walk    |
 | otf    | OpenType font                                    | SFNT table-directory walk    |

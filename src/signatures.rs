@@ -53,6 +53,7 @@
 //! * [`Extent::MachO`] — sum a Mach-O binary's segments and link-edit tables.
 //! * [`Extent::Regf`] — Windows registry hive: base block + hive-bins data.
 //! * [`Extent::Aac`] — walk ADTS AAC audio frames to the end of the stream.
+//! * [`Extent::Dex`] — Android Dalvik executable: `file_size` header field.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -190,6 +191,11 @@ pub enum Extent {
     /// valid and consistent sample-rate index) and several consecutive frames
     /// are required, so the short sync word cannot trigger a false carve.
     Aac,
+    /// Android Dalvik executable (`dex\n`): the header stores the total file
+    /// size as a little-endian u32 at offset 0x20, so the file ends there. The
+    /// endian tag (0x12345678 at 0x28) and header size (0x70 at 0x24) are
+    /// checked to reject a coincidental magic.
+    Dex,
 }
 
 /// A recoverable file type.
@@ -686,6 +692,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Aac,
         max_size: 200 * MB,
+    },
+    Signature {
+        name: "Android Dalvik executable (DEX)",
+        ext: "dex",
+        magic: b"dex\n",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Dex,
+        max_size: GB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.
