@@ -7,13 +7,15 @@
 //! ([`crate::apfs`]) and Btrfs volumes ([`crate::btrfs`]) are recognised for
 //! reporting (their copy-on-write design leaves no stale metadata to scavenge)
 //! but not recovered from metadata — carving (`scan`) is the fallback there.
+//! Encrypted containers ([`crate::encrypted`]: LUKS, BitLocker) are recognised
+//! so the user is told to unlock them first; nothing can be read until then.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
 use crate::source::Source;
-use crate::{apfs, btrfs, exfat, ext4, fat, hfsplus, ntfs};
+use crate::{apfs, btrfs, encrypted, exfat, ext4, fat, hfsplus, ntfs};
 
 /// Options controlling a recovery run.
 #[derive(Clone, Copy, Default)]
@@ -82,6 +84,7 @@ pub enum Volume {
     Hfs(hfsplus::Volume),
     Apfs(apfs::Volume),
     Btrfs(btrfs::Volume),
+    Encrypted(encrypted::Volume),
 }
 
 impl Volume {
@@ -95,6 +98,7 @@ impl Volume {
             Volume::Hfs(v) => v.offset,
             Volume::Apfs(v) => v.offset,
             Volume::Btrfs(v) => v.offset,
+            Volume::Encrypted(v) => v.offset,
         }
     }
 
@@ -108,6 +112,7 @@ impl Volume {
             Volume::Hfs(v) => v.size(),
             Volume::Apfs(v) => v.size(),
             Volume::Btrfs(v) => v.size(),
+            Volume::Encrypted(v) => v.size(),
         }
     }
 
@@ -121,6 +126,7 @@ impl Volume {
             Volume::Hfs(v) => v.fs_label().to_string(),
             Volume::Apfs(v) => v.fs_label().to_string(),
             Volume::Btrfs(v) => v.fs_label().to_string(),
+            Volume::Encrypted(v) => v.fs_label().to_string(),
         }
     }
 
@@ -173,6 +179,7 @@ impl Volume {
             Volume::Hfs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Apfs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Btrfs(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Encrypted(v) => v.recover_deleted(src, out_dir, opts),
         }
     }
 }
@@ -217,7 +224,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ext2/3/4, HFS+, APFS, or Btrfs volume found");
+        bail!("no FAT, exFAT, NTFS, ext2/3/4, HFS+, APFS, Btrfs, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
@@ -228,6 +235,11 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     let mut boot = [0u8; 512];
     if src.read_at(offset, &mut boot)? < 512 {
         return Ok(None);
+    }
+    // Encrypted containers (LUKS/BitLocker) carry no readable filesystem; detect
+    // them first so a BitLocker boot sector is not mistaken for FAT/NTFS.
+    if let Some(v) = encrypted::detect(src, offset) {
+        return Ok(Some(Volume::Encrypted(v)));
     }
     if exfat::is_exfat_vbr(&boot) {
         if let Ok(v) = exfat::Volume::parse(src, offset) {
@@ -316,6 +328,9 @@ fn detect_gpt(src: &Source) -> Result<Vec<Volume>> {
 
 /// Parse a single volume at an explicit byte offset, trying each backend.
 pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
+    if let Some(v) = encrypted::detect(src, offset) {
+        return Ok(Volume::Encrypted(v));
+    }
     if let Ok(v) = exfat::Volume::parse(src, offset) {
         return Ok(Volume::Exfat(v));
     }
