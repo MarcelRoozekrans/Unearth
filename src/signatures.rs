@@ -56,6 +56,7 @@
 //! * [`Extent::Dex`] — Android Dalvik executable: `file_size` header field.
 //! * [`Extent::Icc`] — ICC colour profile: total size in the profile header.
 //! * [`Extent::Ar`] — Unix `ar` archive (`.a`/`.deb`): walk the member chain.
+//! * [`Extent::Shp`] — ESRI Shapefile: total length (in 16-bit words) in header.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -210,6 +211,11 @@ pub enum Extent {
     /// the archive's end) and carrying its data size as a decimal field; member
     /// data is padded to an even length.
     Ar,
+    /// ESRI Shapefile (`.shp`/`.shx`): the 100-byte header stores the total file
+    /// length as a big-endian u32 at offset 24, counted in 16-bit words, so the
+    /// file ends at `length * 2`. The file code (9994 at offset 0) and version
+    /// (1000 at offset 28) are checked to reject a coincidental magic.
+    Shp,
 }
 
 /// A recoverable file type.
@@ -732,6 +738,15 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::Ar,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "ESRI Shapefile",
+        ext: "shp",
+        magic: &[0x00, 0x00, 0x27, 0x0A], // file code 9994 (big-endian)
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Shp,
         max_size: 2 * GB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
