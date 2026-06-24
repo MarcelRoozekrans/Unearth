@@ -39,6 +39,8 @@
 //! * [`Extent::Ttc`] — walk a TrueType Collection's member font directories.
 //! * [`Extent::Rar`] — walk a RAR archive's block chain (v4 and v5) to the
 //!   end-of-archive block.
+//! * [`Extent::Zstd`] — walk a Zstandard frame's data blocks to the last block
+//!   (plus the optional content checksum).
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -123,6 +125,10 @@ pub enum Extent {
     /// own header and data sizes — to the end-of-archive marker block. Handles
     /// both the classic v4 layout and the v5 variable-length-integer layout.
     Rar,
+    /// Zstandard frame: parse the frame header, then walk the data blocks (each
+    /// a 3-byte header giving its size and a last-block flag) to the final
+    /// block, adding the 4-byte content checksum when the header flags one.
+    Zstd,
 }
 
 /// A recoverable file type.
@@ -336,6 +342,15 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::Rar,
+        max_size: 8 * GB,
+    },
+    Signature {
+        name: "Zstandard compressed",
+        ext: "zst",
+        magic: &[0x28, 0xB5, 0x2F, 0xFD],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Zstd,
         max_size: 8 * GB,
     },
     // HEIC/HEIF brands share the `ftyp` magic with MP4, so they must come first
