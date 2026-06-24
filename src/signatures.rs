@@ -47,6 +47,7 @@
 //!   sections, and image data (raw or RLE).
 //! * [`Extent::Wmf`] — read a Windows Metafile's `mtSize` (total size in words).
 //! * [`Extent::Djvu`] — read a DjVu document's IFF `FORM` length.
+//! * [`Extent::Evtx`] — size a Windows Event Log from its chunk count.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -151,6 +152,9 @@ pub enum Extent {
     /// DjVu document (`AT&TFORM` + IFF `FORM`): the big-endian FORM length at
     /// offset 8 covers everything after it, so the file ends at `12 + length`.
     Djvu,
+    /// Windows Event Log (`ElfFile\0`): a 4096-byte file header records the
+    /// number of 64 KiB chunks, so the file ends at `4096 + chunks * 65536`.
+    Evtx,
 }
 
 /// A recoverable file type.
@@ -441,6 +445,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Djvu,
         max_size: 512 * MB,
+    },
+    Signature {
+        name: "Windows Event Log",
+        ext: "evtx",
+        magic: b"ElfFile\x00",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Evtx,
+        max_size: 2 * GB,
     },
     // HEIC/HEIF brands share the `ftyp` magic with MP4, so they must come first
     // and use a secondary brand tag (at offset 8 in the file => 4 past `ftyp`).
