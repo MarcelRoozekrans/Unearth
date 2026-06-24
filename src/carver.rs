@@ -511,6 +511,7 @@ fn file_length(
         Extent::Aac => Ok(aac_length(source, file_start, limit)?),
         Extent::Dex => Ok(dex_length(source, file_start, limit)?),
         Extent::Icc => Ok(icc_length(source, file_start, limit)?),
+        Extent::Ar => Ok(ar_length(source, file_start, limit)?),
     }
 }
 
@@ -2625,6 +2626,57 @@ fn icc_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(size))
+}
+
+/// Unix `ar` archive length. After the 8-byte `!<arch>\n` global header, walk
+/// the member chain: each member has a 60-byte header ending in the `` `\n ``
+/// sentinel (at offset 58) and carrying its data size as a decimal field at
+/// offset 48; member data is padded to an even length. The walk stops at the
+/// first header without the sentinel — that is the end of the archive — so the
+/// length is exact. At least one valid member is required to reject a stray
+/// magic.
+fn ar_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const GLOBAL: u64 = 8;
+    let avail = limit.saturating_sub(file_start);
+    let mut g = [0u8; 8];
+    if source.read_at(file_start, &mut g)? < 8 || &g != b"!<arch>\n" {
+        return Ok(None);
+    }
+    let mut pos = GLOBAL;
+    let mut members = 0u64;
+    loop {
+        if pos.saturating_add(60) > avail {
+            break;
+        }
+        let mut hdr = [0u8; 60];
+        if source.read_at(file_start + pos, &mut hdr)? < 60 {
+            break;
+        }
+        // Every member header ends with the "`\n" sentinel; its absence marks
+        // the end of the archive (or a coincidental magic).
+        if &hdr[58..60] != b"`\n" {
+            break;
+        }
+        // Data size: a decimal value, left-justified and space-padded to 10.
+        let size = match std::str::from_utf8(&hdr[48..58])
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+        {
+            Some(s) => s,
+            None => break,
+        };
+        let padded = size.saturating_add(size & 1); // data padded to even length
+        let next = pos.saturating_add(60).saturating_add(padded);
+        if next > avail {
+            break;
+        }
+        pos = next;
+        members += 1;
+    }
+    if members == 0 {
+        return Ok(None);
+    }
+    Ok(Some(pos))
 }
 
 /// Search forward from `file_start` for `marker`, returning the file length
