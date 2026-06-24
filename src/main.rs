@@ -615,9 +615,14 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
         human_bytes(source.size)
     );
 
-    let volumes = match args.offset {
-        Some(off) => vec![recover::parse_at(&source, off)?],
-        None => recover::detect(&source)?,
+    let volumes = if args.scan {
+        eprintln!("Scanning the whole source for volumes (this may take a while)...");
+        recover::scan_lost_volumes(&source, args.scan_step, |_| {})?
+    } else {
+        match args.offset {
+            Some(off) => vec![recover::parse_at(&source, off)?],
+            None => recover::detect(&source)?,
+        }
     };
     eprintln!("Found {} volume(s).", volumes.len());
 
@@ -729,9 +734,14 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
 
     // Pass 1: filesystem-aware undelete (restores names and paths).
     let named_dir = args.output.join("named");
-    let volumes = match args.offset {
-        Some(off) => vec![recover::parse_at(&source, off)?],
-        None => recover::detect(&source).unwrap_or_default(),
+    let volumes = if args.scan {
+        eprintln!("Scanning the whole source for volumes (this may take a while)...");
+        recover::scan_lost_volumes(&source, args.scan_step, |_| {})?
+    } else {
+        match args.offset {
+            Some(off) => vec![recover::parse_at(&source, off)?],
+            None => recover::detect(&source).unwrap_or_default(),
+        }
     };
     if volumes.is_empty() {
         eprintln!("No supported filesystem detected; carving only.");

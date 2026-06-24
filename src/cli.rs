@@ -185,6 +185,16 @@ pub struct RecoverArgs {
     #[arg(long, value_name = "BYTES")]
     pub offset: Option<u64>,
 
+    /// Run the undelete pass over every volume found by a whole-source signature
+    /// scan, not just the partition table — for a disk whose table is lost or
+    /// corrupt. Cannot be combined with --offset.
+    #[arg(long, conflicts_with = "offset")]
+    pub scan: bool,
+
+    /// Alignment (in bytes) at which `--scan` probes for a volume (default 1 MiB).
+    #[arg(long, value_name = "BYTES", default_value_t = 1024 * 1024)]
+    pub scan_step: u64,
+
     /// Restrict the carving pass to these file types (extensions). Repeatable.
     #[arg(short, long = "type", value_name = "EXT")]
     pub types: Vec<String>,
@@ -263,6 +273,16 @@ pub struct UndeleteArgs {
     /// auto-detected (bare volume, or a GPT or MBR partition table).
     #[arg(long, value_name = "BYTES")]
     pub offset: Option<u64>,
+
+    /// Recover from every volume found by a whole-source signature scan, not
+    /// just the partition table — for a disk whose table is lost or corrupt.
+    /// Cannot be combined with --offset.
+    #[arg(long, conflicts_with = "offset")]
+    pub scan: bool,
+
+    /// Alignment (in bytes) at which `--scan` probes for a volume (default 1 MiB).
+    #[arg(long, value_name = "BYTES", default_value_t = 1024 * 1024)]
+    pub scan_step: u64,
 
     /// Ignore deleted files smaller than this many bytes.
     #[arg(long, value_name = "BYTES", default_value_t = 0)]

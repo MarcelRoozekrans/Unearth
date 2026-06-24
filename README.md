@@ -281,6 +281,15 @@ filerecovery undelete disk.img --offset <OFFSET> -o recovered
 filerecovery scan     disk.img --start  <OFFSET> -o recovered
 ```
 
+Or skip the offsets entirely: `undelete --scan` and `recover --scan` run the
+same signature scan and recover from **every** volume it finds, so a disk whose
+partition table is gone can be recovered in one command:
+
+```sh
+filerecovery undelete disk.img --scan -o recovered   # all lost volumes at once
+filerecovery recover  disk.img --scan -o recovered   # undelete + carve
+```
+
 A deep scan can take a while on a large device. With `--json`, the results are
 added as a `scan` array (`filesystem`/`offset`/`size`).
 
