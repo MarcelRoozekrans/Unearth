@@ -546,6 +546,7 @@ alongside the per-file manifest.
 | evtx   | Windows Event Log                                | chunk count in header       |
 | regf   | Windows registry hive                            | base block + hive-bins size |
 | icc    | ICC colour profile                               | size field in profile header |
+| shp    | ESRI Shapefile                                   | length field in header (BE)  |
 
 Run `filerecovery list-types` to see what your build supports.
 

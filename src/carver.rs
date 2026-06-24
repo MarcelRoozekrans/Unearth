@@ -512,6 +512,7 @@ fn file_length(
         Extent::Dex => Ok(dex_length(source, file_start, limit)?),
         Extent::Icc => Ok(icc_length(source, file_start, limit)?),
         Extent::Ar => Ok(ar_length(source, file_start, limit)?),
+        Extent::Shp => Ok(shp_length(source, file_start, limit)?),
     }
 }
 
@@ -2677,6 +2678,29 @@ fn ar_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>
         return Ok(None);
     }
     Ok(Some(pos))
+}
+
+/// ESRI Shapefile (`.shp`/`.shx`) length. The 100-byte header stores the total
+/// file length as a big-endian u32 at offset 24, counted in 16-bit words, so the
+/// file ends at `length * 2`. The file code (9994 at offset 0) and version
+/// (1000, little-endian, at offset 28) are checked to reject a coincidental
+/// magic, and the length must cover at least the header.
+fn shp_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 32];
+    if source.read_at(file_start, &mut h)? < 32 {
+        return Ok(None);
+    }
+    let file_code = u32::from_be_bytes([h[0], h[1], h[2], h[3]]);
+    let version = u32::from_le_bytes([h[28], h[29], h[30], h[31]]);
+    if file_code != 9994 || version != 1000 {
+        return Ok(None);
+    }
+    let length_words = u32::from_be_bytes([h[24], h[25], h[26], h[27]]) as u64;
+    let size = length_words.saturating_mul(2);
+    if size < 100 || file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
 }
 
 /// Search forward from `file_start` for `marker`, returning the file length

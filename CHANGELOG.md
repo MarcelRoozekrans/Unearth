@@ -39,8 +39,9 @@ formats.
   extents), Windows registry hives (`regf`, base block + hive-bins data
   size), AAC audio (ADTS frame-length walk), Android Dalvik executables
   (DEX, file-size header field), ICC colour profiles (size in the profile
-  header), and Unix `ar` archives (`.deb`/`.a`, member-chain walk) — each with
-  a deterministic length strategy.
+  header), Unix `ar` archives (`.deb`/`.a`, member-chain walk), and ESRI
+  Shapefiles (`.shp`, length field in the header) — each with a deterministic
+  length strategy.
 
 ## [0.2.0] - 2026-06-23
 
