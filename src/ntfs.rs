@@ -169,6 +169,49 @@ impl Volume {
         self.volume_size
     }
 
+    /// Absolute byte ranges of the volume's **free** clusters, merged where
+    /// contiguous, from the `$Bitmap` metadata file (MFT record 6). A clear bit
+    /// means the cluster is free, so carving those ranges recovers deleted data
+    /// without re-finding clusters still allocated to live files.
+    pub fn free_extents(&self, src: &Source) -> Result<Vec<(u64, u64)>> {
+        const BITMAP_RECORD: u64 = 6;
+        const MAX_BITMAP: u64 = 256 * 1024 * 1024;
+
+        let rec = match self.read_record(src, BITMAP_RECORD)? {
+            Some(r) => r,
+            None => return Ok(Vec::new()),
+        };
+        let data = match parse_record(&rec).and_then(|p| p.data) {
+            Some(d) => d,
+            None => return Ok(Vec::new()),
+        };
+        let bitmap = match data.kind {
+            DataKind::Resident(bytes) => bytes,
+            DataKind::NonResident(runs) => {
+                let want = data.size.min(MAX_BITMAP);
+                read_runs_range(src, self.offset, self.cluster_size, &runs, 0, want)?
+            }
+        };
+
+        let total_clusters = self.volume_size / self.cluster_size;
+        let mut out: Vec<(u64, u64)> = Vec::new();
+        for c in 0..total_clusters {
+            // A bit past the bitmap we read is treated as allocated (safe).
+            let allocated = bitmap
+                .get((c / 8) as usize)
+                .map(|b| b & (1 << (c % 8)) != 0)
+                .unwrap_or(true);
+            if !allocated {
+                let start = self.offset + c * self.cluster_size;
+                match out.last_mut() {
+                    Some(last) if last.0 + last.1 == start => last.1 += self.cluster_size,
+                    _ => out.push((start, self.cluster_size)),
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Recover all deleted files into `out_dir`.
     pub fn recover_deleted(
         &self,
