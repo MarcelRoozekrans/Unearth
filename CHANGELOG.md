@@ -4,6 +4,37 @@ All notable changes to `filerecovery` are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Recovery reach grows in three directions: every supported filesystem can now
+carve only its free space, Mac/Linux copy-on-write and encrypted volumes are
+recognised and described, lost partitions can be found and recovered without a
+partition table, and the carver gains modern archive/compression and image
+formats.
+
+### Added
+
+- **Free-space-aware carving** — `recover --unallocated` and `scan --unallocated`
+  carve only a volume's unallocated space (less noise, faster), reading the
+  allocation map for FAT, exFAT, ext2/3/4, NTFS, and HFS+/HFSX. Falls back to a
+  full-source carve, with a notice, when no map is available.
+- **HFS+/HFSX** recovery now reassembles **fragmented files** via the
+  extents-overflow B-tree and restores each file's original **folder path** from
+  the catalog hierarchy.
+- **APFS** volume enumeration and **Btrfs** detection plus **subvolume
+  enumeration** in `info`/`list_volumes` — the names of the volumes/subvolumes
+  inside the container (and the Btrfs filesystem label). Neither is recovered
+  from metadata (copy-on-write); carving remains the fallback.
+- **Encrypted-volume recognition** — LUKS (LUKS1/LUKS2) and BitLocker are named
+  by `info`/`list_volumes` so the user knows to unlock them first; they hold only
+  ciphertext and are not recovered.
+- **Lost/corrupt partition recovery** — `info --scan` finds volumes that have no
+  partition-table entry via a whole-source signature scan, and `undelete --scan`
+  / `recover --scan` recover from every volume found, in one command.
+- More **carvable types**: AIFF/AIFF-C audio, Apple ICNS icons, RAR archives
+  (v4 and v5), Zstandard (`.zst`), LZ4 (`.lz4`), Photoshop documents (PSD/PSB),
+  and Windows Metafiles (WMF) — each with a deterministic length strategy.
+
 ## [0.2.0] - 2026-06-23
 
 A large release that grows `filerecovery` from a signature carver into a
@@ -46,5 +77,6 @@ the source.
 - Initial release: signature-based file carving (`scan`) with structural
   validation, content dedup, and recovery manifests.
 
+[Unreleased]: https://github.com/MarcelRoozekrans/FileRecovery/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/MarcelRoozekrans/FileRecovery/releases/tag/v0.2.0
 [0.1.0]: https://github.com/MarcelRoozekrans/FileRecovery/releases/tag/v0.1.0
