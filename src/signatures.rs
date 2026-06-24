@@ -48,6 +48,7 @@
 //! * [`Extent::Wmf`] — read a Windows Metafile's `mtSize` (total size in words).
 //! * [`Extent::Djvu`] — read a DjVu document's IFF `FORM` length.
 //! * [`Extent::Evtx`] — size a Windows Event Log from its chunk count.
+//! * [`Extent::Rtf`] — match an RTF document's outer `{ ... }` group.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -155,6 +156,11 @@ pub enum Extent {
     /// Windows Event Log (`ElfFile\0`): a 4096-byte file header records the
     /// number of 64 KiB chunks, so the file ends at `4096 + chunks * 65536`.
     Evtx,
+    /// Rich Text Format: the document is one big `{ ... }` group, so the file
+    /// ends where the opening brace's match closes. Backslash escapes (`\{`,
+    /// `\}`, `\\`) are honoured. (Embedded `\bin` binary blobs, which are
+    /// uncommon, are not specially skipped.)
+    Rtf,
 }
 
 /// A recoverable file type.
@@ -454,6 +460,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Evtx,
         max_size: 2 * GB,
+    },
+    Signature {
+        name: "Rich Text Format",
+        ext: "rtf",
+        magic: b"{\\rtf1",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Rtf,
+        max_size: 100 * MB,
     },
     // HEIC/HEIF brands share the `ftyp` magic with MP4, so they must come first
     // and use a secondary brand tag (at offset 8 in the file => 4 past `ftyp`).

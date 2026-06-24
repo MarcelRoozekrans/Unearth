@@ -504,6 +504,7 @@ fn file_length(
         Extent::Wmf => Ok(wmf_length(source, file_start, limit)?),
         Extent::Djvu => Ok(djvu_length(source, file_start, limit)?),
         Extent::Evtx => Ok(evtx_length(source, file_start, limit)?),
+        Extent::Rtf => Ok(rtf_length(source, file_start, limit)?),
     }
 }
 
@@ -824,6 +825,44 @@ fn lz4_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(pos))
+}
+
+/// RTF document length. The whole document is a single `{ ... }` group; the
+/// file ends where the opening brace's match closes. A backslash escapes the
+/// next byte (`\{`, `\}`, `\\`), so those do not affect the brace depth.
+fn rtf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const CHUNK: usize = 1 << 16;
+    let avail = limit.saturating_sub(file_start);
+    let mut buf = vec![0u8; CHUNK];
+    let mut pos = 0u64;
+    let mut depth: i64 = 0;
+    let mut after_backslash = false;
+    while pos < avail {
+        let want = (avail - pos).min(CHUNK as u64) as usize;
+        let n = source.read_at(file_start + pos, &mut buf[..want])?;
+        if n == 0 {
+            break;
+        }
+        for (k, &b) in buf[..n].iter().enumerate() {
+            if after_backslash {
+                after_backslash = false;
+            } else if b == b'\\' {
+                after_backslash = true;
+            } else if b == b'{' {
+                depth += 1;
+            } else if b == b'}' {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(Some(pos + k as u64 + 1));
+                }
+                if depth < 0 {
+                    return Ok(None);
+                }
+            }
+        }
+        pos += n as u64;
+    }
+    Ok(None)
 }
 
 /// Windows Event Log (EVTX) length. A 4096-byte `ElfFile` header records the
