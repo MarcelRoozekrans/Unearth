@@ -568,6 +568,11 @@ Common to both strategies:
   it), but it is not recovered from metadata: its copy-on-write design reclaims
   the object map and B-trees through checkpoints, leaving no stale record to
   scavenge. Use `scan` (carving) to recover data from an APFS container.
+- **Btrfs** is *recognised* and its **filesystem label** and size are reported
+  by `info`/`list_volumes`, but — like APFS — its copy-on-write design leaves no
+  stale metadata to scavenge, so it is not recovered from metadata. Use `scan`
+  (carving). (Subvolume enumeration, which needs the chunk/root-tree walk, is
+  not done yet.)
 
 `scan` (carving) specifics:
 

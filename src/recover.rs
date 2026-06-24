@@ -4,15 +4,16 @@
 //! appropriate recovery backend ([`crate::fat`], [`crate::exfat`],
 //! [`crate::ntfs`], [`crate::ext4`], or [`crate::hfsplus`]), so the `undelete`
 //! command can treat every supported filesystem the same way. APFS containers
-//! ([`crate::apfs`]) are recognised for reporting but not recovered from
-//! metadata — carving (`scan`) is the fallback there.
+//! ([`crate::apfs`]) and Btrfs volumes ([`crate::btrfs`]) are recognised for
+//! reporting (their copy-on-write design leaves no stale metadata to scavenge)
+//! but not recovered from metadata — carving (`scan`) is the fallback there.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
 use crate::source::Source;
-use crate::{apfs, exfat, ext4, fat, hfsplus, ntfs};
+use crate::{apfs, btrfs, exfat, ext4, fat, hfsplus, ntfs};
 
 /// Options controlling a recovery run.
 #[derive(Clone, Copy, Default)]
@@ -80,6 +81,7 @@ pub enum Volume {
     Ext(ext4::Volume),
     Hfs(hfsplus::Volume),
     Apfs(apfs::Volume),
+    Btrfs(btrfs::Volume),
 }
 
 impl Volume {
@@ -92,6 +94,7 @@ impl Volume {
             Volume::Ext(v) => v.offset,
             Volume::Hfs(v) => v.offset,
             Volume::Apfs(v) => v.offset,
+            Volume::Btrfs(v) => v.offset,
         }
     }
 
@@ -104,6 +107,7 @@ impl Volume {
             Volume::Ext(v) => v.size(),
             Volume::Hfs(v) => v.size(),
             Volume::Apfs(v) => v.size(),
+            Volume::Btrfs(v) => v.size(),
         }
     }
 
@@ -116,6 +120,7 @@ impl Volume {
             Volume::Ext(_) => "ext2/3/4".to_string(),
             Volume::Hfs(v) => v.fs_label().to_string(),
             Volume::Apfs(v) => v.fs_label().to_string(),
+            Volume::Btrfs(v) => v.fs_label().to_string(),
         }
     }
 
@@ -125,6 +130,15 @@ impl Volume {
         match self {
             Volume::Apfs(v) => v.volume_names().to_vec(),
             _ => Vec::new(),
+        }
+    }
+
+    /// The user-set filesystem label, when the backend reads one (Btrfs today).
+    /// `None` when there is no label or the filesystem has none.
+    pub fn volume_label(&self) -> Option<String> {
+        match self {
+            Volume::Btrfs(v) if !v.label().is_empty() => Some(v.label().to_string()),
+            _ => None,
         }
     }
 
@@ -157,6 +171,7 @@ impl Volume {
             Volume::Ext(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Hfs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Apfs(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Btrfs(v) => v.recover_deleted(src, out_dir, opts),
         }
     }
 }
@@ -201,7 +216,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ext2/3/4, HFS+, or APFS volume found");
+        bail!("no FAT, exFAT, NTFS, ext2/3/4, HFS+, APFS, or Btrfs volume found");
     }
     Ok(volumes)
 }
@@ -236,6 +251,11 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     if apfs::is_apfs(src, offset) {
         if let Ok(v) = apfs::Volume::parse(src, offset) {
             return Ok(Some(Volume::Apfs(v)));
+        }
+    }
+    if btrfs::is_btrfs(src, offset) {
+        if let Ok(v) = btrfs::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Btrfs(v)));
         }
     }
     if fat::looks_like_fat_vbr(&boot) {
@@ -314,6 +334,11 @@ pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     if apfs::is_apfs(src, offset) {
         if let Ok(v) = apfs::Volume::parse(src, offset) {
             return Ok(Volume::Apfs(v));
+        }
+    }
+    if btrfs::is_btrfs(src, offset) {
+        if let Ok(v) = btrfs::Volume::parse(src, offset) {
+            return Ok(Volume::Btrfs(v));
         }
     }
     let v = fat::Volume::parse(src, offset)?;

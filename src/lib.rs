@@ -43,6 +43,7 @@
 //! ```
 
 pub mod apfs;
+pub mod btrfs;
 pub mod carver;
 pub mod exfat;
 pub mod ext4;

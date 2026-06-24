@@ -473,6 +473,13 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                         ("size", n(v.size())),
                         ("deleted", del),
                         (
+                            "label",
+                            match v.volume_label() {
+                                Some(l) => s(l),
+                                None => Json::Null,
+                            },
+                        ),
+                        (
                             "contained_volumes",
                             Json::Arr(v.contained_volumes().into_iter().map(s).collect()),
                         ),
