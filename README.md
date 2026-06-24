@@ -487,6 +487,7 @@ alongside the per-file manifest.
 | gif    | GIF image (87a/89a)                              | trailer `00 3B`             |
 | bmp    | BMP image                                        | size field in header        |
 | psd    | Photoshop document (PSD/PSB)                      | header + sections + image   |
+| glb    | glTF binary (3D model)                           | size field in header        |
 | ico    | Windows icon                                     | image-directory walk        |
 | cur    | Windows cursor                                   | image-directory walk        |
 | ani    | Windows animated cursor                          | RIFF size field             |
