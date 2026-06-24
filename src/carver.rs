@@ -508,6 +508,7 @@ fn file_length(
         Extent::Mp3 => Ok(mp3_length(source, file_start, limit)?),
         Extent::MachO => Ok(macho_length(source, file_start, limit)?),
         Extent::Regf => Ok(regf_length(source, file_start, limit)?),
+        Extent::Aac => Ok(aac_length(source, file_start, limit)?),
     }
 }
 
@@ -2532,6 +2533,53 @@ fn regf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
         return Ok(None);
     }
     Ok(Some(total))
+}
+
+/// ADTS AAC length. Each frame begins with a 7-byte header (9 with CRC) whose
+/// bytes 3..6 carry a 13-bit frame length (header included), so the stream is
+/// walked frame to frame to its end. Each header is validated — sync word
+/// 0xFFF, layer bits 00, a sample-rate index in range (0..=12) and consistent
+/// across the stream — and at least four consecutive valid frames are required,
+/// so the short sync word cannot trigger a false carve.
+fn aac_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MIN_FRAMES: u64 = 4;
+    let avail = limit.saturating_sub(file_start);
+    let mut pos = 0u64;
+    let mut frames = 0u64;
+    let mut ref_sr: Option<u8> = None;
+    loop {
+        let mut hdr = [0u8; 7];
+        if source.read_at(file_start + pos, &mut hdr)? < 7 {
+            break;
+        }
+        // Sync word 0xFFF and layer bits (byte1 bits 2..1) == 00.
+        if hdr[0] != 0xFF || (hdr[1] & 0xF6) != 0xF0 {
+            break;
+        }
+        let sr_idx = (hdr[2] >> 2) & 0x0F;
+        if sr_idx > 12 {
+            break;
+        }
+        match ref_sr {
+            Some(r) if r != sr_idx => break,
+            _ => ref_sr = Some(sr_idx),
+        }
+        let frame_len =
+            (((hdr[3] & 0x03) as u64) << 11) | ((hdr[4] as u64) << 3) | ((hdr[5] as u64) >> 5);
+        if frame_len < 7 {
+            break;
+        }
+        let next = pos.saturating_add(frame_len);
+        if next > avail {
+            break;
+        }
+        pos = next;
+        frames += 1;
+    }
+    if frames < MIN_FRAMES {
+        return Ok(None);
+    }
+    Ok(Some(pos))
 }
 
 /// Search forward from `file_start` for `marker`, returning the file length

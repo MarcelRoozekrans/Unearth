@@ -517,6 +517,7 @@ alongside the per-file manifest.
 | sqlite | SQLite database                                 | page size × page count      |
 | wav    | WAV audio                                        | RIFF size field             |
 | mp3    | MP3 audio                                        | ID3v2 tag + MPEG-frame walk |
+| aac    | AAC audio (ADTS)                                 | ADTS frame-length walk      |
 | avi    | AVI video                                        | RIFF size field             |
 | aiff   | AIFF audio                                        | IFF FORM size field (BE)     |
 | aifc   | AIFF-C audio                                      | IFF FORM size field (BE)     |
