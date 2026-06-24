@@ -551,14 +551,15 @@ Common to both strategies:
   journal has wrapped past it (or the inode was reused), the file is
   unrecoverable by metadata — use `scan`.
 - HFS+ only: recovers deleted files from stale **catalog** records left in
-  B-tree leaf-node free space, following the eight extents stored inline in the
-  record. Files fragmented beyond those (tail in the extents-overflow B-tree),
-  or whose catalog record has been overwritten, are not recovered by metadata —
-  use `scan`. Recovered files are restored by name (parent-folder paths are not
-  rebuilt).
-- **APFS** is *recognised* (so `info`/`list_volumes` report the container and its
-  size) but not recovered from metadata: its copy-on-write design reclaims the
-  object map and B-trees through checkpoints, leaving no stale record to
+  B-tree leaf-node free space, with original folder paths rebuilt from the live
+  catalog hierarchy. It follows the eight extents stored inline in the record
+  plus any tail extents from the **extents-overflow B-tree**, so fragmented
+  files come back whole. A file whose catalog record has been overwritten, or
+  whose tail extents survive nowhere, is not recovered by metadata — use `scan`.
+- **APFS** is *recognised* and its contained **volumes are listed by name** (so
+  `info`/`list_volumes` report the container, its size, and the volumes inside
+  it), but it is not recovered from metadata: its copy-on-write design reclaims
+  the object map and B-trees through checkpoints, leaving no stale record to
   scavenge. Use `scan` (carving) to recover data from an APFS container.
 
 `scan` (carving) specifics:
