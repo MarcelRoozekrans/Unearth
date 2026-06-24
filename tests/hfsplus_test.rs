@@ -67,6 +67,24 @@ fn dry_run_reports_without_writing() {
 }
 
 #[test]
+fn recovers_a_fragmented_file_via_the_extents_overflow_tree() {
+    // The file's tail lives in a non-contiguous extent recorded only in the
+    // extents-overflow B-tree, not inline in the catalog record.
+    let payload: Vec<u8> = (0..800u32).map(|i| (i % 251) as u8).collect();
+    let (tmp, img) = write_img(&common::hfsplus_fragmented_volume("split.bin", &payload));
+    let src = Source::open(&img).unwrap();
+
+    let vols = recover::detect(&src).unwrap();
+    let out = tmp.path().join("out");
+    let stats = vols[0]
+        .recover_deleted(&src, &out, &RecoverOptions::default())
+        .unwrap();
+
+    assert_eq!(stats.recovered, 1, "the fragmented file is fully recovered");
+    assert_eq!(std::fs::read(out.join("split.bin")).unwrap(), payload);
+}
+
+#[test]
 fn free_extents_reads_the_allocation_bitmap() {
     // The builder marks the volume header, allocation, catalog, and data blocks
     // allocated (MSB-first) and leaves the rest free.

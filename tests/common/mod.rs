@@ -174,6 +174,96 @@ pub fn hfsplus_volume(name: &str, payload: &[u8]) -> Vec<u8> {
     v
 }
 
+/// A bare HFS+ volume with one deleted file whose data fork is fragmented into
+/// two non-contiguous extents: the first (a full block) is recorded inline in
+/// the catalog record, the second (the tail) only in the **extents-overflow**
+/// B-tree. Recovering it requires following the overflow tree. `payload` must be
+/// longer than one block (512 B) and at most two blocks so the tail fits one.
+pub fn hfsplus_fragmented_volume(name: &str, payload: &[u8]) -> Vec<u8> {
+    assert!(
+        (HFS_BS + 1..=2 * HFS_BS).contains(&payload.len()),
+        "fragmented payload must span exactly two blocks"
+    );
+    let name16: Vec<u16> = name.encode_utf16().collect();
+    let name_len = name16.len();
+
+    // Block layout: header @2, catalog @8-9, overflow @10-11, data parts @14,16.
+    const CATALOG_BLOCK: usize = 8;
+    const OVERFLOW_BLOCK: usize = 10;
+    const PART1_BLOCK: usize = 14;
+    const PART2_BLOCK: usize = 16; // non-contiguous with PART1
+    let total_blocks = 18;
+    let mut v = vec![0u8; total_blocks * HFS_BS];
+
+    // Volume header at offset 1024.
+    let vh = 1024;
+    put_be16(&mut v, vh, 0x482B); // "H+"
+    put_be16(&mut v, vh + 2, 4); // version
+    put_be32(&mut v, vh + 40, HFS_BS as u32);
+    put_be32(&mut v, vh + 44, total_blocks as u32);
+    // Catalog fork: two nodes at CATALOG_BLOCK.
+    put_be64(&mut v, vh + 272, (2 * HFS_NODE_SIZE) as u64);
+    put_be32(&mut v, vh + 284, 2);
+    put_be32(&mut v, vh + 288, CATALOG_BLOCK as u32);
+    put_be32(&mut v, vh + 292, 2);
+    // Extents-overflow fork at offset 192: two nodes at OVERFLOW_BLOCK.
+    put_be64(&mut v, vh + 192, (2 * HFS_NODE_SIZE) as u64);
+    put_be32(&mut v, vh + 204, 2); // totalBlocks
+    put_be32(&mut v, vh + 208, OVERFLOW_BLOCK as u32); // extent start
+    put_be32(&mut v, vh + 212, 2); // extent count
+
+    // Catalog node 0 (header): only the node size matters.
+    let cn0 = CATALOG_BLOCK * HFS_BS;
+    v[cn0 + 8] = 1; // header node
+    put_be16(&mut v, cn0 + 32, HFS_NODE_SIZE as u16);
+    // Catalog node 1 (leaf): the deleted record sits in free space.
+    let cn1 = cn0 + HFS_NODE_SIZE;
+    v[cn1 + 8] = 0xFF; // leaf node
+    put_be16(&mut v, cn1 + 10, 0); // numRecords = 0
+    put_be16(&mut v, cn1 + HFS_NODE_SIZE - 2, 14); // free space starts at 14
+
+    let key = cn1 + 14;
+    let key_len = 6 + 2 * name_len;
+    put_be16(&mut v, key, key_len as u16);
+    put_be32(&mut v, key + 2, 2); // parentID = root
+    put_be16(&mut v, key + 6, name_len as u16);
+    for (i, &u) in name16.iter().enumerate() {
+        put_be16(&mut v, key + 8 + i * 2, u);
+    }
+    let rec = key + 2 + key_len;
+    put_be16(&mut v, rec, 0x0002); // file record
+    put_be32(&mut v, rec + 8, 16); // fileID
+    put_be32(&mut v, rec + 16, 2_082_844_800 + 1_000_000);
+    put_be64(&mut v, rec + 88, payload.len() as u64); // logical size
+    put_be32(&mut v, rec + 104, PART1_BLOCK as u32); // inline extent: first block
+    put_be32(&mut v, rec + 108, 1);
+
+    // Extents-overflow node 0 (header) + node 1 (leaf) with one live record
+    // mapping fork offset block 1 (after the inline extent) to PART2_BLOCK.
+    let on0 = OVERFLOW_BLOCK * HFS_BS;
+    v[on0 + 8] = 1; // header node
+    put_be16(&mut v, on0 + 32, HFS_NODE_SIZE as u16);
+    let on1 = on0 + HFS_NODE_SIZE;
+    v[on1 + 8] = 0xFF; // leaf node
+    put_be16(&mut v, on1 + 10, 1); // numRecords = 1
+    put_be16(&mut v, on1 + HFS_NODE_SIZE - 2, 14); // offset[0] -> record at 14
+    let er = on1 + 14;
+    put_be16(&mut v, er, 10); // HFSPlusExtentKey length
+    v[er + 2] = 0; // forkType = data
+    put_be32(&mut v, er + 4, 16); // fileID
+    put_be32(&mut v, er + 8, 1); // startBlock = 1 (after the inline block)
+    put_be32(&mut v, er + 12, PART2_BLOCK as u32); // extent start
+    put_be32(&mut v, er + 16, 1); // extent count
+
+    // File data: first full block, then the tail in the non-contiguous block.
+    let p1 = PART1_BLOCK * HFS_BS;
+    v[p1..p1 + HFS_BS].copy_from_slice(&payload[..HFS_BS]);
+    let tail = &payload[HFS_BS..];
+    let p2 = PART2_BLOCK * HFS_BS;
+    v[p2..p2 + tail.len()].copy_from_slice(tail);
+    v
+}
+
 // --- FAT32 --------------------------------------------------------------
 
 /// A bare FAT32 volume with a cluster-chained root directory containing one

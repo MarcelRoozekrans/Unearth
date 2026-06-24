@@ -10,18 +10,20 @@
 //!
 //! This backend reads the catalog file, walks every leaf node, and scans the
 //! free space below the live records for stale **file records** that pass a
-//! strict structural check. For each one whose data fork is fully described by
-//! its inline extents, it reconstructs the file with its original name.
+//! strict structural check. For each one it reconstructs the file with its
+//! original name, following the eight extents stored inline in the catalog
+//! record and, for a file fragmented beyond them, the remaining extents from
+//! the **extents-overflow B-tree** (keyed by the file's CNID).
 //!
 //! ## What this cannot do
 //!
-//! Only the eight extents stored inline in the catalog record are followed, so a
-//! file fragmented beyond them (its tail lived in the extents-overflow B-tree)
-//! is reported as skipped rather than written truncated. Files whose catalog
-//! record has already been overwritten in the node's free space are gone — fall
-//! back to `scan` (carving).
+//! A file whose tail extents are not recorded in the extents-overflow tree —
+//! because that tree was itself rewritten after deletion — cannot be fully
+//! reconstructed and is reported as skipped rather than written truncated.
+//! Files whose catalog record has already been overwritten in the node's free
+//! space are gone — fall back to `scan` (carving).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -63,8 +65,26 @@ pub struct Volume {
     /// Allocation-block extents of the allocation file (the volume bitmap),
     /// inline only. Empty when the fork could not be parsed plausibly.
     allocation_extents: Vec<(u32, u32)>,
+    /// Allocation-block extents of the extents-overflow B-tree file, inline
+    /// only. Empty when the fork is absent or implausible.
+    extents_overflow_extents: Vec<(u32, u32)>,
+    extents_overflow_size: u64,
     hfsx: bool,
 }
+
+/// Additional data-fork extents keyed by file CNID, recovered from the
+/// extents-overflow B-tree and already concatenated in fork order. These are
+/// the 9th-and-later extents of a file fragmented beyond the eight stored
+/// inline in its catalog record.
+type OverflowExtents = HashMap<u32, Vec<(u32, u32)>>;
+
+/// One parsed extents-overflow leaf record: `(forkType, fileID, startBlock,
+/// extents)`.
+type ExtentRecord = (u8, u32, u32, Vec<(u32, u32)>);
+
+/// Pending overflow runs for one file before ordering: `(startBlock key,
+/// extents)` pairs, sorted by key and flattened into [`OverflowExtents`].
+type PendingRuns = Vec<(u32, Vec<(u32, u32)>)>;
 
 /// Does the volume header at `vol_offset + 1024` carry an HFS+ or HFSX signature?
 pub fn is_hfsplus(src: &Source, vol_offset: u64) -> bool {
@@ -146,6 +166,28 @@ impl Volume {
             allocation_extents.push((start, count));
         }
 
+        // Extents-overflow file fork at offset 192: logicalSize @192, extents
+        // @208 (8 x start,count). It records the 9th-and-later extents of
+        // fragmented forks. Parsed non-fatally — without it, only the eight
+        // inline catalog extents are followed.
+        let extents_overflow_size = be64(&vh, 192);
+        let mut extents_overflow_extents = Vec::new();
+        for i in 0..8 {
+            let o = 208 + i * 8;
+            let start = be32(&vh, o);
+            let count = be32(&vh, o + 4);
+            if count == 0 {
+                break;
+            }
+            if start as u64 >= total_blocks
+                || start as u64 + count as u64 > total_blocks.saturating_add(1)
+            {
+                extents_overflow_extents.clear();
+                break;
+            }
+            extents_overflow_extents.push((start, count));
+        }
+
         Ok(Volume {
             offset,
             block_size,
@@ -153,6 +195,8 @@ impl Volume {
             catalog_extents,
             catalog_size,
             allocation_extents,
+            extents_overflow_extents,
+            extents_overflow_size,
             hfsx,
         })
     }
@@ -258,6 +302,10 @@ impl Volume {
             }
         }
 
+        // Additional extents for fragmented files live in the extents-overflow
+        // B-tree; read it once so each recovered file can follow its tail.
+        let overflow = self.read_extents_overflow(src);
+
         // Pass 2: scan each leaf node's free space for stale file records.
         let vol_bytes = self.size();
         let mut stats = RecoverStats::default();
@@ -294,7 +342,7 @@ impl Volume {
                     stats.record_recovered(rel, size, None);
                     continue;
                 }
-                match self.write_file(src, out_dir, &rel, &rec) {
+                match self.write_file(src, out_dir, &rel, &rec, &overflow) {
                     Some((written, digest)) if written == size => {
                         stats.record_recovered(rel, size, Some(digest))
                     }
@@ -341,14 +389,24 @@ impl Volume {
         Ok(buf)
     }
 
-    /// Reconstruct a file's bytes from its inline data-fork extents. Returns
-    /// `None` if the inline extents do not cover the whole logical size (the
-    /// file was fragmented into the extents-overflow file we do not read).
-    fn read_file_data(&self, src: &Source, rec: &FileRecord) -> Option<Vec<u8>> {
+    /// Reconstruct a file's bytes from its data-fork extents: the eight stored
+    /// inline in the catalog record, followed by any from the extents-overflow
+    /// B-tree (`overflow`) for a fragmented file. Returns `None` if the combined
+    /// extents still do not cover the whole logical size.
+    fn read_file_data(
+        &self,
+        src: &Source,
+        rec: &FileRecord,
+        overflow: &OverflowExtents,
+    ) -> Option<Vec<u8>> {
+        let mut extents = rec.extents.clone();
+        if let Some(extra) = overflow.get(&rec.file_id) {
+            extents.extend_from_slice(extra);
+        }
         let mut data: Vec<u8> =
             Vec::with_capacity(rec.logical_size.min(MAX_CATALOG as u64) as usize);
         let mut remaining = rec.logical_size;
-        for &(start, count) in &rec.extents {
+        for &(start, count) in &extents {
             if remaining == 0 {
                 break;
             }
@@ -372,9 +430,100 @@ impl Volume {
             }
         }
         if remaining > 0 {
-            return None; // inline extents did not cover the file
+            return None; // extents (inline + overflow) did not cover the file
         }
         Some(data)
+    }
+
+    /// Read the extents-overflow B-tree and index its **data-fork** extent
+    /// records by file CNID, each file's extents concatenated in fork order
+    /// (ascending start-block key). Returns an empty map when the tree is
+    /// absent, unreadable, or holds no usable records — recovery then falls
+    /// back to inline extents only.
+    fn read_extents_overflow(&self, src: &Source) -> OverflowExtents {
+        let mut out = OverflowExtents::new();
+        if self.extents_overflow_extents.is_empty() {
+            return out;
+        }
+        let tree = match self.read_fork(
+            src,
+            &self.extents_overflow_extents,
+            self.extents_overflow_size,
+        ) {
+            Ok(t) if t.len() >= 512 => t,
+            _ => return out,
+        };
+        let node_size = match node_size(&tree) {
+            Ok(n) => n,
+            Err(_) => return out,
+        };
+        let total_nodes = tree.len() / node_size;
+
+        // Gather (startBlock key, extents) per file across all leaf records.
+        let mut by_file: HashMap<u32, PendingRuns> = HashMap::new();
+        for idx in 0..total_nodes {
+            let node = &tree[idx * node_size..(idx + 1) * node_size];
+            if node_kind(node) != KIND_LEAF {
+                continue;
+            }
+            for off in live_record_offsets(node, node_size) {
+                if let Some((fork, file_id, start_block, extents)) =
+                    parse_extent_record(node, off, self)
+                {
+                    if fork != 0 || extents.is_empty() {
+                        continue; // data fork only
+                    }
+                    by_file
+                        .entry(file_id)
+                        .or_default()
+                        .push((start_block, extents));
+                }
+            }
+        }
+        for (file_id, mut recs) in by_file {
+            recs.sort_by_key(|&(sb, _)| sb);
+            let flat: Vec<(u32, u32)> = recs.into_iter().flat_map(|(_, e)| e).collect();
+            out.insert(file_id, flat);
+        }
+        out
+    }
+
+    /// Read a fork described by inline `extents` into memory, bounded by
+    /// `logical_size` (when non-zero) and [`MAX_CATALOG`].
+    fn read_fork(
+        &self,
+        src: &Source,
+        extents: &[(u32, u32)],
+        logical_size: u64,
+    ) -> Result<Vec<u8>> {
+        let extents_bytes: u64 = extents
+            .iter()
+            .map(|&(_, c)| c as u64 * self.block_size)
+            .sum();
+        let want = if logical_size > 0 {
+            logical_size.min(extents_bytes)
+        } else {
+            extents_bytes
+        }
+        .min(MAX_CATALOG as u64) as usize;
+
+        let mut buf = Vec::with_capacity(want.min(1 << 20));
+        let mut block = vec![0u8; self.block_size as usize];
+        'outer: for &(start, count) in extents {
+            for b in 0..count as u64 {
+                if buf.len() >= want {
+                    break 'outer;
+                }
+                let off = self.offset + (start as u64 + b) * self.block_size;
+                let n = src.read_at(off, &mut block)?;
+                if n == 0 {
+                    break 'outer;
+                }
+                buf.extend_from_slice(&block[..n]);
+            }
+        }
+        buf.truncate(want);
+        Ok(buf)
     }
 
     fn write_file(
@@ -383,8 +532,9 @@ impl Volume {
         out_dir: &Path,
         rel: &Path,
         rec: &FileRecord,
+        overflow: &OverflowExtents,
     ) -> Option<(u64, [u8; 32])> {
-        let data = self.read_file_data(src, rec)?;
+        let data = self.read_file_data(src, rec, overflow)?;
         let target = unique_path(out_dir, rel);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).ok()?;
@@ -483,6 +633,44 @@ fn parse_file_record(node: &[u8], off: usize, vol: &Volume) -> Option<FileRecord
         access_date,
         extents,
     })
+}
+
+/// Parse an extents-overflow leaf record at `off`: an `HFSPlusExtentKey`
+/// (fixed 10-byte key: forkType, pad, fileID, startBlock) followed by an
+/// `HFSPlusExtentRecord` (eight start/count pairs). Returns
+/// `(forkType, fileID, startBlock, extents)`, rejecting any record with an
+/// out-of-range extent.
+fn parse_extent_record(node: &[u8], off: usize, vol: &Volume) -> Option<ExtentRecord> {
+    let key_len = be16(node, off);
+    if key_len != 10 {
+        return None; // HFSPlusExtentKey length is fixed
+    }
+    let fork_type = *node.get(off + 2)?;
+    let file_id = be32(node, off + 4);
+    if file_id == 0 {
+        return None;
+    }
+    let start_block = be32(node, off + 8);
+    let data = off + 2 + key_len as usize; // record data follows the key
+    if data + 64 > node.len() {
+        return None;
+    }
+    let mut extents = Vec::new();
+    for i in 0..8 {
+        let o = data + i * 8;
+        let start = be32(node, o);
+        let count = be32(node, o + 4);
+        if count == 0 {
+            break;
+        }
+        if start as u64 >= vol.total_blocks
+            || start as u64 + count as u64 > vol.total_blocks.saturating_add(1)
+        {
+            return None;
+        }
+        extents.push((start, count));
+    }
+    Some((fork_type, file_id, start_block, extents))
 }
 
 /// B-tree node descriptor: record kind is an `i8` at offset 8.
@@ -603,6 +791,8 @@ mod tests {
             catalog_extents: vec![(8, 2)],
             catalog_size: 1024,
             allocation_extents: vec![],
+            extents_overflow_extents: vec![],
+            extents_overflow_size: 0,
             hfsx: false,
         }
     }
@@ -667,5 +857,43 @@ mod tests {
         assert!(node_size(&cat).is_err());
         cat[32..34].copy_from_slice(&4096u16.to_be_bytes());
         assert_eq!(node_size(&cat).unwrap(), 4096);
+    }
+
+    #[test]
+    fn parses_an_extents_overflow_record() {
+        // key (len 10): forkType=0, pad, fileID=16, startBlock=8; the record
+        // data (extent descriptors) follows at off + 2 + 10 = 12.
+        let mut buf = vec![0u8; 12 + 64];
+        buf[0..2].copy_from_slice(&10u16.to_be_bytes()); // key length
+        buf[2] = 0; // data fork
+        buf[4..8].copy_from_slice(&16u32.to_be_bytes()); // fileID
+        buf[8..12].copy_from_slice(&8u32.to_be_bytes()); // startBlock
+        buf[12..16].copy_from_slice(&20u32.to_be_bytes()); // extent 0 start
+        buf[16..20].copy_from_slice(&2u32.to_be_bytes()); // extent 0 count
+        buf[20..24].copy_from_slice(&30u32.to_be_bytes()); // extent 1 start
+        buf[24..28].copy_from_slice(&1u32.to_be_bytes()); // extent 1 count
+
+        let (fork, file_id, start_block, extents) =
+            parse_extent_record(&buf, 0, &test_vol()).expect("should parse");
+        assert_eq!(fork, 0);
+        assert_eq!(file_id, 16);
+        assert_eq!(start_block, 8);
+        assert_eq!(extents, vec![(20, 2), (30, 1)]);
+    }
+
+    #[test]
+    fn rejects_an_extents_overflow_record_with_a_bad_key_or_extent() {
+        let vol = test_vol();
+        // Wrong key length.
+        let mut bad_key = vec![0u8; 14 + 64];
+        bad_key[0..2].copy_from_slice(&8u16.to_be_bytes());
+        assert!(parse_extent_record(&bad_key, 0, &vol).is_none());
+        // Extent beyond the volume (total_blocks = 64).
+        let mut bad_ext = vec![0u8; 12 + 64];
+        bad_ext[0..2].copy_from_slice(&10u16.to_be_bytes());
+        bad_ext[4..8].copy_from_slice(&16u32.to_be_bytes());
+        bad_ext[12..16].copy_from_slice(&9999u32.to_be_bytes());
+        bad_ext[16..20].copy_from_slice(&1u32.to_be_bytes());
+        assert!(parse_extent_record(&bad_ext, 0, &vol).is_none());
     }
 }
