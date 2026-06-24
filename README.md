@@ -501,6 +501,7 @@ alongside the per-file manifest.
 | tif    | TIFF / BigTIFF / raw (DNG/NEF/ARW)              | IFD / strip-tile walk       |
 | cr2    | Canon CR2 raw image                              | IFD / strip-tile walk       |
 | pdf    | PDF document                                     | `%%EOF`                     |
+| djvu   | DjVu document                                    | IFF FORM length             |
 | zip    | ZIP (also DOCX/XLSX/PPTX/ODT/JAR/APK)            | end-of-central-directory    |
 | 7z     | 7-Zip archive                                    | next-header offset + size   |
 | rar    | RAR archive (v4 and v5)                          | block-chain walk            |
