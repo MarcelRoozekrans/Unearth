@@ -409,12 +409,19 @@ filerecovery scan card.img -o recovered --type jpg --type png
     --no-validate      Keep every signature match without structural validation
     --dedup            Write identical content (by SHA-256) only once
     --organize         Group recovered files into per-type subdirs (jpg/, png/, ...)
+    --unallocated      Carve only the volume's free space (skip live data)
     --report <FILE>    Write a manifest of carved files (.json => JSON, else CSV)
     --summary <FILE>   Write a run summary (.json => JSON, else text)
     --checkpoint <FILE> Checkpoint scan progress here for --resume
     --resume           Resume a prior scan from its checkpoint
 -q, --quiet            Hide the progress bar
 ```
+
+Like `recover`, `scan` accepts `--unallocated` to carve **only the detected
+volume's free (unallocated) space**, skipping clusters still in use by live
+files — less noise and a faster scan. It reads the filesystem's allocation map
+(FAT, exFAT, ext2/3/4, NTFS, HFS+); when no map is available it carves the whole
+source and says so. It cannot be combined with `--resume`.
 
 Carving a whole drive can take a long time. Pass `--checkpoint` to record the
 scan position and recovered-file tally to a small file as it runs; if the scan

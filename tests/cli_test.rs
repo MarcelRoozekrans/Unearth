@@ -380,6 +380,77 @@ fn recover_unallocated_skips_live_clusters() {
 }
 
 #[test]
+fn scan_unallocated_skips_live_clusters() {
+    // Same FAT32 geometry as recover_unallocated_skips_live_clusters: a JPEG in
+    // free cluster 3 should be carved; a live JPEG in allocated cluster 4 skipped.
+    const BPS: usize = 512;
+    const FIRST_DATA: usize = 544;
+    const FAT_BASE: usize = 32 * BPS;
+    let cluster_off = |c: usize| (FIRST_DATA + (c - 2)) * BPS;
+
+    let jpeg_free = common::jpeg(&vec![0x41u8; 400]);
+    let jpeg_alloc = common::jpeg(&vec![0x42u8; 400]);
+
+    let mut img = common::fat32_volume(b"PHOTO   ", b"JPG", &jpeg_free);
+    let root = cluster_off(2);
+    for b in &mut img[root..root + 32] {
+        *b = 0;
+    }
+    let fat4 = FAT_BASE + 4 * 4;
+    img[fat4..fat4 + 4].copy_from_slice(&0x0FFF_FFFFu32.to_le_bytes());
+    let c4 = cluster_off(4);
+    img[c4..c4 + jpeg_alloc.len()].copy_from_slice(&jpeg_alloc);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let img_path = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+    std::fs::write(&img_path, &img).unwrap();
+
+    let out = run(&[
+        "scan",
+        img_path.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--unallocated",
+        "-q",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let carved: Vec<Vec<u8>> = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .map(|e| std::fs::read(e.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(
+        carved.len(),
+        1,
+        "only the unallocated JPEG should be carved"
+    );
+    assert_eq!(carved[0], jpeg_free);
+    assert!(!carved.contains(&jpeg_alloc));
+}
+
+#[test]
+fn scan_unallocated_rejects_resume() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    std::fs::write(&img, common::fat32_volume(b"PHOTO   ", b"JPG", b"x")).unwrap();
+    let out = run(&[
+        "scan",
+        img.to_str().unwrap(),
+        "-o",
+        tmp.path().join("out").to_str().unwrap(),
+        "--unallocated",
+        "--resume",
+        "-q",
+    ]);
+    assert!(!out.status.success(), "should reject the flag combination");
+}
+
+#[test]
 fn undelete_dry_run_with_report_writes_no_files() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("ext.img");

@@ -344,6 +344,14 @@ pub struct ScanArgs {
     #[arg(long)]
     pub resume: bool,
 
+    /// Carve only the volume's unallocated (free) space, skipping clusters
+    /// still in use by live files — less noise and a faster scan. Requires a
+    /// filesystem whose free-space map can be read (FAT, exFAT, ext, NTFS,
+    /// HFS+); otherwise the whole source is carved. Not combinable with
+    /// --resume.
+    #[arg(long)]
+    pub unallocated: bool,
+
     /// Suppress the progress bar.
     #[arg(short, long)]
     pub quiet: bool,
