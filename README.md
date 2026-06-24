@@ -541,6 +541,7 @@ alongside the per-file manifest.
 | pcap   | libpcap network capture                          | packet-record walk          |
 | pcapng | pcapng network capture                           | block walk                  |
 | evtx   | Windows Event Log                                | chunk count in header       |
+| regf   | Windows registry hive                            | base block + hive-bins size |
 
 Run `filerecovery list-types` to see what your build supports.
 

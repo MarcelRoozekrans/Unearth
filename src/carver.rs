@@ -507,6 +507,7 @@ fn file_length(
         Extent::Rtf => Ok(rtf_length(source, file_start, limit)?),
         Extent::Mp3 => Ok(mp3_length(source, file_start, limit)?),
         Extent::MachO => Ok(macho_length(source, file_start, limit)?),
+        Extent::Regf => Ok(regf_length(source, file_start, limit)?),
     }
 }
 
@@ -2505,6 +2506,32 @@ fn macho_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u
         return Ok(None);
     }
     Ok(Some(end))
+}
+
+/// Windows registry hive (`regf`) length. The 4096-byte base block records the
+/// total size of the hive-bins data area (a little-endian u32 at offset 0x28),
+/// so the file ends at `4096 + hive_bins_data_size`. The major version (1), the
+/// file type (0 = primary hive), and the 4096-alignment of the data size are
+/// checked to reject a coincidental `regf` magic.
+fn regf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const BASE_BLOCK: u64 = 4096;
+    let mut h = [0u8; 48];
+    if source.read_at(file_start, &mut h)? < 48 || &h[0..4] != b"regf" {
+        return Ok(None);
+    }
+    let major = u32::from_le_bytes([h[0x14], h[0x15], h[0x16], h[0x17]]);
+    let file_type = u32::from_le_bytes([h[0x1C], h[0x1D], h[0x1E], h[0x1F]]);
+    let hbins_size = u32::from_le_bytes([h[0x28], h[0x29], h[0x2A], h[0x2B]]) as u64;
+    // A primary hive has major version 1 and file type 0; the hive-bins data is
+    // made of 4096-byte bins, so its total size is a non-zero multiple of 4096.
+    if major != 1 || file_type != 0 || hbins_size == 0 || hbins_size % BASE_BLOCK != 0 {
+        return Ok(None);
+    }
+    let total = BASE_BLOCK.saturating_add(hbins_size);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
 }
 
 /// Search forward from `file_start` for `marker`, returning the file length
