@@ -345,8 +345,38 @@ fn list_types() {
     println!("\nUse: filerecovery scan <SOURCE> --type <EXT> [--type <EXT> ...]");
 }
 
+/// The free (unallocated) byte ranges across every detected volume, or `None`
+/// when no volume is found or any one cannot report its free-space map (in
+/// which case the caller carves the whole source).
+fn free_space_regions(source: &Source) -> Option<Vec<(u64, u64)>> {
+    let volumes = recover::detect(source).ok()?;
+    if volumes.is_empty() {
+        return None;
+    }
+    let mut regions = Vec::new();
+    for v in &volumes {
+        regions.extend(v.free_extents(source)?);
+    }
+    Some(regions)
+}
+
+/// Accumulate one region's carve stats into a running total.
+fn merge_carve_stats(into: &mut carver::CarveStats, from: carver::CarveStats) {
+    into.files_recovered += from.files_recovered;
+    into.bytes_recovered += from.bytes_recovered;
+    into.rejected += from.rejected;
+    into.duplicates += from.duplicates;
+    for (k, v) in from.per_type {
+        *into.per_type.entry(k).or_insert(0) += v;
+    }
+    into.files.extend(from.files);
+}
+
 fn scan(args: ScanArgs) -> Result<()> {
     let started = std::time::Instant::now();
+    if args.unallocated && args.resume {
+        anyhow::bail!("--unallocated cannot be combined with --resume");
+    }
     let active = signatures::select(&args.types)?;
 
     let source = Source::open(&args.source)?;
@@ -392,7 +422,66 @@ fn scan(args: ScanArgs) -> Result<()> {
         Box::new(carver::NoProgress)
     };
 
-    let stats = carver::carve(&source, &active, &opts, progress.as_ref())?;
+    // With --unallocated, carve only the detected volumes' free space; fall back
+    // to the whole source when no free-space map is available.
+    let carve_regions: Option<Vec<(u64, u64)>> = if args.unallocated {
+        match free_space_regions(&source) {
+            Some(r) => Some(r),
+            None => {
+                eprintln!(
+                    "--unallocated: free-space map unavailable for the detected filesystem(s); \
+                     carving the whole source instead."
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let stats = match carve_regions {
+        Some(regions) => {
+            eprintln!("Carving {} unallocated region(s).", regions.len());
+            let mut merged = carver::CarveStats::default();
+            let mut seen: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
+            for (rstart, rlen) in regions {
+                if opts.max_files.is_some_and(|m| merged.files_recovered >= m) {
+                    break;
+                }
+                let remaining = opts.max_files.map(|m| m - merged.files_recovered);
+                let ropts = CarveOptions {
+                    output_dir: opts.output_dir.clone(),
+                    start: rstart,
+                    end: Some(rstart + rlen),
+                    min_size: opts.min_size,
+                    max_files: remaining,
+                    allow_nested: opts.allow_nested,
+                    validate: opts.validate,
+                    dedup: opts.dedup,
+                    progress: false,
+                    checkpoint: None,
+                    resume: false,
+                    organize: opts.organize,
+                };
+                let cs = carver::carve_seeded(
+                    &source,
+                    &active,
+                    &ropts,
+                    &carver::NoProgress,
+                    seen.clone(),
+                )?;
+                // Thread dedup digests across regions so --dedup is global.
+                if opts.dedup {
+                    for f in &cs.files {
+                        seen.insert(f.sha256);
+                    }
+                }
+                merge_carve_stats(&mut merged, cs);
+            }
+            merged
+        }
+        None => carver::carve(&source, &active, &opts, progress.as_ref())?,
+    };
 
     eprintln!();
     println!(
@@ -436,6 +525,7 @@ fn scan(args: ScanArgs) -> Result<()> {
             ("validate", Sv::B(!args.no_validate)),
             ("dedup", Sv::B(args.dedup)),
             ("allow_nested", Sv::B(args.allow_nested)),
+            ("unallocated", Sv::B(args.unallocated)),
             ("min_size", Sv::N(args.min_size)),
             ("files_recovered", Sv::N(stats.files_recovered)),
             ("bytes_recovered", Sv::N(stats.bytes_recovered)),
