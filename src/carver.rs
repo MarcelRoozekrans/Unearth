@@ -499,6 +499,7 @@ fn file_length(
         Extent::Ttc => Ok(ttc_length(source, file_start, limit)?),
         Extent::Rar => Ok(rar_length(source, file_start, limit)?),
         Extent::Zstd => Ok(zstd_length(source, file_start, limit)?),
+        Extent::Lz4 => Ok(lz4_length(source, file_start, limit)?),
     }
 }
 
@@ -752,6 +753,71 @@ fn zstd_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
         if file_start + pos > limit {
             return Ok(None);
         }
+    }
+    Ok(Some(pos))
+}
+
+/// LZ4 frame length. Parse the frame descriptor (whose FLG byte sizes the
+/// optional content-size and dictionary-id fields and flags per-block and
+/// content checksums), then walk the data blocks — each a 4-byte little-endian
+/// size (high bit = uncompressed) — to the zero-sized end mark.
+fn lz4_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAX_LZ4_BLOCKS: u64 = 1 << 24;
+    let mut head = [0u8; 5];
+    if source.read_at(file_start, &mut head)? < 5 {
+        return Ok(None);
+    }
+    if head[0..4] != [0x04, 0x22, 0x4D, 0x18] {
+        return Ok(None);
+    }
+    let flg = head[4];
+    // FLG: bit 4 block-checksum, bit 3 content-size, bit 2 content-checksum,
+    // bit 0 dictionary-id. The version bits (7-6) must be 01.
+    if flg >> 6 != 0b01 {
+        return Ok(None);
+    }
+    let block_checksum = (flg >> 4) & 1;
+    let content_size = (flg >> 3) & 1;
+    let content_checksum = (flg >> 2) & 1;
+    let dict_id = flg & 1;
+    // Frame descriptor: magic(4) + FLG(1) + BD(1) + [content size 8] +
+    // [dict id 4] + header checksum(1).
+    let mut pos = 4 + 1 + 1 + (content_size as u64) * 8 + (dict_id as u64) * 4 + 1;
+
+    for _ in 0..MAX_LZ4_BLOCKS {
+        let mut sz = [0u8; 4];
+        if source.read_at(file_start + pos, &mut sz)? < 4 {
+            return Ok(None);
+        }
+        let raw = u32::from_le_bytes(sz);
+        pos = match pos.checked_add(4) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        if raw == 0 {
+            break; // EndMark
+        }
+        let data_size = (raw & 0x7FFF_FFFF) as u64;
+        pos = match pos
+            .checked_add(data_size)
+            .and_then(|p| p.checked_add((block_checksum as u64) * 4))
+        {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        if file_start + pos > limit {
+            return Ok(None);
+        }
+    }
+
+    if content_checksum == 1 {
+        pos = match pos.checked_add(4) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+    }
+    if file_start + pos > limit {
+        return Ok(None);
     }
     Ok(Some(pos))
 }
