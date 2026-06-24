@@ -233,6 +233,19 @@ pub struct InfoArgs {
     /// Emit the detected layout as JSON on stdout instead of a table.
     #[arg(long)]
     pub json: bool,
+
+    /// Scan the whole source for filesystem signatures, not just the partition
+    /// table — finds **lost or orphaned partitions** whose table entry is gone
+    /// or corrupt. Reports each volume's offset, type, and size so it can be
+    /// targeted with `undelete --offset` or `scan --start`. May take a while on
+    /// a large device.
+    #[arg(long)]
+    pub scan: bool,
+
+    /// Alignment (in bytes) at which `--scan` probes for a volume; partitions
+    /// are conventionally 1 MiB-aligned. Smaller finds more but is slower.
+    #[arg(long, value_name = "BYTES", default_value_t = 1024 * 1024)]
+    pub scan_step: u64,
 }
 
 #[derive(Parser)]

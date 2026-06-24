@@ -246,6 +246,7 @@ sudo filerecovery image /dev/sdb card.img --map card.map --retry-bad 3
 filerecovery info disk.img
 filerecovery info disk.img --deleted   # also count recoverable deleted files
 filerecovery info disk.img --json      # machine-readable layout for scripting
+filerecovery info disk.img --scan      # find lost partitions (whole-disk signature scan)
 ```
 
 With `--json`, the detected layout is written to stdout as a single object
@@ -264,6 +265,24 @@ Detected 1 volume(s):
 ```
 
 The `OFFSET` column is handy if you ever need to pass `--offset` to `undelete`.
+
+#### Find lost or corrupt partitions (`--scan`)
+
+If the partition table is missing or damaged, the normal layout shows nothing.
+`--scan` reads the **whole source** and probes for filesystem signatures at
+aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
+have no partition-table entry — the same detectors used for normal detection
+(FAT, exFAT, NTFS, ext, HFS+, APFS, Btrfs, and LUKS/BitLocker):
+
+```sh
+filerecovery info disk.img --scan
+# ... then recover from a found volume by its offset:
+filerecovery undelete disk.img --offset <OFFSET> -o recovered
+filerecovery scan     disk.img --start  <OFFSET> -o recovered
+```
+
+A deep scan can take a while on a large device. With `--json`, the results are
+added as a `scan` array (`filesystem`/`offset`/`size`).
 
 ### Identify a file by content
 
