@@ -55,6 +55,7 @@
 //! * [`Extent::Aac`] — walk ADTS AAC audio frames to the end of the stream.
 //! * [`Extent::Dex`] — Android Dalvik executable: `file_size` header field.
 //! * [`Extent::Icc`] — ICC colour profile: total size in the profile header.
+//! * [`Extent::Ar`] — Unix `ar` archive (`.a`/`.deb`): walk the member chain.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -203,6 +204,12 @@ pub enum Extent {
     /// at least the header size and a multiple of 4 (profiles are 4-byte
     /// padded), which rejects a coincidental `acsp` match.
     Icc,
+    /// Unix `ar` archive (Debian `.deb` packages and `.a` static libraries):
+    /// after the `!<arch>\n` global header, walk the member chain. Each member
+    /// has a 60-byte header ending in the `` `\n `` sentinel (validated to find
+    /// the archive's end) and carrying its data size as a decimal field; member
+    /// data is padded to an even length.
+    Ar,
 }
 
 /// A recoverable file type.
@@ -717,6 +724,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Icc,
         max_size: 64 * MB,
+    },
+    Signature {
+        name: "Unix ar archive (deb/static lib)",
+        ext: "ar",
+        magic: b"!<arch>\n",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Ar,
+        max_size: 2 * GB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.

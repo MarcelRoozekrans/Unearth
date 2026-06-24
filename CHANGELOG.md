@@ -38,8 +38,9 @@ formats.
   walk), Mach-O binaries (macOS/iOS, sized from segment and link-edit
   extents), Windows registry hives (`regf`, base block + hive-bins data
   size), AAC audio (ADTS frame-length walk), Android Dalvik executables
-  (DEX, file-size header field), and ICC colour profiles (size in the profile
-  header) — each with a deterministic length strategy.
+  (DEX, file-size header field), ICC colour profiles (size in the profile
+  header), and Unix `ar` archives (`.deb`/`.a`, member-chain walk) — each with
+  a deterministic length strategy.
 
 ## [0.2.0] - 2026-06-23
 
