@@ -2490,13 +2490,11 @@ fn macho_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u
                     end = end.max(stroff.saturating_add(strsize));
                 }
             }
-            c if LINKEDIT_DATA.contains(&c) => {
+            c if LINKEDIT_DATA.contains(&c) && cmdsize >= 16 => {
                 // linkedit_data_command: dataoff@8, datasize@12.
-                if cmdsize >= 16 {
-                    let dataoff = u32f(&body[8..12]) as u64;
-                    let datasize = u32f(&body[12..16]) as u64;
-                    end = end.max(dataoff.saturating_add(datasize));
-                }
+                let dataoff = u32f(&body[8..12]) as u64;
+                let datasize = u32f(&body[12..16]) as u64;
+                end = end.max(dataoff.saturating_add(datasize));
             }
             _ => {}
         }
