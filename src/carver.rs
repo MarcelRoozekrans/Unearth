@@ -505,6 +505,7 @@ fn file_length(
         Extent::Djvu => Ok(djvu_length(source, file_start, limit)?),
         Extent::Evtx => Ok(evtx_length(source, file_start, limit)?),
         Extent::Rtf => Ok(rtf_length(source, file_start, limit)?),
+        Extent::Mp3 => Ok(mp3_length(source, file_start, limit)?),
     }
 }
 
@@ -863,6 +864,154 @@ fn rtf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         pos += n as u64;
     }
     Ok(None)
+}
+
+/// Decode the length in bytes of a single MPEG audio frame from its 4-byte
+/// header, or `None` if the header is not a valid MPEG-1/2/2.5 Layer I/II/III
+/// frame sync. The four bytes are:
+/// `FF Ex` (11-bit sync) then version/layer/CRC, bitrate/sample-rate/padding.
+fn frame_length(hdr: &[u8; 4]) -> Option<u64> {
+    // Bitrate tables (kbps), indexed by [layer_idx][bitrate_index].
+    // layer_idx: 0 = Layer I, 1 = Layer II, 2 = Layer III.
+    const BITRATE_V1: [[u32; 16]; 3] = [
+        [
+            0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0,
+        ],
+        [
+            0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0,
+        ],
+        [
+            0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0,
+        ],
+    ];
+    // MPEG 2 / 2.5: Layer II and Layer III share a column.
+    const BITRATE_V2: [[u32; 16]; 3] = [
+        [
+            0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0,
+        ],
+        [
+            0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0,
+        ],
+        [
+            0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0,
+        ],
+    ];
+    // Sample rate (Hz), indexed by [version][sample_rate_index].
+    // version field: 0 = MPEG 2.5, 2 = MPEG 2, 3 = MPEG 1 (1 is reserved).
+    const SAMPLERATE: [[u32; 3]; 4] = [
+        [11025, 12000, 8000],  // MPEG 2.5
+        [0, 0, 0],             // reserved
+        [22050, 24000, 16000], // MPEG 2
+        [44100, 48000, 32000], // MPEG 1
+    ];
+
+    if hdr[0] != 0xFF || (hdr[1] & 0xE0) != 0xE0 {
+        return None;
+    }
+    let version = (hdr[1] >> 3) & 0x03; // 0=2.5, 1=reserved, 2=v2, 3=v1
+    if version == 1 {
+        return None;
+    }
+    let layer_field = (hdr[1] >> 1) & 0x03; // 0=reserved, 1=III, 2=II, 3=I
+    if layer_field == 0 {
+        return None;
+    }
+    let br_idx = ((hdr[2] >> 4) & 0x0F) as usize;
+    if br_idx == 0 || br_idx == 15 {
+        return None; // free-format and "bad" are unsupported
+    }
+    let sr_idx = ((hdr[2] >> 2) & 0x03) as usize;
+    if sr_idx == 3 {
+        return None;
+    }
+    let pad = ((hdr[2] >> 1) & 0x01) as u64;
+
+    let layer_idx = (3 - layer_field) as usize; // I->0, II->1, III->2
+    let bitrate = if version == 3 {
+        BITRATE_V1[layer_idx][br_idx]
+    } else {
+        BITRATE_V2[layer_idx][br_idx]
+    } as u64
+        * 1000;
+    let samplerate = SAMPLERATE[version as usize][sr_idx] as u64;
+    if bitrate == 0 || samplerate == 0 {
+        return None;
+    }
+
+    // Frame length in bytes per layer.
+    let len = match layer_field {
+        3 => (12 * bitrate / samplerate + pad) * 4, // Layer I
+        2 => 144 * bitrate / samplerate + pad,      // Layer II
+        1 => {
+            let coef = if version == 3 { 144 } else { 72 }; // Layer III
+            coef * bitrate / samplerate + pad
+        }
+        _ => return None,
+    };
+    if len < 4 {
+        return None;
+    }
+    Some(len)
+}
+
+/// MP3 length. Anchored on an ID3v2 tag (`ID3`), the audio is sized by walking
+/// the MPEG frames. The ID3v2 header at offset 0 carries a synchsafe 28-bit
+/// size (bytes 6..10) plus a 10-byte footer when flag 0x10 is set; the audio
+/// begins right after. Each frame's length comes from [`frame_length`]; the
+/// walk stops at the first non-frame byte, picking up a trailing 128-byte
+/// ID3v1 (`TAG`) tag when present. At least three valid frames are required so
+/// the 3-byte `ID3` magic cannot trigger a false carve.
+fn mp3_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let avail = limit.saturating_sub(file_start);
+    let mut id3 = [0u8; 10];
+    if source.read_at(file_start, &mut id3)? < 10 || &id3[0..3] != b"ID3" {
+        return Ok(None);
+    }
+    // Synchsafe size: 4 bytes, 7 bits each, big-endian.
+    if id3[6] & 0x80 != 0 || id3[7] & 0x80 != 0 || id3[8] & 0x80 != 0 || id3[9] & 0x80 != 0 {
+        return Ok(None);
+    }
+    let tag_size = ((id3[6] as u64) << 21)
+        | ((id3[7] as u64) << 14)
+        | ((id3[8] as u64) << 7)
+        | (id3[9] as u64);
+    let footer = if id3[5] & 0x10 != 0 { 10 } else { 0 };
+    let mut pos = 10u64.saturating_add(tag_size).saturating_add(footer);
+    if pos >= avail {
+        return Ok(None);
+    }
+
+    let mut frames = 0u64;
+    loop {
+        let mut hdr = [0u8; 4];
+        let n = source.read_at(file_start + pos, &mut hdr)?;
+        if n < 4 {
+            break;
+        }
+        if &hdr[0..3] == b"TAG" {
+            // ID3v1 trailer.
+            pos = pos.saturating_add(128);
+            break;
+        }
+        match frame_length(&hdr) {
+            Some(len) => {
+                let next = pos.saturating_add(len);
+                if next > avail {
+                    break;
+                }
+                pos = next;
+                frames += 1;
+            }
+            None => break,
+        }
+    }
+    if frames < 3 {
+        return Ok(None);
+    }
+    if pos > avail {
+        return Ok(None);
+    }
+    Ok(Some(pos))
 }
 
 /// Windows Event Log (EVTX) length. A 4096-byte `ElfFile` header records the

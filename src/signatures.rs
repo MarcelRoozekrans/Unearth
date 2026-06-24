@@ -49,6 +49,7 @@
 //! * [`Extent::Djvu`] — read a DjVu document's IFF `FORM` length.
 //! * [`Extent::Evtx`] — size a Windows Event Log from its chunk count.
 //! * [`Extent::Rtf`] — match an RTF document's outer `{ ... }` group.
+//! * [`Extent::Mp3`] — walk MPEG audio frames from an ID3v2 tag to the end.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -161,6 +162,12 @@ pub enum Extent {
     /// `\}`, `\\`) are honoured. (Embedded `\bin` binary blobs, which are
     /// uncommon, are not specially skipped.)
     Rtf,
+    /// MPEG audio (MP3): anchored on an ID3v2 tag, skip the tag (using its
+    /// synchsafe size, plus a footer when flagged) and walk the MPEG audio
+    /// frames — each header encoding version/layer/bitrate/sample-rate, from
+    /// which the frame length is computed — to the end of the stream, including
+    /// a trailing 128-byte ID3v1 (`TAG`) tag when present.
+    Mp3,
 }
 
 /// A recoverable file type.
@@ -468,6 +475,15 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::Rtf,
+        max_size: 100 * MB,
+    },
+    Signature {
+        name: "MP3 audio",
+        ext: "mp3",
+        magic: b"ID3",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Mp3,
         max_size: 100 * MB,
     },
     // HEIC/HEIF brands share the `ftyp` magic with MP4, so they must come first
