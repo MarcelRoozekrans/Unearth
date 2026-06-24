@@ -41,6 +41,8 @@
 //!   end-of-archive block.
 //! * [`Extent::Zstd`] — walk a Zstandard frame's data blocks to the last block
 //!   (plus the optional content checksum).
+//! * [`Extent::Lz4`] — walk an LZ4 frame's data blocks to the end mark (plus
+//!   optional block/content checksums).
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -129,6 +131,10 @@ pub enum Extent {
     /// a 3-byte header giving its size and a last-block flag) to the final
     /// block, adding the 4-byte content checksum when the header flags one.
     Zstd,
+    /// LZ4 frame: parse the frame descriptor, then walk the data blocks (each a
+    /// 4-byte size prefix) to the zero-sized end mark, accounting for optional
+    /// per-block and content checksums.
+    Lz4,
 }
 
 /// A recoverable file type.
@@ -351,6 +357,15 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::Zstd,
+        max_size: 8 * GB,
+    },
+    Signature {
+        name: "LZ4 compressed",
+        ext: "lz4",
+        magic: &[0x04, 0x22, 0x4D, 0x18],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Lz4,
         max_size: 8 * GB,
     },
     // HEIC/HEIF brands share the `ftyp` magic with MP4, so they must come first
