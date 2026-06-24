@@ -287,6 +287,22 @@ fn info(args: InfoArgs) -> Result<()> {
             }
             out.push_str("  ]\n");
         }
+        if args.scan {
+            let scanned =
+                recover::scan_lost_volumes(&source, args.scan_step, |_| {}).unwrap_or_default();
+            out.push_str(",\n  \"scan\": [\n");
+            for (i, v) in scanned.iter().enumerate() {
+                let comma = if i + 1 < scanned.len() { "," } else { "" };
+                out.push_str(&format!(
+                    "    {{\"filesystem\": \"{}\", \"offset\": {}, \"size\": {}}}{}\n",
+                    json_escape(&v.fs_label()),
+                    v.offset(),
+                    v.size(),
+                    comma
+                ));
+            }
+            out.push_str("  ]\n");
+        }
         out.push_str("}\n");
         print!("{out}");
         return Ok(());
@@ -302,19 +318,26 @@ fn info(args: InfoArgs) -> Result<()> {
         Ok(v) => v,
         Err(e) => {
             println!("No supported volumes detected: {e}");
-            return Ok(());
+            // A deep signature scan is exactly what helps when the partition
+            // table is gone, so fall through to it rather than returning.
+            if !args.scan {
+                return Ok(());
+            }
+            Vec::new()
         }
     };
 
-    println!("\nDetected {} volume(s):\n", volumes.len());
-    println!(
-        "  {:<3} {:<10} {:<14} {:<10} DELETED",
-        "#", "FS", "OFFSET", "SIZE"
-    );
-    println!(
-        "  {:<3} {:<10} {:<14} {:<10} -------",
-        "-", "--", "------", "----"
-    );
+    if !volumes.is_empty() {
+        println!("\nDetected {} volume(s):\n", volumes.len());
+        println!(
+            "  {:<3} {:<10} {:<14} {:<10} DELETED",
+            "#", "FS", "OFFSET", "SIZE"
+        );
+        println!(
+            "  {:<3} {:<10} {:<14} {:<10} -------",
+            "-", "--", "------", "----"
+        );
+    }
     for (i, vol) in volumes.iter().enumerate() {
         let deleted = match deleted_count(vol, &source, args.deleted) {
             None => "-".to_string(),
@@ -337,8 +360,42 @@ fn info(args: InfoArgs) -> Result<()> {
             println!("      volumes: {}", contained.join(", "));
         }
     }
-    if !args.deleted {
+    if !volumes.is_empty() && !args.deleted {
         println!("\nRun with --deleted to count recoverable deleted files per volume.");
+    }
+
+    if args.scan {
+        eprintln!("\nScanning the whole source for filesystem signatures...");
+        let bar = ProgressBar::new(source.size);
+        bar.set_style(
+            ProgressStyle::with_template("  scanning {bar:40} {bytes}/{total_bytes}")
+                .unwrap_or_else(|_| ProgressStyle::default_bar()),
+        );
+        let scanned =
+            recover::scan_lost_volumes(&source, args.scan_step, |off| bar.set_position(off))?;
+        bar.finish_and_clear();
+
+        println!(
+            "\nSignature scan ({}-aligned) — {} volume(s) found:\n",
+            human_bytes(args.scan_step),
+            scanned.len()
+        );
+        println!("  {:<3} {:<10} {:<16} SIZE", "#", "FS", "OFFSET");
+        println!("  {:<3} {:<10} {:<16} ----", "-", "--", "------");
+        for (i, v) in scanned.iter().enumerate() {
+            println!(
+                "  {:<3} {:<10} {:<16} {}",
+                i,
+                v.fs_label(),
+                v.offset(),
+                human_bytes(v.size())
+            );
+        }
+        if !scanned.is_empty() {
+            println!(
+                "\nTarget a lost volume with `undelete --offset <OFFSET>` or `scan --start <OFFSET>`."
+            );
+        }
     }
     Ok(())
 }

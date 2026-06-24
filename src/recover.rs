@@ -229,6 +229,41 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     Ok(volumes)
 }
 
+/// Scan the whole source for filesystem signatures at `step`-aligned offsets,
+/// returning every volume found — including ones with no partition-table entry
+/// (lost or orphaned partitions). After a hit, the scan skips past that volume's
+/// body so its interior is not re-probed. `progress` is called with the current
+/// offset as the scan advances (for a progress indicator).
+pub fn scan_lost_volumes(
+    src: &Source,
+    step: u64,
+    mut progress: impl FnMut(u64),
+) -> Result<Vec<Volume>> {
+    // Backstop so a tiny `step` on a huge device cannot loop forever.
+    const MAX_PROBES: u64 = 16_000_000;
+    let step = step.max(512);
+    let mut found = Vec::new();
+    let mut offset = 0u64;
+    let mut probes = 0u64;
+    while offset < src.size && probes < MAX_PROBES {
+        progress(offset);
+        probes += 1;
+        if let Some(v) = try_parse_volume(src, offset)? {
+            // Skip past the volume body, aligned up to the next step boundary,
+            // so its interior bytes are not mistaken for nested volumes.
+            let end = offset.saturating_add(v.size().max(step));
+            found.push(v);
+            offset = end.div_ceil(step).saturating_mul(step);
+        } else {
+            offset = match offset.checked_add(step) {
+                Some(o) => o,
+                None => break,
+            };
+        }
+    }
+    Ok(found)
+}
+
 /// Try to recognise a supported filesystem at `offset`, by signature. Returns
 /// `None` if nothing matches (e.g. an empty or unsupported partition).
 fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
