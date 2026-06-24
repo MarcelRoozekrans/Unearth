@@ -58,6 +58,8 @@ pub struct Volume {
     root_dir_sectors: u32,
     count_of_clusters: u32,
     fat_size_sectors: u32,
+    /// Boot-sector volume label (`BS_VolLab`), empty when unset or "NO NAME".
+    label: String,
 }
 
 /// One deleted file we intend to recover, with its reconstructed path.
@@ -225,6 +227,21 @@ impl Volume {
             FatType::Fat32
         };
 
+        // BS_VolLab: 11 bytes, space-padded, at offset 71 (FAT32) or 43 (FAT12/16).
+        let label_off = if matches!(fat_type, FatType::Fat32) {
+            71
+        } else {
+            43
+        };
+        let raw = &bpb[label_off..label_off + 11];
+        let label = String::from_utf8_lossy(raw).trim_end().to_string();
+        // "NO NAME" is the placeholder for an unlabeled volume.
+        let label = if label == "NO NAME" {
+            String::new()
+        } else {
+            label
+        };
+
         Ok(Volume {
             offset,
             fat_type,
@@ -238,7 +255,13 @@ impl Volume {
             root_dir_sectors,
             count_of_clusters,
             fat_size_sectors,
+            label,
         })
+    }
+
+    /// The boot-sector volume label, empty when unset.
+    pub fn label(&self) -> &str {
+        &self.label
     }
 
     fn cluster_bytes(&self) -> u64 {
