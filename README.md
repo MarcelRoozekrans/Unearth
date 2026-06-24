@@ -467,6 +467,7 @@ alongside the per-file manifest.
 | zip    | ZIP (also DOCX/XLSX/PPTX/ODT/JAR/APK)            | end-of-central-directory    |
 | 7z     | 7-Zip archive                                    | next-header offset + size   |
 | rar    | RAR archive (v4 and v5)                          | block-chain walk            |
+| zst    | Zstandard compressed                             | frame block walk            |
 | cab    | Microsoft Cabinet archive                       | size field in header        |
 | sqlite | SQLite database                                 | page size × page count      |
 | wav    | WAV audio                                        | RIFF size field             |

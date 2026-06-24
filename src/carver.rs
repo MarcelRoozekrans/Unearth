@@ -498,6 +498,7 @@ fn file_length(
         Extent::Pcapng => Ok(pcapng_length(source, file_start, limit)?),
         Extent::Ttc => Ok(ttc_length(source, file_start, limit)?),
         Extent::Rar => Ok(rar_length(source, file_start, limit)?),
+        Extent::Zstd => Ok(zstd_length(source, file_start, limit)?),
     }
 }
 
@@ -680,6 +681,79 @@ fn rar5_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
         }
     }
     Ok(None)
+}
+
+/// Zstandard frame length. Parse the frame header to find where the data blocks
+/// begin and whether a content checksum trails the frame, then walk the blocks
+/// (each a 3-byte header: bit 0 = last block, bits 1-2 = type, bits 3-23 = size)
+/// to the final block.
+fn zstd_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAX_ZSTD_BLOCKS: u64 = 1 << 24;
+    let mut head = [0u8; 5];
+    if source.read_at(file_start, &mut head)? < 5 {
+        return Ok(None);
+    }
+    if head[0..4] != [0x28, 0xB5, 0x2F, 0xFD] {
+        return Ok(None);
+    }
+    // Frame_Header_Descriptor: the header's variable parts are sized by it.
+    let fhd = head[4];
+    let fcs_flag = fhd >> 6;
+    let single_segment = (fhd >> 5) & 1;
+    let checksum = (fhd >> 2) & 1;
+    let dict_id_flag = fhd & 0x03;
+    let window_size = if single_segment == 1 { 0 } else { 1 };
+    let dict_size = match dict_id_flag {
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        _ => 4,
+    };
+    let fcs_size = match fcs_flag {
+        0 => single_segment as u64, // 1 byte only when single-segment, else 0
+        1 => 2,
+        2 => 4,
+        _ => 8,
+    };
+    let mut pos = 4 + 1 + window_size + dict_size + fcs_size;
+
+    // Walk the data blocks to the last one.
+    for _ in 0..MAX_ZSTD_BLOCKS {
+        let mut bh = [0u8; 3];
+        if source.read_at(file_start + pos, &mut bh)? < 3 {
+            return Ok(None);
+        }
+        let raw = bh[0] as u32 | (bh[1] as u32) << 8 | (bh[2] as u32) << 16;
+        let last = raw & 1;
+        let block_type = (raw >> 1) & 0x3;
+        let block_size = (raw >> 3) as u64;
+        if block_type == 3 {
+            return Ok(None); // reserved block type
+        }
+        // RLE blocks carry a single byte; raw/compressed carry block_size bytes.
+        let content = if block_type == 1 { 1 } else { block_size };
+        pos = match pos.checked_add(3).and_then(|p| p.checked_add(content)) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        if file_start + pos > limit {
+            return Ok(None);
+        }
+        if last == 1 {
+            break;
+        }
+    }
+
+    if checksum == 1 {
+        pos = match pos.checked_add(4) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        if file_start + pos > limit {
+            return Ok(None);
+        }
+    }
+    Ok(Some(pos))
 }
 
 /// Read a RAR5 variable-length integer (base-128, low group first, high bit =
