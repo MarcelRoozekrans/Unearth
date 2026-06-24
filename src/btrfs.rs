@@ -1,16 +1,22 @@
-//! Btrfs **detection** and filesystem-label reporting (no metadata undelete).
+//! Btrfs **detection**, label, and subvolume enumeration (no metadata undelete).
 //!
 //! Btrfs is a copy-on-write filesystem: like APFS, a deleted file's metadata is
 //! not left in place to be scavenged — the B-trees are rewritten and old nodes
 //! are eventually reclaimed — so metadata-based undelete is not tractable the
 //! way it is for FAT/exFAT/NTFS/ext/HFS+. This module *recognises* a Btrfs
-//! volume and reports its geometry and filesystem **label** (so `info` /
-//! `list_volumes` surface it and the user knows to fall back to `scan`), but it
-//! recovers nothing itself.
+//! volume, reports its geometry and filesystem **label**, and lists its
+//! **subvolumes** by name (so `info` / `list_volumes` surface them and the user
+//! knows to fall back to `scan`), but it recovers nothing itself.
 //!
-//! Enumerating the **subvolumes** inside a Btrfs filesystem additionally
-//! requires walking the chunk tree (to map logical to physical addresses) and
-//! the root tree, which is left for a later step.
+//! Subvolume enumeration walks two B-trees, translating logical to physical
+//! addresses through the chunk map: it bootstraps the map from the superblock's
+//! system-chunk array, reads the **chunk tree** to complete it, then reads the
+//! **root tree** and collects the names from its `ROOT_REF` items. It handles
+//! single-device, single-leaf trees (the common small-filesystem case) and is
+//! strictly best-effort — any unexpected structure simply yields no subvolumes
+//! without failing detection. It is validated against a synthetic fixture
+//! rather than a live `mkfs.btrfs` image, so confirm against a real volume
+//! before relying on it for an unusual layout (multi-device, multi-level trees).
 
 use std::path::Path;
 
@@ -33,10 +39,31 @@ const NODESIZE: usize = 148;
 /// `label[256]` field offset.
 const LABEL: usize = 299;
 const LABEL_LEN: usize = 256;
-/// Bytes of the superblock we read (through the label field).
-const SUPERBLOCK_LEN: usize = LABEL + LABEL_LEN;
+/// `root` (u64): logical address of the root tree.
+const ROOT_LOGICAL: usize = 80;
+/// `chunk_root` (u64): logical address of the chunk tree.
+const CHUNK_ROOT_LOGICAL: usize = 88;
+/// `sys_chunk_array_size` (u32).
+const SYS_CHUNK_ARRAY_SIZE: usize = 160;
+/// `sys_chunk_array` (the bootstrap chunk map embedded in the superblock).
+const SYS_CHUNK_ARRAY: usize = 811;
+/// The whole superblock is 4 KiB; read it all so the system-chunk array is in.
+const SUPERBLOCK_LEN: usize = 4096;
 
-/// A recognised Btrfs volume (label/geometry reporting only; no undelete).
+/// `btrfs_header` length (precedes a node's keys/items).
+const HEADER_LEN: usize = 101;
+/// `btrfs_item` length in a leaf node (key + data offset/size).
+const ITEM_LEN: usize = 25;
+/// `btrfs_disk_key` length (objectid u64, type u8, offset u64).
+const DISK_KEY_LEN: usize = 17;
+/// Key types we care about.
+const CHUNK_ITEM_KEY: u8 = 228;
+const ROOT_REF_KEY: u8 = 156;
+/// Defensive caps.
+const MAX_CHUNKS: usize = 4096;
+const MAX_SUBVOLUMES: usize = 4096;
+
+/// A recognised Btrfs volume (label/geometry/subvolume reporting; no undelete).
 pub struct Volume {
     /// Byte offset of the volume within the source.
     pub offset: u64,
@@ -44,6 +71,9 @@ pub struct Volume {
     sectorsize: u32,
     nodesize: u32,
     label: String,
+    /// Names of the subvolumes, best-effort. Empty when the trees could not be
+    /// walked.
+    subvolumes: Vec<String>,
 }
 
 /// Does the superblock 64 KiB into `vol_offset` carry the Btrfs magic?
@@ -86,13 +116,25 @@ impl Volume {
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
         let label = String::from_utf8_lossy(&raw[..end]).into_owned();
 
+        // Best-effort: list the subvolumes. Any failure leaves it empty without
+        // failing detection.
+        let subvolumes =
+            enumerate_subvolumes(src, offset, &sb, nodesize as usize).unwrap_or_default();
+
         Ok(Volume {
             offset,
             total_bytes,
             sectorsize,
             nodesize,
             label,
+            subvolumes,
         })
+    }
+
+    /// Names of the subvolumes in this filesystem (empty when the trees could
+    /// not be walked).
+    pub fn subvolumes(&self) -> &[String] {
+        &self.subvolumes
     }
 
     /// Total size of the volume in bytes.
@@ -127,6 +169,176 @@ impl Volume {
     }
 }
 
+/// One chunk-map entry: a logical range and where it lives physically (the
+/// first stripe's device offset; single-device volumes have just the one).
+struct Chunk {
+    logical: u64,
+    length: u64,
+    physical: u64,
+}
+
+/// Walk the chunk tree and root tree to list subvolume names. Best-effort:
+/// returns `None` on any structure it cannot follow (multi-level trees, missing
+/// chunks), and the caller treats that as "no subvolumes".
+fn enumerate_subvolumes(
+    src: &Source,
+    offset: u64,
+    sb: &[u8],
+    nodesize: usize,
+) -> Option<Vec<String>> {
+    let root_logical = le64(sb, ROOT_LOGICAL);
+    let chunk_root_logical = le64(sb, CHUNK_ROOT_LOGICAL);
+    let sys_size = le32(sb, SYS_CHUNK_ARRAY_SIZE) as usize;
+
+    // 1. Bootstrap the chunk map from the superblock's system-chunk array.
+    let mut map: Vec<Chunk> = Vec::new();
+    parse_chunk_array(sb, SYS_CHUNK_ARRAY, sys_size, &mut map);
+    if map.is_empty() {
+        return None;
+    }
+
+    // 2. Read the chunk tree to complete the map (its node is mapped by the
+    //    bootstrap chunks).
+    let chunk_node = read_logical(src, offset, &map, chunk_root_logical, nodesize)?;
+    for_each_leaf_item(&chunk_node, |objectid, ktype, key_off, data| {
+        let _ = objectid;
+        if ktype == CHUNK_ITEM_KEY && map.len() < MAX_CHUNKS {
+            parse_chunk(data, key_off, &mut map);
+        }
+    })?;
+
+    // 3. Read the root tree and collect the ROOT_REF names.
+    let root_node = read_logical(src, offset, &map, root_logical, nodesize)?;
+    let mut names = Vec::new();
+    for_each_leaf_item(&root_node, |_objectid, ktype, _off, data| {
+        if ktype == ROOT_REF_KEY && names.len() < MAX_SUBVOLUMES {
+            if let Some(name) = root_ref_name(data) {
+                names.push(name);
+            }
+        }
+    })?;
+    if names.is_empty() {
+        None
+    } else {
+        Some(names)
+    }
+}
+
+/// Parse a sequence of (disk_key, btrfs_chunk) pairs (the system-chunk array, or
+/// any run of chunk items) into `map`.
+fn parse_chunk_array(buf: &[u8], start: usize, size: usize, map: &mut Vec<Chunk>) {
+    let end = (start + size).min(buf.len());
+    let mut p = start;
+    while p + DISK_KEY_LEN <= end && map.len() < MAX_CHUNKS {
+        let ktype = *buf.get(p + 8).unwrap_or(&0);
+        let logical = le64(buf, p + 9); // disk_key.offset
+        let chunk = p + DISK_KEY_LEN;
+        if ktype != CHUNK_ITEM_KEY || chunk + 48 > end {
+            break;
+        }
+        let num_stripes = le16(buf, chunk + 44) as usize;
+        let consumed = 48 + num_stripes * 32;
+        if num_stripes == 0 || chunk + consumed > end {
+            break;
+        }
+        parse_chunk(&buf[chunk..chunk + consumed], logical, map);
+        p = chunk + consumed;
+    }
+}
+
+/// Parse one `btrfs_chunk` (mapping `logical`) and append it to `map`.
+fn parse_chunk(chunk: &[u8], logical: u64, map: &mut Vec<Chunk>) {
+    if chunk.len() < 56 + 8 {
+        return;
+    }
+    let length = le64(chunk, 0);
+    let num_stripes = le16(chunk, 44) as usize;
+    if num_stripes == 0 || length == 0 {
+        return;
+    }
+    // First stripe: devid @48, offset @56.
+    let physical = le64(chunk, 56);
+    if map.len() < MAX_CHUNKS {
+        map.push(Chunk {
+            logical,
+            length,
+            physical,
+        });
+    }
+}
+
+/// Read `len` bytes at a logical address, translating through the chunk map.
+fn read_logical(
+    src: &Source,
+    offset: u64,
+    map: &[Chunk],
+    logical: u64,
+    len: usize,
+) -> Option<Vec<u8>> {
+    let c = map
+        .iter()
+        .find(|c| logical >= c.logical && logical < c.logical + c.length)?;
+    let physical = c.physical.checked_add(logical - c.logical)?;
+    let byte = offset.checked_add(physical)?;
+    let mut buf = vec![0u8; len];
+    if src.read_at(byte, &mut buf).ok()? < len {
+        return None;
+    }
+    Some(buf)
+}
+
+/// Invoke `f(objectid, type, key_offset, data)` for each item in a **leaf**
+/// node (level 0). Returns `None` for a non-leaf node or a malformed header.
+fn for_each_leaf_item(node: &[u8], mut f: impl FnMut(u64, u8, u64, &[u8])) -> Option<()> {
+    if node.len() < HEADER_LEN {
+        return None;
+    }
+    let nritems = le32(node, 96) as usize;
+    let level = node[100];
+    if level != 0 {
+        return None; // only single-leaf trees are handled
+    }
+    let data_area = node.len() - HEADER_LEN;
+    if nritems > data_area / ITEM_LEN {
+        return None; // implausible item count
+    }
+    for i in 0..nritems {
+        let item = HEADER_LEN + i * ITEM_LEN;
+        let objectid = le64(node, item);
+        let ktype = node[item + 8];
+        let key_off = le64(node, item + 9);
+        let data_off = le32(node, item + 17) as usize;
+        let data_size = le32(node, item + 21) as usize;
+        let start = HEADER_LEN + data_off;
+        let endpos = start.checked_add(data_size)?;
+        if endpos > node.len() {
+            continue;
+        }
+        f(objectid, ktype, key_off, &node[start..endpos]);
+    }
+    Some(())
+}
+
+/// Decode a `btrfs_root_ref` item's name (`dirid` u64, `sequence` u64,
+/// `name_len` u16, then the name bytes).
+fn root_ref_name(data: &[u8]) -> Option<String> {
+    if data.len() < 18 {
+        return None;
+    }
+    let name_len = le16(data, 16) as usize;
+    let name = data.get(18..18 + name_len)?;
+    if name.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(name).into_owned())
+}
+
+fn le16(b: &[u8], o: usize) -> u16 {
+    match b.get(o..o + 2) {
+        Some(s) => u16::from_le_bytes([s[0], s[1]]),
+        None => 0,
+    }
+}
 fn le32(b: &[u8], o: usize) -> u32 {
     match b.get(o..o + 4) {
         Some(s) => u32::from_le_bytes([s[0], s[1], s[2], s[3]]),
