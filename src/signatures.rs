@@ -419,6 +419,16 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Wmf,
         max_size: 256 * MB,
     },
+    Signature {
+        name: "glTF binary (3D model)",
+        ext: "glb",
+        magic: b"glTF",
+        magic_offset: 0,
+        secondary: None,
+        // The 12-byte header stores total length as a LE u32 at offset 8.
+        extent: Extent::HeaderSizeLe32 { offset: 8 },
+        max_size: 2 * GB,
+    },
     // HEIC/HEIF brands share the `ftyp` magic with MP4, so they must come first
     // and use a secondary brand tag (at offset 8 in the file => 4 past `ftyp`).
     Signature {
