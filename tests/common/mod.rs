@@ -82,6 +82,7 @@ pub fn ext_volume(name: &str, payload: &[u8]) -> Vec<u8> {
 // --- HFS+ ---------------------------------------------------------------
 
 const HFS_BS: usize = 512;
+const HFS_ALLOC_BLOCK: usize = 6; // allocation file (volume bitmap), 1 block
 const HFS_CATALOG_BLOCK: usize = 8; // catalog file starts here (2 nodes)
 const HFS_NODE_SIZE: usize = 512;
 const HFS_DATA_BLOCK: usize = 12; // file data starts here
@@ -117,6 +118,26 @@ pub fn hfsplus_volume(name: &str, payload: &[u8]) -> Vec<u8> {
     put_be32(&mut v, vh + 284, 2);
     put_be32(&mut v, vh + 288, HFS_CATALOG_BLOCK as u32); // extent start block
     put_be32(&mut v, vh + 292, 2); // extent block count
+                                   // Allocation file fork (the volume bitmap): one block at HFS_ALLOC_BLOCK.
+    put_be64(&mut v, vh + 112, HFS_BS as u64); // logicalSize
+    put_be32(&mut v, vh + 124, 1); // totalBlocks
+    put_be32(&mut v, vh + 128, HFS_ALLOC_BLOCK as u32); // extent start block
+    put_be32(&mut v, vh + 132, 1); // extent block count
+
+    // Allocation bitmap (MSB-first: bit 7 of byte 0 is block 0). Mark the
+    // structural blocks allocated and leave the rest free; the data blocks are
+    // marked allocated too so a deleted file's blocks read as still-in-use.
+    let bmp = HFS_ALLOC_BLOCK * HFS_BS;
+    let mut set_alloc = |block: usize| {
+        v[bmp + block / 8] |= 0x80 >> (block % 8);
+    };
+    set_alloc(2); // volume header block
+    set_alloc(HFS_ALLOC_BLOCK);
+    set_alloc(HFS_CATALOG_BLOCK);
+    set_alloc(HFS_CATALOG_BLOCK + 1);
+    for b in 0..block_count {
+        set_alloc(HFS_DATA_BLOCK + b);
+    }
 
     // Catalog node 0 (header node): the parser only needs the node size.
     let n0 = HFS_CATALOG_BLOCK * HFS_BS;
