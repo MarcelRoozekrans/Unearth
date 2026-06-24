@@ -252,8 +252,8 @@ filerecovery info disk.img --scan      # find lost partitions (whole-disk signat
 ```
 
 Each volume's **label** (its user-set name) is shown when set — for FAT,
-exFAT, ext, and Btrfs (the text view prints it on a `label:` line under the
-volume; `--json` includes a `label` field).
+exFAT, NTFS, ext, and Btrfs (the text view prints it on a `label:` line under
+the volume; `--json` includes a `label` field).
 
 With `--json`, the detected layout is written to stdout as a single object
 (`source`, `source_bytes`, and a `volumes` array of
