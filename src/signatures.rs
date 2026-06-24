@@ -37,6 +37,8 @@
 //! * [`Extent::Pcap`] / [`Extent::Pcapng`] — walk a network-capture file's
 //!   packet records / blocks.
 //! * [`Extent::Ttc`] — walk a TrueType Collection's member font directories.
+//! * [`Extent::Rar`] — walk a RAR archive's block chain (v4 and v5) to the
+//!   end-of-archive block.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -117,6 +119,10 @@ pub enum Extent {
     /// TrueType Collection (`ttcf`): a header listing each member font's table
     /// directory; walk every font's tables to the furthest `offset + length`.
     Ttc,
+    /// RAR archive (v4 and v5): walk the block chain — each block carries its
+    /// own header and data sizes — to the end-of-archive marker block. Handles
+    /// both the classic v4 layout and the v5 variable-length-integer layout.
+    Rar,
 }
 
 /// A recoverable file type.
@@ -319,6 +325,18 @@ pub static SIGNATURES: &[Signature] = &[
         // Cabinet size is a LE u32 at offset 8.
         extent: Extent::HeaderSizeLe32 { offset: 8 },
         max_size: 2 * GB,
+    },
+    Signature {
+        name: "RAR archive",
+        ext: "rar",
+        // The 6-byte prefix shared by RAR v4 (`Rar!\x1A\x07\x00`) and v5
+        // (`Rar!\x1A\x07\x01\x00`); the version byte that follows is read by the
+        // block walk.
+        magic: b"Rar!\x1a\x07",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Rar,
+        max_size: 8 * GB,
     },
     // HEIC/HEIF brands share the `ftyp` magic with MP4, so they must come first
     // and use a secondary brand tag (at offset 8 in the file => 4 past `ftyp`).
