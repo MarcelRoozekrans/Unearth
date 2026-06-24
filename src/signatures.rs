@@ -52,6 +52,7 @@
 //! * [`Extent::Mp3`] — walk MPEG audio frames from an ID3v2 tag to the end.
 //! * [`Extent::MachO`] — sum a Mach-O binary's segments and link-edit tables.
 //! * [`Extent::Regf`] — Windows registry hive: base block + hive-bins data.
+//! * [`Extent::Aac`] — walk ADTS AAC audio frames to the end of the stream.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -183,6 +184,12 @@ pub enum Extent {
     /// `4096 + hive_bins_data_size`. The version and file-type fields are checked
     /// to reject a coincidental magic.
     Regf,
+    /// AAC audio in an ADTS stream: each 7-byte (or 9-byte with CRC) frame
+    /// header carries a 13-bit frame length, so the stream is walked frame to
+    /// frame to its end. Frames are validated (sync word, fixed layer bits, a
+    /// valid and consistent sample-rate index) and several consecutive frames
+    /// are required, so the short sync word cannot trigger a false carve.
+    Aac,
 }
 
 /// A recoverable file type.
@@ -640,6 +647,45 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Regf,
         max_size: 2 * GB,
+    },
+    // ADTS AAC: one entry per common first-two-byte sync (the sync word is
+    // 0xFFF; the low nibble of byte 1 varies by MPEG version and CRC presence).
+    // The frame-walk in `aac_length` rejects coincidental matches.
+    Signature {
+        name: "AAC audio (ADTS, MPEG-4)",
+        ext: "aac",
+        magic: &[0xFF, 0xF1],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Aac,
+        max_size: 200 * MB,
+    },
+    Signature {
+        name: "AAC audio (ADTS, MPEG-2)",
+        ext: "aac",
+        magic: &[0xFF, 0xF9],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Aac,
+        max_size: 200 * MB,
+    },
+    Signature {
+        name: "AAC audio (ADTS, MPEG-4, CRC)",
+        ext: "aac",
+        magic: &[0xFF, 0xF0],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Aac,
+        max_size: 200 * MB,
+    },
+    Signature {
+        name: "AAC audio (ADTS, MPEG-2, CRC)",
+        ext: "aac",
+        magic: &[0xFF, 0xF8],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Aac,
+        max_size: 200 * MB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.

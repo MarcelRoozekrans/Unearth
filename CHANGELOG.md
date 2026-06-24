@@ -36,8 +36,9 @@ formats.
   Windows Metafiles (WMF), DjVu documents, binary glTF (`.glb`), Windows Event
   Logs (EVTX), Rich Text Format (RTF), MP3 audio (ID3v2-anchored MPEG-frame
   walk), Mach-O binaries (macOS/iOS, sized from segment and link-edit
-  extents), and Windows registry hives (`regf`, base block + hive-bins data
-  size) — each with a deterministic length strategy.
+  extents), Windows registry hives (`regf`, base block + hive-bins data
+  size), and AAC audio (ADTS frame-length walk) — each with a deterministic
+  length strategy.
 
 ## [0.2.0] - 2026-06-23
 
