@@ -502,6 +502,7 @@ fn file_length(
         Extent::Lz4 => Ok(lz4_length(source, file_start, limit)?),
         Extent::Psd => Ok(psd_length(source, file_start, limit)?),
         Extent::Wmf => Ok(wmf_length(source, file_start, limit)?),
+        Extent::Djvu => Ok(djvu_length(source, file_start, limit)?),
     }
 }
 
@@ -822,6 +823,27 @@ fn lz4_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(pos))
+}
+
+/// DjVu document length. The file is an IFF `FORM` wrapped in a 4-byte `AT&T`
+/// prefix: `"AT&T" "FORM" <be32 length> <form-type> ...`. The big-endian length
+/// at offset 8 covers everything after it, so the file ends at `12 + length`.
+/// The form type must be a known DjVu chunk to reject a coincidental magic.
+fn djvu_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 16];
+    if source.read_at(file_start, &mut h)? < 16 || &h[0..8] != b"AT&TFORM" {
+        return Ok(None);
+    }
+    let form_type = &h[12..16];
+    if !matches!(form_type, b"DJVU" | b"DJVM" | b"DJVI") {
+        return Ok(None);
+    }
+    let length = u32::from_be_bytes([h[8], h[9], h[10], h[11]]) as u64;
+    let total = length.saturating_add(12);
+    if length < 4 || file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
 }
 
 /// Windows Metafile (WMF) length. A 22-byte placeable header (Aldus, magic
