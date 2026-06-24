@@ -70,11 +70,13 @@ the leaf node and shifts the rest down, but the removed record's bytes usually
 linger in the node's *free space* until the node is rewritten, and the data
 blocks stay put until reused. `filerecovery` reads the catalog, walks every leaf
 node, and scans the free space below the live records for stale **file records**
-that pass a strict structural check, recovering each one whose data fork is fully
-described by its inline extents. (This is the catalog-slack analogue of the ext
-directory-slack technique.) A file fragmented beyond its eight inline extents —
-its tail lived in the extents-overflow B-tree — is reported skipped rather than
-written truncated; fall back to `scan`.
+that pass a strict structural check. (This is the catalog-slack analogue of the
+ext directory-slack technique.) Each recovered file follows the eight extents
+stored inline in its catalog record and, for a file **fragmented** beyond them,
+the remaining extents from the **extents-overflow B-tree** — so fragmented files
+come back whole, not truncated. Only when a file's tail extents survive in
+neither place (the overflow tree was itself rewritten after deletion) is it
+reported skipped; fall back to `scan`.
 
 ### `scan` — signature-based file carving
 
