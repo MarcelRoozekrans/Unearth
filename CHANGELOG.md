@@ -37,8 +37,9 @@ formats.
   Logs (EVTX), Rich Text Format (RTF), MP3 audio (ID3v2-anchored MPEG-frame
   walk), Mach-O binaries (macOS/iOS, sized from segment and link-edit
   extents), Windows registry hives (`regf`, base block + hive-bins data
-  size), AAC audio (ADTS frame-length walk), and Android Dalvik executables
-  (DEX, file-size header field) — each with a deterministic length strategy.
+  size), AAC audio (ADTS frame-length walk), Android Dalvik executables
+  (DEX, file-size header field), and ICC colour profiles (size in the profile
+  header) — each with a deterministic length strategy.
 
 ## [0.2.0] - 2026-06-23
 

@@ -54,6 +54,7 @@
 //! * [`Extent::Regf`] — Windows registry hive: base block + hive-bins data.
 //! * [`Extent::Aac`] — walk ADTS AAC audio frames to the end of the stream.
 //! * [`Extent::Dex`] — Android Dalvik executable: `file_size` header field.
+//! * [`Extent::Icc`] — ICC colour profile: total size in the profile header.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -196,6 +197,12 @@ pub enum Extent {
     /// endian tag (0x12345678 at 0x28) and header size (0x70 at 0x24) are
     /// checked to reject a coincidental magic.
     Dex,
+    /// ICC colour profile: the 128-byte profile header opens with the total
+    /// profile size as a big-endian u32 at offset 0, and carries the `acsp`
+    /// file signature at offset 36 (the magic anchors there). The size must be
+    /// at least the header size and a multiple of 4 (profiles are 4-byte
+    /// padded), which rejects a coincidental `acsp` match.
+    Icc,
 }
 
 /// A recoverable file type.
@@ -701,6 +708,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Dex,
         max_size: GB,
+    },
+    Signature {
+        name: "ICC colour profile",
+        ext: "icc",
+        magic: b"acsp",
+        magic_offset: 36,
+        secondary: None,
+        extent: Extent::Icc,
+        max_size: 64 * MB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.
