@@ -57,6 +57,7 @@
 //! * [`Extent::Icc`] — ICC colour profile: total size in the profile header.
 //! * [`Extent::Ar`] — Unix `ar` archive (`.a`/`.deb`): walk the member chain.
 //! * [`Extent::Shp`] — ESRI Shapefile: total length (in 16-bit words) in header.
+//! * [`Extent::Blend`] — Blender file: walk the block chain to the `ENDB` block.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -216,6 +217,12 @@ pub enum Extent {
     /// file ends at `length * 2`. The file code (9994 at offset 0) and version
     /// (1000 at offset 28) are checked to reject a coincidental magic.
     Shp,
+    /// Blender file (`.blend`): a 12-byte header (`BLENDER` + pointer-size and
+    /// endianness flags + version) followed by a chain of file blocks, each with
+    /// a header carrying its data size; walk the chain to the terminating `ENDB`
+    /// block, which gives an exact end. The pointer-size and endianness flags are
+    /// validated to reject a coincidental magic.
+    Blend,
 }
 
 /// A recoverable file type.
@@ -747,6 +754,15 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::Shp,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "Blender file",
+        ext: "blend",
+        magic: b"BLENDER",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Blend,
         max_size: 2 * GB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag

@@ -513,6 +513,7 @@ fn file_length(
         Extent::Icc => Ok(icc_length(source, file_start, limit)?),
         Extent::Ar => Ok(ar_length(source, file_start, limit)?),
         Extent::Shp => Ok(shp_length(source, file_start, limit)?),
+        Extent::Blend => Ok(blend_length(source, file_start, limit)?),
     }
 }
 
@@ -2701,6 +2702,61 @@ fn shp_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(size))
+}
+
+/// Blender (`.blend`) length. A 12-byte header (`BLENDER`, a pointer-size flag
+/// `_` (4) or `-` (8), an endianness flag `v` (little) or `V` (big), and a
+/// 3-byte version) is followed by a chain of file blocks. Each block header is
+/// a 4-byte code, a 4-byte data size, an old pointer (4 or 8 bytes), and two
+/// 4-byte fields, followed by `size` bytes of data. The chain is walked to the
+/// terminating `ENDB` block, which gives an exact end.
+fn blend_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let avail = limit.saturating_sub(file_start);
+    let mut head = [0u8; 12];
+    if source.read_at(file_start, &mut head)? < 12 || &head[0..7] != b"BLENDER" {
+        return Ok(None);
+    }
+    let ptr_size: u64 = match head[7] {
+        b'_' => 4,
+        b'-' => 8,
+        _ => return Ok(None),
+    };
+    let le = match head[8] {
+        b'v' => true,
+        b'V' => false,
+        _ => return Ok(None),
+    };
+    let block_hdr = 16 + ptr_size; // code(4) + size(4) + ptr + sdna(4) + count(4)
+
+    let mut pos = 12u64;
+    loop {
+        if pos.saturating_add(block_hdr) > avail {
+            break;
+        }
+        let mut hdr = [0u8; 24]; // max block header (64-bit pointer)
+        if source.read_at(file_start + pos, &mut hdr[..block_hdr as usize])? < block_hdr as usize {
+            break;
+        }
+        let size = if le {
+            u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]])
+        } else {
+            u32::from_be_bytes([hdr[4], hdr[5], hdr[6], hdr[7]])
+        } as u64;
+        if &hdr[0..4] == b"ENDB" {
+            // The terminating block ends the file (its data size is normally 0).
+            let end = pos.saturating_add(block_hdr).saturating_add(size);
+            if end > avail {
+                break;
+            }
+            return Ok(Some(end));
+        }
+        let next = pos.saturating_add(block_hdr).saturating_add(size);
+        if next > avail {
+            break;
+        }
+        pos = next;
+    }
+    Ok(None) // no ENDB terminator found within bounds
 }
 
 /// Search forward from `file_start` for `marker`, returning the file length
