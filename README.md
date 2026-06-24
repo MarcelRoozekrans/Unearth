@@ -238,9 +238,14 @@ sudo filerecovery image /dev/sdb card.img --map card.map --retry-bad 3
     --map <FILE>          Checkpoint progress here for --resume
     --resume              Resume a prior run from its map file
     --retry-bad <PASSES>  Re-read unreadable regions this many extra times
+    --hash                SHA-256 the written image (chain of custody)
     --summary <FILE>      Write a run summary (.json => JSON, else text)
 -q, --quiet               Suppress the progress bar
 ```
+
+Pass `--hash` to compute the SHA-256 of the finished image; it is printed and
+recorded in the `--summary` (as `sha256`), giving a chain-of-custody digest you
+can re-check later. It reads the image back once, so it adds a pass.
 
 ### Inspect the layout of a disk or image
 
