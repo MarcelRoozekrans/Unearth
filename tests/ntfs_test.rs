@@ -132,6 +132,44 @@ const FLAG_IN_USE: u16 = 0x01;
 const FLAG_DIR: u16 = 0x02;
 
 #[test]
+fn free_extents_reads_the_bitmap() {
+    let mut img = vec![0u8; TOTAL_CLUSTERS * CLUSTER];
+    write_boot(&mut img);
+
+    // Record 0: $MFT (non-resident $DATA over 32 clusters from LCN 4).
+    let mft_runs = [0x11u8, MFT_RECORDS as u8 * 2, MFT_CLUSTER as u8, 0x00];
+    let rec0 = build_record(
+        FLAG_IN_USE,
+        &[data_nonresident((MFT_RECORDS * RECORD) as u64, &mft_runs)],
+    );
+    let o = mft_byte(0);
+    img[o..o + RECORD].copy_from_slice(&rec0);
+
+    // Record 6: $Bitmap with a resident $DATA holding the cluster bitmap (64
+    // clusters = 8 bytes). All allocated except cluster 50 (bit 50: byte 6, bit 2).
+    let mut bitmap = vec![0xFFu8; 8];
+    bitmap[6] &= !(1 << 2);
+    let rec6 = build_record(FLAG_IN_USE, &[data_resident(&bitmap)]);
+    let o = mft_byte(6);
+    img[o..o + RECORD].copy_from_slice(&rec6);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let p = tmp.path().join("ntfs.img");
+    std::fs::write(&p, &img).unwrap();
+    let src = Source::open(&p).unwrap();
+    let vol = ntfs::Volume::parse(&src, 0).unwrap();
+
+    let free = vol.free_extents(&src).unwrap();
+    let covered = |c: u64| {
+        let off = c * CLUSTER as u64;
+        free.iter().any(|&(s, l)| off >= s && off < s + l)
+    };
+    assert!(covered(50), "cluster 50 is free");
+    assert!(!covered(4), "cluster 4 ($MFT) is allocated");
+    assert!(!covered(0), "cluster 0 (boot) is allocated");
+}
+
+#[test]
 fn recovers_deleted_ntfs_files() {
     let mut img = vec![0u8; TOTAL_CLUSTERS * CLUSTER];
     write_boot(&mut img);
