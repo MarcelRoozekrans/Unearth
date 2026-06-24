@@ -173,7 +173,9 @@ fn tool_definitions() -> Json {
     tool(
         "list_volumes",
         "Detect the partitions/filesystems in a source (disk image or device). \
-         Set deleted=true to also count recoverable deleted files per volume.",
+         Set deleted=true to also count recoverable deleted files per volume. \
+         Set scan=true to find lost/orphaned volumes by a whole-source signature \
+         scan when the partition table is missing or corrupt.",
         schema(
             vec![
                 (
@@ -183,6 +185,17 @@ fn tool_definitions() -> Json {
                 (
                     "deleted",
                     bool_prop("Also count recoverable deleted files."),
+                ),
+                (
+                    "scan",
+                    bool_prop(
+                        "Find lost partitions via a whole-source signature scan \
+                         (default false); may be slow on a large device.",
+                    ),
+                ),
+                (
+                    "scan_step",
+                    int_prop("Alignment in bytes for --scan probes (default 1 MiB)."),
                 ),
             ],
             vec!["source"],
@@ -449,7 +462,12 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
         "list_volumes" => {
             let source = open(arg_str("source")?)?;
             let deleted = arg_bool("deleted").unwrap_or(false);
-            let vols = recover::detect(&source).unwrap_or_default();
+            let vols = if arg_bool("scan").unwrap_or(false) {
+                let step = arg_u64("scan_step").unwrap_or(1024 * 1024);
+                recover::scan_lost_volumes(&source, step, |_| {}).unwrap_or_default()
+            } else {
+                recover::detect(&source).unwrap_or_default()
+            };
             let list = vols
                 .iter()
                 .enumerate()
