@@ -43,6 +43,8 @@
 //!   (plus the optional content checksum).
 //! * [`Extent::Lz4`] — walk an LZ4 frame's data blocks to the end mark (plus
 //!   optional block/content checksums).
+//! * [`Extent::Psd`] — sum a Photoshop document's header, length-prefixed
+//!   sections, and image data (raw or RLE).
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -135,6 +137,11 @@ pub enum Extent {
     /// 4-byte size prefix) to the zero-sized end mark, accounting for optional
     /// per-block and content checksums.
     Lz4,
+    /// Photoshop document (PSD/PSB): a fixed header, three length-prefixed
+    /// sections (colour-mode data, image resources, layer & mask info), then the
+    /// image data whose size is computed from the dimensions for raw storage or
+    /// summed from the per-scanline byte counts for PackBits (RLE).
+    Psd,
 }
 
 /// A recoverable file type.
@@ -367,6 +374,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Lz4,
         max_size: 8 * GB,
+    },
+    Signature {
+        name: "Photoshop document",
+        ext: "psd",
+        magic: b"8BPS",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Psd,
+        max_size: 4 * GB,
     },
     // HEIC/HEIF brands share the `ftyp` magic with MP4, so they must come first
     // and use a secondary brand tag (at offset 8 in the file => 4 past `ftyp`).
