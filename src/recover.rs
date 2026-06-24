@@ -140,12 +140,13 @@ impl Volume {
         }
     }
 
-    /// The user-set filesystem label (FAT, exFAT, ext, or Btrfs), when set.
-    /// `None` when there is no label or the filesystem does not expose one.
+    /// The user-set filesystem label (FAT, exFAT, NTFS, ext, or Btrfs), when
+    /// set. `None` when there is no label or the filesystem does not expose one.
     pub fn volume_label(&self) -> Option<String> {
         let label = match self {
             Volume::Fat(v) => v.label(),
             Volume::Exfat(v) => v.label(),
+            Volume::Ntfs(v) => v.label(),
             Volume::Ext(v) => v.label(),
             Volume::Btrfs(v) => v.label(),
             _ => "",

@@ -70,6 +70,26 @@ fn filename_attr(name: &str, parent_record: u64, namespace: u8) -> Vec<u8> {
     attr
 }
 
+/// Build a resident `$VOLUME_NAME` (0x60) attribute holding `label` as UTF-16LE.
+fn volume_name_attr(label: &str) -> Vec<u8> {
+    let mut content = Vec::new();
+    for u in label.encode_utf16() {
+        content.extend_from_slice(&u.to_le_bytes());
+    }
+    let mut attr = vec![0u8; 24];
+    attr[0..4].copy_from_slice(&0x60u32.to_le_bytes());
+    attr[8] = 0; // resident
+    attr[10..12].copy_from_slice(&24u16.to_le_bytes()); // name offset
+    attr[16..20].copy_from_slice(&(content.len() as u32).to_le_bytes());
+    attr[20..22].copy_from_slice(&24u16.to_le_bytes()); // content offset
+    attr.extend_from_slice(&content);
+    let attr = pad8(attr);
+    let len = attr.len() as u32;
+    let mut attr = attr;
+    attr[4..8].copy_from_slice(&len.to_le_bytes());
+    attr
+}
+
 /// Build a resident `$DATA` (0x80) attribute holding `content` inline.
 fn data_resident(content: &[u8]) -> Vec<u8> {
     let mut attr = vec![0u8; 24];
@@ -167,6 +187,40 @@ fn free_extents_reads_the_bitmap() {
     assert!(covered(50), "cluster 50 is free");
     assert!(!covered(4), "cluster 4 ($MFT) is allocated");
     assert!(!covered(0), "cluster 0 (boot) is allocated");
+}
+
+#[test]
+fn reads_the_volume_label() {
+    let mut img = vec![0u8; TOTAL_CLUSTERS * CLUSTER];
+    write_boot(&mut img);
+
+    // Record 0: $MFT (non-resident $DATA over 32 clusters from LCN 4).
+    let mft_runs = [0x11u8, MFT_RECORDS as u8 * 2, MFT_CLUSTER as u8, 0x00];
+    let rec0 = build_record(
+        FLAG_IN_USE,
+        &[data_nonresident((MFT_RECORDS * RECORD) as u64, &mft_runs)],
+    );
+    let o = mft_byte(0);
+    img[o..o + RECORD].copy_from_slice(&rec0);
+
+    // Record 3: $Volume with a $VOLUME_NAME attribute.
+    let rec3 = build_record(FLAG_IN_USE, &[volume_name_attr("MY NTFS DISK")]);
+    let o = mft_byte(3);
+    img[o..o + RECORD].copy_from_slice(&rec3);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let p = tmp.path().join("ntfs.img");
+    std::fs::write(&p, &img).unwrap();
+    let src = Source::open(&p).unwrap();
+
+    assert_eq!(
+        ntfs::Volume::parse(&src, 0).unwrap().label(),
+        "MY NTFS DISK"
+    );
+    assert_eq!(
+        recover::detect(&src).unwrap()[0].volume_label().as_deref(),
+        Some("MY NTFS DISK")
+    );
 }
 
 #[test]

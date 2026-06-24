@@ -45,12 +45,17 @@ pub struct Volume {
     mft_runs: Runs,
     /// Number of records in the MFT.
     record_count: u64,
+    /// Volume label (`$VOLUME_NAME` of `$Volume`), empty when unset.
+    label: String,
 }
 
 const ATTR_STANDARD_INFO: u32 = 0x10;
 const ATTR_FILE_NAME: u32 = 0x30;
+const ATTR_VOLUME_NAME: u32 = 0x60;
 const ATTR_DATA: u32 = 0x80;
 const ATTR_END: u32 = 0xFFFF_FFFF;
+/// MFT record of `$Volume`, which carries the volume label.
+const VOLUME_RECORD: u64 = 3;
 const FLAG_IN_USE: u16 = 0x01;
 const FLAG_DIRECTORY: u16 = 0x02;
 const ROOT_RECORD: u64 = 5;
@@ -132,7 +137,7 @@ impl Volume {
             mft_data_extent(&rec0, cluster_size).context("parsing $MFT $DATA runs")?;
         let record_count = (mft_size / record_size).min(MAX_RECORDS);
 
-        Ok(Volume {
+        let mut vol = Volume {
             offset,
             bytes_per_sector,
             cluster_size,
@@ -140,7 +145,72 @@ impl Volume {
             volume_size,
             mft_runs,
             record_count,
-        })
+            label: String::new(),
+        };
+        vol.label = vol.read_volume_label(src).unwrap_or_default();
+        Ok(vol)
+    }
+
+    /// The volume label, empty when unset.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Read the volume label from `$Volume`'s `$VOLUME_NAME` attribute (MFT
+    /// record 3): a resident attribute whose content is the name in UTF-16LE.
+    fn read_volume_label(&self, src: &Source) -> Option<String> {
+        let rec = self.read_record(src, VOLUME_RECORD).ok()??;
+        if rec.len() < 24 || &rec[0..4] != b"FILE" {
+            return None;
+        }
+        let mut offset = u16::from_le_bytes([rec[20], rec[21]]) as usize;
+        while offset + 16 <= rec.len() {
+            let attr_type = u32::from_le_bytes([
+                rec[offset],
+                rec[offset + 1],
+                rec[offset + 2],
+                rec[offset + 3],
+            ]);
+            if attr_type == ATTR_END {
+                break;
+            }
+            let attr_len = u32::from_le_bytes([
+                rec[offset + 4],
+                rec[offset + 5],
+                rec[offset + 6],
+                rec[offset + 7],
+            ]) as usize;
+            if attr_len < 24 || offset + attr_len > rec.len() {
+                break;
+            }
+            // $VOLUME_NAME is resident; its content is the UTF-16LE label.
+            if attr_type == ATTR_VOLUME_NAME && rec[offset + 8] == 0 {
+                let content_len = u32::from_le_bytes([
+                    rec[offset + 16],
+                    rec[offset + 17],
+                    rec[offset + 18],
+                    rec[offset + 19],
+                ]) as usize;
+                let content_off = u16::from_le_bytes([rec[offset + 20], rec[offset + 21]]) as usize;
+                let start = offset + content_off;
+                let end = start.checked_add(content_len)?;
+                if end <= rec.len() && content_len >= 2 {
+                    let units: Vec<u16> = rec[start..end]
+                        .chunks_exact(2)
+                        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                        .collect();
+                    let name: String = char::decode_utf16(units)
+                        .map(|r| r.unwrap_or('\u{FFFD}'))
+                        .collect();
+                    if !name.is_empty() {
+                        return Some(name);
+                    }
+                }
+                return None;
+            }
+            offset += attr_len;
+        }
+        None
     }
 
     /// Read MFT record `index`, with fixups applied.
