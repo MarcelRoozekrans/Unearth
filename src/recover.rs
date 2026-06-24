@@ -140,12 +140,20 @@ impl Volume {
         }
     }
 
-    /// The user-set filesystem label, when the backend reads one (Btrfs today).
-    /// `None` when there is no label or the filesystem has none.
+    /// The user-set filesystem label (FAT, exFAT, ext, or Btrfs), when set.
+    /// `None` when there is no label or the filesystem does not expose one.
     pub fn volume_label(&self) -> Option<String> {
-        match self {
-            Volume::Btrfs(v) if !v.label().is_empty() => Some(v.label().to_string()),
-            _ => None,
+        let label = match self {
+            Volume::Fat(v) => v.label(),
+            Volume::Exfat(v) => v.label(),
+            Volume::Ext(v) => v.label(),
+            Volume::Btrfs(v) => v.label(),
+            _ => "",
+        };
+        if label.is_empty() {
+            None
+        } else {
+            Some(label.to_string())
         }
     }
 

@@ -40,6 +40,8 @@ pub struct Volume {
     cluster_count: u32,
     root_cluster: u32,
     volume_length_sectors: u64,
+    /// Volume label (from the root directory's `0x83` entry), empty when unset.
+    label: String,
 }
 
 const ENTRY_SIZE: usize = 32;
@@ -90,7 +92,7 @@ impl Volume {
             bail!("implausible exFAT cluster size shift {sectors_per_cluster_shift}");
         }
 
-        Ok(Volume {
+        let mut vol = Volume {
             offset,
             bytes_per_sector: 1u64 << bytes_per_sector_shift,
             sectors_per_cluster: 1u64 << sectors_per_cluster_shift,
@@ -99,7 +101,10 @@ impl Volume {
             cluster_count,
             root_cluster,
             volume_length_sectors,
-        })
+            label: String::new(),
+        };
+        vol.label = vol.read_label(src);
+        Ok(vol)
     }
 
     fn cluster_bytes(&self) -> u64 {
@@ -159,6 +164,37 @@ impl Volume {
     /// contiguous, from the exFAT Allocation Bitmap (a `0x81` entry in the root
     /// directory points to it). A clear bit means the cluster is free, so
     /// carving those ranges recovers deleted data without re-finding live files.
+    /// The volume label, empty when unset.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Read the volume label from the root directory's Volume Label entry
+    /// (`0x83`: a character count then up to 11 UTF-16LE units). Empty on any
+    /// read error or when no label is set.
+    fn read_label(&self, src: &Source) -> String {
+        let root = match self.read_directory(src, self.root_cluster, None, false) {
+            Ok(r) => r,
+            Err(_) => return String::new(),
+        };
+        for e in root.chunks_exact(ENTRY_SIZE) {
+            match e[0] {
+                0x00 => break, // end of directory
+                0x83 => {
+                    let count = (e[1] as usize).min(11);
+                    let units: Vec<u16> = (0..count)
+                        .map(|i| u16::from_le_bytes([e[2 + i * 2], e[3 + i * 2]]))
+                        .collect();
+                    return char::decode_utf16(units)
+                        .map(|r| r.unwrap_or('\u{FFFD}'))
+                        .collect();
+                }
+                _ => {}
+            }
+        }
+        String::new()
+    }
+
     pub fn free_extents(&self, src: &Source) -> Result<Vec<(u64, u64)>> {
         // The Allocation Bitmap is described by a directory entry in the root.
         let root = self.read_directory(src, self.root_cluster, None, false)?;

@@ -134,6 +134,37 @@ fn recovers_deleted_exfat_file() {
 }
 
 #[test]
+fn reads_the_volume_label() {
+    let mut img = vec![0u8; VOLUME_SECTORS as usize * BPS];
+    write_boot(&mut img);
+    write_fat(&mut img, ROOT_CLUSTER, 0xFFFF_FFFF);
+
+    // A Volume Label entry (0x83) at the start of the root directory: a
+    // character count then up to 11 UTF-16LE units.
+    let label = "MY CARD";
+    let units: Vec<u16> = label.encode_utf16().collect();
+    let root_off = cluster_byte_offset(ROOT_CLUSTER);
+    img[root_off] = 0x83;
+    img[root_off + 1] = units.len() as u8;
+    for (i, &u) in units.iter().enumerate() {
+        img[root_off + 2 + i * 2..root_off + 4 + i * 2].copy_from_slice(&u.to_le_bytes());
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let img_path = tmp.path().join("card.img");
+    std::fs::write(&img_path, &img).unwrap();
+    let source = Source::open(&img_path).unwrap();
+
+    assert_eq!(exfat::Volume::parse(&source, 0).unwrap().label(), "MY CARD");
+    assert_eq!(
+        recover::detect(&source).unwrap()[0]
+            .volume_label()
+            .as_deref(),
+        Some("MY CARD")
+    );
+}
+
+#[test]
 fn recovers_file_in_subdirectory() {
     let mut img = vec![0u8; VOLUME_SECTORS as usize * BPS];
     write_boot(&mut img);

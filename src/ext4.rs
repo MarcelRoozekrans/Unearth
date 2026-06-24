@@ -81,6 +81,8 @@ pub struct Volume {
     blocks_per_group: u32,
     /// First data block (`s_first_data_block`: 1 for 1 KiB blocks, else 0).
     first_data_block: u64,
+    /// Volume label (`s_volume_name`), empty when unset.
+    label: String,
 }
 
 /// Does the superblock at `vol_offset + 1024` carry the ext magic?
@@ -200,6 +202,11 @@ impl Volume {
             bail!("ext volume has no block groups");
         }
 
+        // s_volume_name: 16 bytes at superblock offset 0x78, NUL-padded.
+        let raw = &sb[0x78..0x88];
+        let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+        let label = String::from_utf8_lossy(&raw[..end]).into_owned();
+
         Ok(Volume {
             offset,
             block_size,
@@ -212,7 +219,13 @@ impl Volume {
             block_bitmaps,
             blocks_per_group,
             first_data_block,
+            label,
         })
+    }
+
+    /// The volume label (`s_volume_name`), empty when unset.
+    pub fn label(&self) -> &str {
+        &self.label
     }
 
     fn read_block(&self, src: &Source, block: u64) -> Result<Vec<u8>> {
