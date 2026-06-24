@@ -58,6 +58,7 @@
 //! * [`Extent::Ar`] — Unix `ar` archive (`.a`/`.deb`): walk the member chain.
 //! * [`Extent::Shp`] — ESRI Shapefile: total length (in 16-bit words) in header.
 //! * [`Extent::Blend`] — Blender file: walk the block chain to the `ENDB` block.
+//! * [`Extent::Nes`] — iNES / NES 2.0 ROM: size from the PRG/CHR bank counts.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -223,6 +224,12 @@ pub enum Extent {
     /// block, which gives an exact end. The pointer-size and endianness flags are
     /// validated to reject a coincidental magic.
     Blend,
+    /// iNES / NES 2.0 ROM (`NES\x1a`): the 16-byte header records the PRG and
+    /// CHR ROM bank counts, so the file ends at `16 + trainer + prg * 16384 +
+    /// chr * 8192` (the trainer is an optional 512 bytes). NES 2.0 extends the
+    /// bank counts with high bits; ROMs using the exponent bank form or carrying
+    /// an indeterminate miscellaneous-ROM area are rejected.
+    Nes,
 }
 
 /// A recoverable file type.
@@ -764,6 +771,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Blend,
         max_size: 2 * GB,
+    },
+    Signature {
+        name: "NES ROM (iNES)",
+        ext: "nes",
+        magic: b"NES\x1a",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Nes,
+        max_size: 64 * MB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.
