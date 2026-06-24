@@ -269,13 +269,18 @@ fn info(args: InfoArgs) -> Result<()> {
                     .map(|n| format!("\"{}\"", json_escape(n)))
                     .collect::<Vec<_>>()
                     .join(", ");
+                let label = match vol.volume_label() {
+                    Some(l) => format!("\"{}\"", json_escape(&l)),
+                    None => "null".to_string(),
+                };
                 out.push_str(&format!(
-                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"deleted\": {}, \"contained_volumes\": [{}]}}{}\n",
+                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"deleted\": {}, \"label\": {}, \"contained_volumes\": [{}]}}{}\n",
                     i,
                     json_escape(&vol.fs_label()),
                     vol.offset(),
                     vol.size(),
                     deleted,
+                    label,
                     volumes,
                     comma
                 ));
@@ -324,6 +329,9 @@ fn info(args: InfoArgs) -> Result<()> {
             human_bytes(vol.size()),
             deleted
         );
+        if let Some(label) = vol.volume_label() {
+            println!("      label: {label}");
+        }
         let contained = vol.contained_volumes();
         if !contained.is_empty() {
             println!("      volumes: {}", contained.join(", "));
