@@ -81,6 +81,43 @@ fn image_copies_a_source_exactly() {
 }
 
 #[test]
+fn image_hash_records_the_image_digest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("disk.img");
+    let out_img = tmp.path().join("copy.img");
+    let summary = tmp.path().join("summary.json");
+
+    let data: Vec<u8> = (0..20_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&src, &data).unwrap();
+
+    let out = run(&[
+        "image",
+        src.to_str().unwrap(),
+        out_img.to_str().unwrap(),
+        "--no-sparse",
+        "--quiet",
+        "--hash",
+        "--summary",
+        summary.to_str().unwrap(),
+    ]);
+    assert!(out.status.success());
+
+    // For a clean, full copy the image equals the source, so its digest is the
+    // source's digest. It is printed and recorded in the summary.
+    let expected = filerecovery::hash::to_hex(&filerecovery::hash::digest(&data));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(&format!("SHA-256: {expected}")),
+        "stdout: {stdout}"
+    );
+    let report = std::fs::read_to_string(&summary).unwrap();
+    assert!(
+        report.contains(&format!("\"sha256\": \"{expected}\"")),
+        "summary: {report}"
+    );
+}
+
+#[test]
 fn image_writes_a_map_and_resume_completes() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("disk.img");

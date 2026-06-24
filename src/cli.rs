@@ -165,6 +165,12 @@ pub struct ImageArgs {
     #[arg(long, value_name = "FILE")]
     pub summary: Option<PathBuf>,
 
+    /// After the copy, compute the SHA-256 of the written image and report it
+    /// (and record it in the summary) — a chain-of-custody digest you can later
+    /// re-check with `verify`. Reads the image back once, so it adds a pass.
+    #[arg(long)]
+    pub hash: bool,
+
     /// Suppress the progress bar.
     #[arg(short, long)]
     pub quiet: bool,

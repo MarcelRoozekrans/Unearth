@@ -1034,9 +1034,20 @@ fn image(args: ImageArgs) -> Result<()> {
         }
     }
 
+    // Optional chain-of-custody digest of the written image.
+    let image_hash = if args.hash {
+        eprintln!("Hashing image...");
+        let h = hash_file(&args.output)?;
+        println!("SHA-256: {h}");
+        Some(h)
+    } else {
+        None
+    };
+
     if let Some(summary_path) = &args.summary {
         let fields = [
             ("command", Sv::S("image".into())),
+            ("sha256", Sv::S(image_hash.clone().unwrap_or_default())),
             ("source", Sv::S(args.source.display().to_string())),
             ("source_bytes", Sv::N(source.size)),
             ("output", Sv::S(args.output.display().to_string())),
@@ -1066,6 +1077,23 @@ fn image(args: ImageArgs) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Stream a file through SHA-256 and return the lowercase hex digest.
+fn hash_file(path: &std::path::Path) -> Result<String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)
+        .map_err(|e| anyhow::anyhow!("opening {}: {e}", path.display()))?;
+    let mut hasher = filerecovery::hash::Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(filerecovery::hash::to_hex(&hasher.finalize()))
 }
 
 /// Seconds since the Unix epoch (0 if the clock is before it).
