@@ -263,13 +263,20 @@ fn info(args: InfoArgs) -> Result<()> {
                     None => "null".to_string(),
                 };
                 let comma = if i + 1 < vols.len() { "," } else { "" };
+                let volumes = vol
+                    .contained_volumes()
+                    .iter()
+                    .map(|n| format!("\"{}\"", json_escape(n)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 out.push_str(&format!(
-                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"deleted\": {}}}{}\n",
+                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"deleted\": {}, \"contained_volumes\": [{}]}}{}\n",
                     i,
                     json_escape(&vol.fs_label()),
                     vol.offset(),
                     vol.size(),
                     deleted,
+                    volumes,
                     comma
                 ));
             }
@@ -317,6 +324,10 @@ fn info(args: InfoArgs) -> Result<()> {
             human_bytes(vol.size()),
             deleted
         );
+        let contained = vol.contained_volumes();
+        if !contained.is_empty() {
+            println!("      volumes: {}", contained.join(", "));
+        }
     }
     if !args.deleted {
         println!("\nRun with --deleted to count recoverable deleted files per volume.");

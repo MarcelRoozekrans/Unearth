@@ -472,6 +472,10 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                         ("offset", n(v.offset())),
                         ("size", n(v.size())),
                         ("deleted", del),
+                        (
+                            "contained_volumes",
+                            Json::Arr(v.contained_volumes().into_iter().map(s).collect()),
+                        ),
                     ])
                 })
                 .collect();

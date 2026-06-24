@@ -119,6 +119,15 @@ impl Volume {
         }
     }
 
+    /// Names of sub-volumes contained in this volume. APFS containers list the
+    /// volumes inside them here; other filesystems have none.
+    pub fn contained_volumes(&self) -> Vec<String> {
+        match self {
+            Volume::Apfs(v) => v.volume_names().to_vec(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Absolute byte ranges of the volume's free (unallocated) space, if this
     /// backend can compute it. Carving only these ranges recovers deleted
     /// content without re-finding files that are still allocated. Returns
