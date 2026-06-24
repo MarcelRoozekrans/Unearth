@@ -500,6 +500,7 @@ fn file_length(
         Extent::Rar => Ok(rar_length(source, file_start, limit)?),
         Extent::Zstd => Ok(zstd_length(source, file_start, limit)?),
         Extent::Lz4 => Ok(lz4_length(source, file_start, limit)?),
+        Extent::Psd => Ok(psd_length(source, file_start, limit)?),
     }
 }
 
@@ -817,6 +818,120 @@ fn lz4_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         };
     }
     if file_start + pos > limit {
+        return Ok(None);
+    }
+    Ok(Some(pos))
+}
+
+/// Advance past one of a PSD's length-prefixed sections: a big-endian length
+/// field of `field_size` bytes (4 for PSD, 8 for PSB) followed by that many
+/// bytes. Returns the offset just past the section, or `None` if it runs past
+/// the limit or the source ends.
+fn psd_section(
+    source: &Source,
+    file_start: u64,
+    pos: u64,
+    field_size: usize,
+    limit: u64,
+) -> Result<Option<u64>> {
+    let mut buf = [0u8; 8];
+    if source.read_at(file_start + pos, &mut buf[..field_size])? < field_size {
+        return Ok(None);
+    }
+    let len = if field_size == 8 {
+        u64::from_be_bytes(buf)
+    } else {
+        u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as u64
+    };
+    let next = pos.saturating_add(field_size as u64).saturating_add(len);
+    if file_start.saturating_add(next) > limit {
+        return Ok(None);
+    }
+    Ok(Some(next))
+}
+
+/// Photoshop document (PSD/PSB) length. After the 26-byte header come three
+/// length-prefixed sections, then the image data: raw (size from the geometry)
+/// or PackBits RLE (a per-scanline byte-count table whose entries sum to the
+/// compressed size).
+fn psd_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut hdr = [0u8; 26];
+    if source.read_at(file_start, &mut hdr)? < 26 || &hdr[0..4] != b"8BPS" {
+        return Ok(None);
+    }
+    let version = u16::from_be_bytes([hdr[4], hdr[5]]); // 1 = PSD, 2 = PSB
+    if version != 1 && version != 2 {
+        return Ok(None);
+    }
+    let channels = u16::from_be_bytes([hdr[12], hdr[13]]) as u64;
+    let height = u32::from_be_bytes([hdr[14], hdr[15], hdr[16], hdr[17]]) as u64;
+    let width = u32::from_be_bytes([hdr[18], hdr[19], hdr[20], hdr[21]]) as u64;
+    let depth = u16::from_be_bytes([hdr[22], hdr[23]]) as u64;
+    if channels == 0 || channels > 56 || width == 0 || height == 0 {
+        return Ok(None);
+    }
+    if !matches!(depth, 1 | 8 | 16 | 32) {
+        return Ok(None);
+    }
+
+    // Colour-mode data, image resources, and layer & mask info. The layer length
+    // field is a u64 in PSB (version 2), a u32 in PSD.
+    let layer_field = if version == 2 { 8 } else { 4 };
+    let mut pos = 26u64;
+    for field in [4usize, 4, layer_field] {
+        pos = match psd_section(source, file_start, pos, field, limit)? {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+    }
+
+    // Image data: a 2-byte compression method, then the pixel data.
+    let mut comp = [0u8; 2];
+    if source.read_at(file_start + pos, &mut comp)? < 2 {
+        return Ok(None);
+    }
+    pos += 2;
+    let rows = height.saturating_mul(channels);
+    match u16::from_be_bytes(comp) {
+        0 => {
+            // Raw: each scanline is width * (depth bytes), 1-bit packed to bytes.
+            let row_bytes = if depth == 1 {
+                width.div_ceil(8)
+            } else {
+                width.saturating_mul(depth / 8)
+            };
+            pos = pos.saturating_add(row_bytes.saturating_mul(rows));
+        }
+        1 => {
+            // PackBits RLE: a byte-count per scanline (u16 PSD / u32 PSB), then
+            // the compressed rows whose lengths are exactly those counts.
+            let count_size: u64 = if version == 2 { 4 } else { 2 };
+            let counts_bytes = rows.saturating_mul(count_size);
+            if counts_bytes > 64 * 1024 * 1024 {
+                return Ok(None); // implausible scanline-count table
+            }
+            let mut counts = vec![0u8; counts_bytes as usize];
+            if (source.read_at(file_start + pos, &mut counts)? as u64) < counts_bytes {
+                return Ok(None);
+            }
+            let mut sum = 0u64;
+            for i in 0..rows as usize {
+                let c = if count_size == 4 {
+                    let o = i * 4;
+                    u32::from_be_bytes([counts[o], counts[o + 1], counts[o + 2], counts[o + 3]])
+                        as u64
+                } else {
+                    let o = i * 2;
+                    u16::from_be_bytes([counts[o], counts[o + 1]]) as u64
+                };
+                sum = sum.saturating_add(c);
+            }
+            pos = pos.saturating_add(counts_bytes).saturating_add(sum);
+        }
+        _ => return Ok(None), // zip-compressed image data: length not derivable here
+    }
+
+    if pos == 0 || file_start.saturating_add(pos) > limit {
         return Ok(None);
     }
     Ok(Some(pos))
