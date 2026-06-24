@@ -519,6 +519,7 @@ alongside the per-file manifest.
 | woff   | WOFF web font                                    | size field in header (BE)    |
 | woff2  | WOFF2 web font                                   | size field in header (BE)    |
 | emf    | Enhanced Metafile (vector)                       | size field in header         |
+| wmf    | Windows Metafile (vector, placeable too)         | mtSize words in header       |
 | mid    | Standard MIDI file                               | MThd / MTrk chunk walk       |
 | pcap   | libpcap network capture                          | packet-record walk          |
 | pcapng | pcapng network capture                           | block walk                  |

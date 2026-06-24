@@ -501,6 +501,7 @@ fn file_length(
         Extent::Zstd => Ok(zstd_length(source, file_start, limit)?),
         Extent::Lz4 => Ok(lz4_length(source, file_start, limit)?),
         Extent::Psd => Ok(psd_length(source, file_start, limit)?),
+        Extent::Wmf => Ok(wmf_length(source, file_start, limit)?),
     }
 }
 
@@ -821,6 +822,57 @@ fn lz4_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(pos))
+}
+
+/// Windows Metafile (WMF) length. A 22-byte placeable header (Aldus, magic
+/// `D7 CD C6 9A`) may precede the standard `METAHEADER`, whose `mtSize` field is
+/// the metafile size in 16-bit words. The file ends at `[placeable] + mtSize*2`.
+fn wmf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 32];
+    let n = source.read_at(file_start, &mut h)?;
+    if n < 6 {
+        return Ok(None);
+    }
+    let le16 = |b: &[u8], o: usize| u16::from_le_bytes([b[o], b[o + 1]]);
+    let le32 = |b: &[u8], o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]) as u64;
+
+    // Placeable (APM) header: 22 bytes, then a standard METAHEADER at offset 22
+    // whose mtSize (u32, words) sits at offset 22 + 6 = 28.
+    if h[0..4] == [0xD7, 0xCD, 0xC6, 0x9A] {
+        if n < 32 {
+            return Ok(None);
+        }
+        let mt_size = le32(&h, 28);
+        if mt_size < 9 {
+            return Ok(None); // mtSize counts the 9-word header at minimum
+        }
+        let total = 22 + mt_size.saturating_mul(2);
+        if file_start.saturating_add(total) > limit {
+            return Ok(None);
+        }
+        return Ok(Some(total));
+    }
+
+    // Standard METAHEADER: mtType (1 or 2), mtHeaderSize == 9 words,
+    // mtVersion (0x0100 or 0x0300), mtSize (u32, words) at offset 6.
+    if n < 10 {
+        return Ok(None);
+    }
+    let mt_type = le16(&h, 0);
+    let header_words = le16(&h, 2);
+    let version = le16(&h, 4);
+    if !matches!(mt_type, 1 | 2) || header_words != 9 || !matches!(version, 0x0100 | 0x0300) {
+        return Ok(None);
+    }
+    let mt_size = le32(&h, 6);
+    if mt_size < 9 {
+        return Ok(None);
+    }
+    let total = mt_size.saturating_mul(2);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
 }
 
 /// Advance past one of a PSD's length-prefixed sections: a big-endian length

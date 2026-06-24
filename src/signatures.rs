@@ -45,6 +45,7 @@
 //!   optional block/content checksums).
 //! * [`Extent::Psd`] — sum a Photoshop document's header, length-prefixed
 //!   sections, and image data (raw or RLE).
+//! * [`Extent::Wmf`] — read a Windows Metafile's `mtSize` (total size in words).
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -142,6 +143,10 @@ pub enum Extent {
     /// image data whose size is computed from the dimensions for raw storage or
     /// summed from the per-scanline byte counts for PackBits (RLE).
     Psd,
+    /// Windows Metafile (WMF): the metafile header records its total size in
+    /// 16-bit words (`mtSize`); the file ends there, after the 22-byte placeable
+    /// header when one is present.
+    Wmf,
 }
 
 /// A recoverable file type.
@@ -383,6 +388,36 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Psd,
         max_size: 4 * GB,
+    },
+    Signature {
+        name: "Windows Metafile (placeable)",
+        ext: "wmf",
+        magic: &[0xD7, 0xCD, 0xC6, 0x9A],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Wmf,
+        max_size: 256 * MB,
+    },
+    Signature {
+        name: "Windows Metafile",
+        ext: "wmf",
+        // METAHEADER: mtType=1 (memory), mtHeaderSize=9 words. The metafile
+        // version and size are validated by the extent walk.
+        magic: &[0x01, 0x00, 0x09, 0x00],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Wmf,
+        max_size: 256 * MB,
+    },
+    Signature {
+        name: "Windows Metafile",
+        ext: "wmf",
+        // METAHEADER with mtType=2 (disk).
+        magic: &[0x02, 0x00, 0x09, 0x00],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Wmf,
+        max_size: 256 * MB,
     },
     // HEIC/HEIF brands share the `ftyp` magic with MP4, so they must come first
     // and use a secondary brand tag (at offset 8 in the file => 4 past `ftyp`).
