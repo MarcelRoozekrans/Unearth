@@ -528,6 +528,7 @@ alongside the per-file manifest.
 | asf    | ASF / WMV / WMA media                            | ASF object walk             |
 | elf    | ELF executable / shared object                   | section-header table offset |
 | exe    | PE executable (EXE/DLL)                          | PE/COFF section table        |
+| macho  | Mach-O binary (macOS/iOS)                        | segment + link-edit extents  |
 | wasm   | WebAssembly module                               | section (LEB128) walk        |
 | ttf    | TrueType font                                    | SFNT table-directory walk    |
 | otf    | OpenType font                                    | SFNT table-directory walk    |

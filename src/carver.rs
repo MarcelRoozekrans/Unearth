@@ -506,6 +506,7 @@ fn file_length(
         Extent::Evtx => Ok(evtx_length(source, file_start, limit)?),
         Extent::Rtf => Ok(rtf_length(source, file_start, limit)?),
         Extent::Mp3 => Ok(mp3_length(source, file_start, limit)?),
+        Extent::MachO => Ok(macho_length(source, file_start, limit)?),
     }
 }
 
@@ -2368,6 +2369,144 @@ fn elf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(size))
+}
+
+/// Mach-O (thin) length. Read the header to find the load-command region, then
+/// walk the commands taking the furthest extent of every segment
+/// (`fileoff + filesize`) and link-edit table (symbol/string tables and
+/// `dataoff + datasize` blobs such as the code signature). Handles 32/64-bit
+/// and either byte order; fat/universal binaries are not handled here.
+fn macho_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut magic = [0u8; 4];
+    if source.read_at(file_start, &mut magic)? < 4 {
+        return Ok(None);
+    }
+    let (is_64, le) = match magic {
+        [0xCF, 0xFA, 0xED, 0xFE] => (true, true),
+        [0xCE, 0xFA, 0xED, 0xFE] => (false, true),
+        [0xFE, 0xED, 0xFA, 0xCF] => (true, false),
+        [0xFE, 0xED, 0xFA, 0xCE] => (false, false),
+        _ => return Ok(None),
+    };
+    let u32f = |b: &[u8]| {
+        if le {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let u64f = |b: &[u8]| {
+        if le {
+            u64::from_le_bytes(b[..8].try_into().unwrap())
+        } else {
+            u64::from_be_bytes(b[..8].try_into().unwrap())
+        }
+    };
+
+    // mach_header(_64): magic, cputype, cpusubtype, filetype, ncmds,
+    // sizeofcmds, flags, (reserved on 64-bit). ncmds@16, sizeofcmds@20.
+    let header_size: u64 = if is_64 { 32 } else { 28 };
+    let mut hdr = [0u8; 32];
+    if source.read_at(file_start, &mut hdr[..header_size as usize])? < header_size as usize {
+        return Ok(None);
+    }
+    let ncmds = u32f(&hdr[16..20]) as u64;
+    let sizeofcmds = u32f(&hdr[20..24]) as u64;
+    if ncmds == 0 || sizeofcmds == 0 {
+        return Ok(None);
+    }
+    // Sanity bound on the load-command region so a coincidental magic can't make
+    // us read megabytes of junk.
+    if sizeofcmds > 16 * 1024 * 1024 || ncmds > 1_000_000 {
+        return Ok(None);
+    }
+    let cmds_end = header_size.saturating_add(sizeofcmds);
+    if file_start.saturating_add(cmds_end) > limit {
+        return Ok(None);
+    }
+
+    let mut cmds = vec![0u8; sizeofcmds as usize];
+    if source.read_at(file_start + header_size, &mut cmds)? < cmds.len() {
+        return Ok(None);
+    }
+
+    // Load-command identifiers (low bits; LC_REQ_DYLD high bit ignored here).
+    const LC_SEGMENT: u32 = 0x1;
+    const LC_SEGMENT_64: u32 = 0x19;
+    const LC_SYMTAB: u32 = 0x2;
+    // Commands whose payload is a linkedit_data_command (cmd, cmdsize, dataoff,
+    // datasize): code signature, function starts, data-in-code, chained fixups,
+    // exports trie, etc. The code signature in particular ends most binaries.
+    const LINKEDIT_DATA: &[u32] = &[
+        0x1D,               // LC_CODE_SIGNATURE
+        0x1E,               // LC_SEGMENT_SPLIT_INFO
+        0x26,               // LC_FUNCTION_STARTS
+        0x29,               // LC_DATA_IN_CODE
+        0x2B,               // LC_DYLIB_CODE_SIGN_DRS
+        0x2E,               // LC_LINKER_OPTIMIZATION_HINT
+        0x33 | 0x8000_0000, // LC_DYLD_EXPORTS_TRIE (REQ_DYLD)
+        0x34 | 0x8000_0000, // LC_DYLD_CHAINED_FIXUPS (REQ_DYLD)
+    ];
+
+    let mut end = cmds_end;
+    let mut off = 0usize;
+    for _ in 0..ncmds {
+        if off + 8 > cmds.len() {
+            break;
+        }
+        let cmd = u32f(&cmds[off..off + 4]);
+        let cmdsize = u32f(&cmds[off + 4..off + 8]) as usize;
+        // cmdsize must be 4-byte aligned and advance the cursor.
+        if cmdsize < 8 || cmdsize % 4 != 0 || off + cmdsize > cmds.len() {
+            return Ok(None);
+        }
+        let body = &cmds[off..off + cmdsize];
+        match cmd {
+            LC_SEGMENT => {
+                // segment_command: ... fileoff@32, filesize@36 (u32).
+                if cmdsize >= 56 {
+                    let fileoff = u32f(&body[32..36]) as u64;
+                    let filesize = u32f(&body[36..40]) as u64;
+                    end = end.max(fileoff.saturating_add(filesize));
+                }
+            }
+            LC_SEGMENT_64 => {
+                // segment_command_64: ... fileoff@40, filesize@48 (u64).
+                if cmdsize >= 72 {
+                    let fileoff = u64f(&body[40..48]);
+                    let filesize = u64f(&body[48..56]);
+                    end = end.max(fileoff.saturating_add(filesize));
+                }
+            }
+            LC_SYMTAB => {
+                // symtab_command: symoff@8, nsyms@12, stroff@16, strsize@20.
+                if cmdsize >= 24 {
+                    let symoff = u32f(&body[8..12]) as u64;
+                    let nsyms = u32f(&body[12..16]) as u64;
+                    let stroff = u32f(&body[16..20]) as u64;
+                    let strsize = u32f(&body[20..24]) as u64;
+                    let symsize = if is_64 { 16 } else { 12 };
+                    end = end.max(symoff.saturating_add(nsyms.saturating_mul(symsize)));
+                    end = end.max(stroff.saturating_add(strsize));
+                }
+            }
+            c if LINKEDIT_DATA.contains(&c) => {
+                // linkedit_data_command: dataoff@8, datasize@12.
+                if cmdsize >= 16 {
+                    let dataoff = u32f(&body[8..12]) as u64;
+                    let datasize = u32f(&body[12..16]) as u64;
+                    end = end.max(dataoff.saturating_add(datasize));
+                }
+            }
+            _ => {}
+        }
+        off += cmdsize;
+    }
+
+    if end == 0 || file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
 }
 
 /// Search forward from `file_start` for `marker`, returning the file length
