@@ -251,6 +251,12 @@ pub enum Extent {
     /// archive (which would otherwise truncate it) and rejects a coincidental
     /// marker.
     Zip,
+    /// GIF image: walk the block stream — the logical-screen descriptor and any
+    /// colour tables, then image (`0x2C`) and extension (`0x21`) blocks with
+    /// their length-prefixed sub-block chains — to the trailer (`0x3B`). This
+    /// finds the true end rather than stopping at a `00 3B` byte pair that occurs
+    /// by chance inside the LZW image data.
+    Gif,
 }
 
 /// A recoverable file type.
@@ -315,10 +321,7 @@ pub static SIGNATURES: &[Signature] = &[
         magic: b"GIF89a",
         magic_offset: 0,
         secondary: None,
-        extent: Extent::Footer {
-            marker: &[0x00, 0x3B],
-            trailing: 0,
-        },
+        extent: Extent::Gif,
         max_size: 30 * MB,
     },
     Signature {
@@ -327,10 +330,7 @@ pub static SIGNATURES: &[Signature] = &[
         magic: b"GIF87a",
         magic_offset: 0,
         secondary: None,
-        extent: Extent::Footer {
-            marker: &[0x00, 0x3B],
-            trailing: 0,
-        },
+        extent: Extent::Gif,
         max_size: 30 * MB,
     },
     Signature {
