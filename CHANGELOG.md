@@ -44,6 +44,9 @@ formats.
   (`.blend`, block chain walked to the terminating `ENDB` block), and NES ROMs
   (iNES / NES 2.0, sized from the PRG/CHR bank counts) — each with a
   deterministic length strategy.
+- **MP3 without an ID3v2 tag** is now carved by anchoring directly on a Layer III
+  frame sync (requiring a long run of valid frames), so ID3v1-only and tagless
+  MP3s are recovered, not just ID3v2-tagged ones.
 
 ## [0.2.0] - 2026-06-23
 

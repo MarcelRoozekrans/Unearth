@@ -59,6 +59,7 @@
 //! * [`Extent::Shp`] — ESRI Shapefile: total length (in 16-bit words) in header.
 //! * [`Extent::Blend`] — Blender file: walk the block chain to the `ENDB` block.
 //! * [`Extent::Nes`] — iNES / NES 2.0 ROM: size from the PRG/CHR bank counts.
+//! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -230,6 +231,12 @@ pub enum Extent {
     /// bank counts with high bits; ROMs using the exponent bank form or carrying
     /// an indeterminate miscellaneous-ROM area are rejected.
     Nes,
+    /// MP3 anchored directly on an MPEG (Layer III) frame sync, for the many
+    /// MP3s that carry only an ID3v1 trailer or no tag at all (the [`Extent::Mp3`]
+    /// anchor needs an ID3v2 tag). The frame chain is walked like [`Extent::Mp3`];
+    /// because the sync is only 11 bits, a longer run of consecutive valid frames
+    /// is required to avoid a false carve.
+    Mp3Raw,
 }
 
 /// A recoverable file type.
@@ -546,6 +553,64 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::Mp3,
+        max_size: 100 * MB,
+    },
+    // MP3 with no ID3v2 tag: anchor on a Layer III frame sync. One entry per
+    // common second byte — MPEG 1/2/2.5, CRC present or absent. `mp3_raw_length`
+    // requires a long run of valid frames, so these short magics do not
+    // false-carve.
+    Signature {
+        name: "MP3 audio (frame sync)",
+        ext: "mp3",
+        magic: &[0xFF, 0xFB], // MPEG-1 Layer III, no CRC
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Mp3Raw,
+        max_size: 100 * MB,
+    },
+    Signature {
+        name: "MP3 audio (frame sync)",
+        ext: "mp3",
+        magic: &[0xFF, 0xFA], // MPEG-1 Layer III, CRC
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Mp3Raw,
+        max_size: 100 * MB,
+    },
+    Signature {
+        name: "MP3 audio (frame sync)",
+        ext: "mp3",
+        magic: &[0xFF, 0xF3], // MPEG-2 Layer III, no CRC
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Mp3Raw,
+        max_size: 100 * MB,
+    },
+    Signature {
+        name: "MP3 audio (frame sync)",
+        ext: "mp3",
+        magic: &[0xFF, 0xF2], // MPEG-2 Layer III, CRC
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Mp3Raw,
+        max_size: 100 * MB,
+    },
+    Signature {
+        name: "MP3 audio (frame sync)",
+        ext: "mp3",
+        magic: &[0xFF, 0xE3], // MPEG-2.5 Layer III, no CRC
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Mp3Raw,
+        max_size: 100 * MB,
+    },
+    Signature {
+        name: "MP3 audio (frame sync)",
+        ext: "mp3",
+        magic: &[0xFF, 0xE2], // MPEG-2.5 Layer III, CRC
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Mp3Raw,
         max_size: 100 * MB,
     },
     // HEIC/HEIF brands share the `ftyp` magic with MP4, so they must come first
