@@ -1093,6 +1093,22 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * MB,
     },
     Signature {
+        name: "JPEG 2000 codestream",
+        ext: "j2k",
+        // SOC marker (FF4F) immediately followed by the SIZ marker (FF51).
+        magic: &[0xFF, 0x4F, 0xFF, 0x51],
+        magic_offset: 0,
+        secondary: None,
+        // The codestream ends at the EOC marker (FF D9). JPEG 2000 packet data is
+        // bit-stuffed so an FF is never followed by a marker byte, making FF D9
+        // unambiguous.
+        extent: Extent::Footer {
+            marker: &[0xFF, 0xD9],
+            trailing: 0,
+        },
+        max_size: 512 * MB,
+    },
+    Signature {
         name: "Windows animated cursor",
         ext: "ani",
         magic: b"RIFF",
