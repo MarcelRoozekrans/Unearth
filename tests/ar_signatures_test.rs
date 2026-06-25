@@ -88,6 +88,7 @@ fn recovers_an_ar_archive() {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 1, "one ar archive");

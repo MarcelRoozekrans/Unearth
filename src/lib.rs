@@ -39,6 +39,7 @@
 //!     resume: false,
 //!     organize: false,
 //!     dry_run: false,
+//!     align: 1,
 //! };
 //! let stats = carver::carve(&src, &sigs, &opts, &carver::NoProgress).unwrap();
 //! println!("recovered {} files", stats.files_recovered);

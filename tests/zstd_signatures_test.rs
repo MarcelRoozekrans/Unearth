@@ -82,6 +82,7 @@ fn recovers_zstandard_frames() {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 2, "two zstd frames");

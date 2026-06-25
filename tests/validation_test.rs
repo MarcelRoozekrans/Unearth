@@ -58,6 +58,7 @@ fn carve(img: &[u8], validate: bool) -> carver::CarveStats {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     carver::carve(&source, &sigs, &opts, &NoProgress).unwrap()
 }

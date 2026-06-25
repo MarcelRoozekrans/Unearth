@@ -74,6 +74,7 @@ fn recovers_a_tagless_mp3() {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 1, "one tagless mp3");

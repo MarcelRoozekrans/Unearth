@@ -66,6 +66,11 @@ formats.
 - **`recover --dry-run`** previews both passes (filesystem undelete and carving)
   without writing any files, so dry-run is now available on `scan`, `undelete`,
   and `recover` alike.
+- **`--align`** — restrict carving (on `scan` and `recover`, and the MCP `scan`
+  tool) to candidates whose start offset is a multiple of the given size (e.g.
+  `--align 512` or `--align 4K`). Files inside a filesystem begin on cluster
+  (sector-multiple) boundaries, so aligning discards the coincidental mid-sector
+  magic matches that produce most false positives. Default 1 (every offset).
 - **`--max-size`** — a size cap symmetric with `--min-size`, on `scan`, `undelete`,
   and `recover` (and the MCP `scan`/`undelete` tools). Recognised files larger than
   the cap are skipped — carving counts them under `skipped_large` (reported in the

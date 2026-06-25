@@ -581,6 +581,7 @@ fn scan(args: ScanArgs) -> Result<()> {
         resume: args.resume,
         organize: args.organize,
         dry_run: args.dry_run,
+        align: args.align,
     };
 
     let progress: Box<dyn ProgressSink> = if opts.progress {
@@ -631,6 +632,7 @@ fn scan(args: ScanArgs) -> Result<()> {
                     resume: false,
                     organize: opts.organize,
                     dry_run: opts.dry_run,
+                    align: opts.align,
                 };
                 let cs = carver::carve_seeded(
                     &source,
@@ -957,6 +959,7 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
         resume: false,
         organize: args.organize,
         dry_run: args.dry_run,
+        align: args.align,
     };
     let (mut carved_files, mut carved_bytes, mut carved_dups) = (0u64, 0u64, 0u64);
     let push_carved = |files: &[carver::CarvedFile],

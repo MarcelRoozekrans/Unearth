@@ -31,6 +31,7 @@ fn opts(out_dir: std::path::PathBuf, dry_run: bool) -> CarveOptions {
         resume: false,
         organize: false,
         dry_run,
+        align: 1,
     }
 }
 

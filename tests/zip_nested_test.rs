@@ -60,6 +60,7 @@ fn carves_past_a_nested_zips_eocd() {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 1, "one (outer) zip");
@@ -119,6 +120,7 @@ fn includes_the_eocd_comment() {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 1);

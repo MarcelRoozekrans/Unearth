@@ -121,6 +121,7 @@ fn carve_one(data: &[u8]) -> (carver::CarveStats, Vec<Vec<u8>>, tempfile::TempDi
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     let recovered: Vec<Vec<u8>> = std::fs::read_dir(&out_dir)

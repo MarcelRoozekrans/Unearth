@@ -51,6 +51,7 @@ fn carve_one_ext(file: &[u8]) -> (String, std::collections::BTreeMap<String, u64
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 1);

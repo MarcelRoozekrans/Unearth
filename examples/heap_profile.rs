@@ -87,6 +87,7 @@ fn main() {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
 
     let t = Instant::now();

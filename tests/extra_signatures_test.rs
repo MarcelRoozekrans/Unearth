@@ -106,6 +106,7 @@ fn recovers_jp2_ttc_and_ani() {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
 

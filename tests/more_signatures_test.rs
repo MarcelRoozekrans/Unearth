@@ -92,6 +92,7 @@ fn recovers_brands_and_elf() {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 5, "avif, cr3, jxl, 3gp, elf");
@@ -184,6 +185,7 @@ fn recovers_pe_executable() {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 1, "one PE executable");
@@ -269,6 +271,7 @@ fn carve_one(file: &[u8], ext: &str) -> Vec<u8> {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 1, "one {ext}");
