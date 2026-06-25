@@ -54,6 +54,10 @@ pub struct CarveOptions {
     /// Group recovered files into a per-type subdirectory of the output
     /// directory (e.g. `jpg/`, `png/`) instead of a single flat directory.
     pub organize: bool,
+    /// Preview only: find recoverable files and tally them (counts, sizes,
+    /// per-type, and the manifest records) without writing any output. Useful
+    /// for sizing up a device before committing disk space to a real recovery.
+    pub dry_run: bool,
 }
 
 /// One carved file, recorded for the recovery report.
@@ -106,8 +110,10 @@ pub fn carve_seeded(
     progress: &dyn ProgressSink,
     seed: HashSet<[u8; 32]>,
 ) -> Result<CarveStats> {
-    fs::create_dir_all(&opts.output_dir)
-        .with_context(|| format!("creating output dir {}", opts.output_dir.display()))?;
+    if !opts.dry_run {
+        fs::create_dir_all(&opts.output_dir)
+            .with_context(|| format!("creating output dir {}", opts.output_dir.display()))?;
+    }
 
     let index = SignatureIndex::build(active);
     let max_magic_offset = active.iter().map(|s| s.magic_offset).max().unwrap_or(0);
@@ -3225,11 +3231,16 @@ fn write_file(
     } else {
         (base.clone(), opts.output_dir.join(&base))
     };
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-    }
-    let mut out =
-        fs::File::create(&path).with_context(|| format!("creating {}", path.display()))?;
+    // In dry-run mode nothing is written; the bytes are still read and hashed so
+    // the tally, manifest, and dedup behave exactly as a real run would.
+    let mut out = if opts.dry_run {
+        None
+    } else {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        }
+        Some(fs::File::create(&path).with_context(|| format!("creating {}", path.display()))?)
+    };
 
     let mut remaining = len;
     let mut pos = file_start;
@@ -3245,19 +3256,25 @@ fn write_file(
         if n == 0 {
             break;
         }
-        out.write_all(&buf[..n])
-            .with_context(|| format!("writing {}", path.display()))?;
+        if let Some(out) = out.as_mut() {
+            out.write_all(&buf[..n])
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
         hasher.update(&buf[..n]);
         remaining -= n as u64;
         pos += n as u64;
     }
-    out.flush().ok();
+    if let Some(out) = out.as_mut() {
+        out.flush().ok();
+    }
 
     let digest = hasher.finalize();
     if opts.dedup && !seen.insert(digest) {
         // Identical content already recovered; discard this copy.
         drop(out);
-        fs::remove_file(&path).ok();
+        if !opts.dry_run {
+            fs::remove_file(&path).ok();
+        }
         stats.duplicates += 1;
         return Ok(());
     }

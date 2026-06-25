@@ -367,6 +367,11 @@ pub struct ScanArgs {
     #[arg(long)]
     pub organize: bool,
 
+    /// Preview only: report what would be recovered (counts, sizes, per-type,
+    /// and the manifest if requested) without writing any recovered files.
+    #[arg(long)]
+    pub dry_run: bool,
+
     /// Write a manifest of carved files to this path. The format is chosen by
     /// extension: `.json` for JSON, otherwise CSV.
     #[arg(long, value_name = "FILE")]

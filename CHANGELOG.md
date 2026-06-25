@@ -49,6 +49,10 @@ formats.
 - **MP3 without an ID3v2 tag** is now carved by anchoring directly on a Layer III
   frame sync (requiring a long run of valid frames), so ID3v1-only and tagless
   MP3s are recovered, not just ID3v2-tagged ones.
+- **`scan --dry-run`** previews a recovery: it reports the counts, sizes, per-type
+  breakdown, and (with `--report`) the manifest of what *would* be recovered,
+  without writing any files — useful for sizing up a device first. Also exposed
+  as a `dry_run` argument on the MCP `scan` tool.
 - **Type categories** — `--type` (on `scan` and `recover`) now accepts a category
   name (`image`, `audio`, `video`, `document`, `archive`, `executable`, `font`,
   `system`) to select a whole class of types at once, instead of listing every

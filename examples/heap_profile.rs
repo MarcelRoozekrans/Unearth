@@ -85,6 +85,7 @@ fn main() {
         checkpoint: None,
         resume: false,
         organize: false,
+        dry_run: false,
     };
 
     let t = Instant::now();

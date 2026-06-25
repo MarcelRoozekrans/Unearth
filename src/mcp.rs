@@ -258,6 +258,13 @@ fn tool_definitions() -> Json {
                     ),
                 ),
                 (
+                    "dry_run",
+                    bool_prop(
+                        "Preview only: tally what would be recovered (counts, sizes, \
+                         per-type, file list) without writing any files (default false).",
+                    ),
+                ),
+                (
                     "checkpoint",
                     str_prop("Checkpoint file for resume (default: <output_dir>.checkpoint)."),
                 ),
@@ -549,6 +556,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             let validate = arg_bool("validate").unwrap_or(true);
             let dedup = arg_bool("dedup").unwrap_or(false);
             let organize = arg_bool("organize").unwrap_or(false);
+            let dry_run = arg_bool("dry_run").unwrap_or(false);
             let include_files = arg_bool("include_files").unwrap_or(true);
             let resume = arg_bool("resume").unwrap_or(false);
             // A checkpoint file enables resume; default it next to the output.
@@ -574,6 +582,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     checkpoint: checkpoint.clone().map(Into::into),
                     resume,
                     organize,
+                    dry_run,
                 };
                 let stats =
                     carver::carve(&source, &active, &opts, progress).map_err(|e| e.to_string())?;
