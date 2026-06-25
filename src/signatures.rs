@@ -60,6 +60,7 @@
 //! * [`Extent::Blend`] — Blender file: walk the block chain to the `ENDB` block.
 //! * [`Extent::Nes`] — iNES / NES 2.0 ROM: size from the PRG/CHR bank counts.
 //! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
+//! * [`Extent::Wim`] — Windows Imaging (WIM): furthest resource-table extent.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -257,6 +258,13 @@ pub enum Extent {
     /// finds the true end rather than stopping at a `00 3B` byte pair that occurs
     /// by chance inside the LZW image data.
     Gif,
+    /// Windows Imaging Format (WIM/ESD): the 208-byte header carries a resource
+    /// header (offset + size) for the offset/lookup table, XML data, boot
+    /// metadata, and integrity table. The file ends at the furthest
+    /// `offset + size` of these — one of them (normally the integrity table or
+    /// XML data) is the last structure in the file. The header size field
+    /// (0xD0) is checked to reject a coincidental magic.
+    Wim,
 }
 
 /// A recoverable file type.
@@ -807,6 +815,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Dex,
         max_size: GB,
+    },
+    Signature {
+        name: "Windows Imaging (WIM)",
+        ext: "wim",
+        magic: b"MSWIM\x00\x00\x00",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Wim,
+        max_size: 8 * GB,
     },
     Signature {
         name: "ICC colour profile",

@@ -519,7 +519,52 @@ fn file_length(
         Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
         Extent::Zip => Ok(zip_length(source, file_start, limit)?),
         Extent::Gif => Ok(gif_length(source, file_start, limit)?),
+        Extent::Wim => Ok(wim_length(source, file_start, limit)?),
     }
+}
+
+/// Windows Imaging Format (WIM) length. The 208-byte header carries a resource
+/// header — an 8-byte (56-bit size + 8-bit flags) field plus an 8-byte offset —
+/// for the offset/lookup table (at 0x30), XML data (0x48), boot metadata (0x60),
+/// and integrity table (0x7C). The file ends at the furthest `offset + size` of
+/// these; one of them (normally the integrity table or XML data) is the last
+/// structure in the file, and every file-data resource lies before it. The
+/// header size field (0xD0 at offset 8) is checked to reject a coincidental
+/// magic.
+fn wim_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 148]; // through the end of the integrity resource header
+    if source.read_at(file_start, &mut h)? < 148 || &h[0..8] != b"MSWIM\x00\x00\x00" {
+        return Ok(None);
+    }
+    // The header records its own size; the WIM v1 header is 208 (0xD0) bytes.
+    let cb_size = u32::from_le_bytes([h[8], h[9], h[10], h[11]]);
+    if cb_size != 0xD0 {
+        return Ok(None);
+    }
+    // Each resource header: 8 bytes of (56-bit size | 8-bit flags) then an
+    // 8-byte offset. Return the resource's furthest extent, or None when absent.
+    let extent_of = |off: usize| -> u64 {
+        let raw = u64::from_le_bytes(h[off..off + 8].try_into().unwrap());
+        let size = raw & 0x00FF_FFFF_FFFF_FFFF;
+        let offset = u64::from_le_bytes(h[off + 8..off + 16].try_into().unwrap());
+        if offset == 0 {
+            0
+        } else {
+            offset.saturating_add(size)
+        }
+    };
+
+    let mut end = u64::from(cb_size); // at least the header
+    for off in [0x30, 0x48, 0x60, 0x7C] {
+        end = end.max(extent_of(off));
+    }
+    if end <= u64::from(cb_size) {
+        return Ok(None); // no resources -> not a usable WIM
+    }
+    if file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
 }
 
 /// GIF length. Walk the block stream — the 13-byte header/logical-screen

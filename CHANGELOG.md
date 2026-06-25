@@ -42,8 +42,9 @@ formats.
   header), Unix `ar` archives (`.deb`/`.a`, member-chain walk), and ESRI
   Shapefiles (`.shp`, length field in the header), and Blender files
   (`.blend`, block chain walked to the terminating `ENDB` block), and NES ROMs
-  (iNES / NES 2.0, sized from the PRG/CHR bank counts), and raw JPEG 2000
-  codestreams (`.j2k`, ended at the EOC marker) — each with a deterministic
+  (iNES / NES 2.0, sized from the PRG/CHR bank counts), raw JPEG 2000
+  codestreams (`.j2k`, ended at the EOC marker), and Windows Imaging images
+  (WIM/ESD, sized from the resource-table extents) — each with a deterministic
   length strategy.
 - **MP3 without an ID3v2 tag** is now carved by anchoring directly on a Layer III
   frame sync (requiring a long run of valid frames), so ID3v1-only and tagless
