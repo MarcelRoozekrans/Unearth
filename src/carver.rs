@@ -514,6 +514,7 @@ fn file_length(
         Extent::Ar => Ok(ar_length(source, file_start, limit)?),
         Extent::Shp => Ok(shp_length(source, file_start, limit)?),
         Extent::Blend => Ok(blend_length(source, file_start, limit)?),
+        Extent::Nes => Ok(nes_length(source, file_start, limit)?),
     }
 }
 
@@ -2757,6 +2758,44 @@ fn blend_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u
         pos = next;
     }
     Ok(None) // no ENDB terminator found within bounds
+}
+
+/// iNES / NES 2.0 ROM length. The 16-byte header records the PRG ROM size at
+/// byte 4 (in 16 KiB units) and the CHR ROM size at byte 5 (in 8 KiB units),
+/// plus an optional 512-byte trainer (flag bit 2 of byte 6), so the file ends at
+/// `16 + trainer + prg * 16384 + chr * 8192`. NES 2.0 (byte 7 bits 2..3 == 2)
+/// extends each count with the nibbles of byte 9; the exponent bank form (high
+/// nibble 0xF) and an indeterminate miscellaneous-ROM area are rejected.
+fn nes_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 16];
+    if source.read_at(file_start, &mut h)? < 16 || &h[0..4] != b"NES\x1a" {
+        return Ok(None);
+    }
+    let trainer = if h[6] & 0x04 != 0 { 512 } else { 0 };
+    let is_nes2 = (h[7] & 0x0C) == 0x08;
+    let (prg_count, chr_count) = if is_nes2 {
+        // Miscellaneous ROM area (byte 14, low two bits) has no header-encoded
+        // size, so its presence makes the length indeterminate.
+        if h[14] & 0x03 != 0 {
+            return Ok(None);
+        }
+        let prg_hi = (h[9] & 0x0F) as u64;
+        let chr_hi = ((h[9] >> 4) & 0x0F) as u64;
+        if prg_hi == 0x0F || chr_hi == 0x0F {
+            return Ok(None); // exponent bank form (rare); size not computed here
+        }
+        ((prg_hi << 8) | h[4] as u64, (chr_hi << 8) | h[5] as u64)
+    } else {
+        (h[4] as u64, h[5] as u64)
+    };
+    if prg_count == 0 {
+        return Ok(None); // a ROM must have program data
+    }
+    let total = 16 + trainer + prg_count.saturating_mul(16384) + chr_count.saturating_mul(8192);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
 }
 
 /// Search forward from `file_start` for `marker`, returning the file length

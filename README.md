@@ -548,6 +548,7 @@ alongside the per-file manifest.
 | icc    | ICC colour profile                               | size field in profile header |
 | shp    | ESRI Shapefile                                   | length field in header (BE)  |
 | blend  | Blender file                                     | block chain to ENDB block   |
+| nes    | NES ROM (iNES / NES 2.0)                         | PRG/CHR bank counts         |
 
 Run `filerecovery list-types` to see what your build supports.
 

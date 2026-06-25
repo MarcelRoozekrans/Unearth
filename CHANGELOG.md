@@ -41,7 +41,8 @@ formats.
   (DEX, file-size header field), ICC colour profiles (size in the profile
   header), Unix `ar` archives (`.deb`/`.a`, member-chain walk), and ESRI
   Shapefiles (`.shp`, length field in the header), and Blender files
-  (`.blend`, block chain walked to the terminating `ENDB` block) — each with a
+  (`.blend`, block chain walked to the terminating `ENDB` block), and NES ROMs
+  (iNES / NES 2.0, sized from the PRG/CHR bank counts) — each with a
   deterministic length strategy.
 
 ## [0.2.0] - 2026-06-23
