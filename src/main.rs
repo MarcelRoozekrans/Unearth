@@ -216,6 +216,7 @@ fn identify(args: IdentifyArgs) -> Result<()> {
                 ("identified", Json::Bool(true)),
                 ("type", s(d.ext)),
                 ("name", s(d.name)),
+                ("category", s(signatures::category_of(d.ext).as_str())),
                 ("validated", Json::Bool(d.validated)),
             ]),
             None => obj(vec![
@@ -234,7 +235,13 @@ fn identify(args: IdentifyArgs) -> Result<()> {
             } else {
                 "by magic"
             };
-            println!("{}: {} ({}, {note})", args.file.display(), d.name, d.ext);
+            let category = signatures::category_of(d.ext).as_str();
+            println!(
+                "{}: {} ({}, {category}, {note})",
+                args.file.display(),
+                d.name,
+                d.ext
+            );
         }
         None => println!("{}: unknown", args.file.display()),
     }
