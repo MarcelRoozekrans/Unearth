@@ -50,6 +50,7 @@ fn opts(out: &std::path::Path, checkpoint: &std::path::Path, resume: bool) -> Ca
         checkpoint: Some(checkpoint.to_path_buf()),
         resume,
         organize: false,
+        dry_run: false,
     }
 }
 

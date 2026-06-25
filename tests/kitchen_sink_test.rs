@@ -308,6 +308,7 @@ fn carves_every_extent_strategy_in_one_pass() {
         checkpoint: None,
         resume: false,
         organize: false,
+        dry_run: false,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
 

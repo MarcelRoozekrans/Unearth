@@ -520,6 +520,7 @@ fn scan(args: ScanArgs) -> Result<()> {
         checkpoint: checkpoint.clone(),
         resume: args.resume,
         organize: args.organize,
+        dry_run: args.dry_run,
     };
 
     let progress: Box<dyn ProgressSink> = if opts.progress {
@@ -568,6 +569,7 @@ fn scan(args: ScanArgs) -> Result<()> {
                     checkpoint: None,
                     resume: false,
                     organize: opts.organize,
+                    dry_run: opts.dry_run,
                 };
                 let cs = carver::carve_seeded(
                     &source,
@@ -590,11 +592,19 @@ fn scan(args: ScanArgs) -> Result<()> {
     };
 
     eprintln!();
-    println!(
-        "Done. Recovered {} file(s), {}.",
-        stats.files_recovered,
-        human_bytes(stats.bytes_recovered)
-    );
+    if args.dry_run {
+        println!(
+            "Dry run: would recover {} file(s), {} (nothing written).",
+            stats.files_recovered,
+            human_bytes(stats.bytes_recovered)
+        );
+    } else {
+        println!(
+            "Done. Recovered {} file(s), {}.",
+            stats.files_recovered,
+            human_bytes(stats.bytes_recovered)
+        );
+    }
     if !stats.per_type.is_empty() {
         for (ext, count) in &stats.per_type {
             println!("  {:<6} {}", ext, count);
@@ -874,6 +884,7 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
         checkpoint: None,
         resume: false,
         organize: args.organize,
+        dry_run: false,
     };
     let (mut carved_files, mut carved_bytes, mut carved_dups) = (0u64, 0u64, 0u64);
     let push_carved = |files: &[carver::CarvedFile],

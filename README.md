@@ -459,6 +459,7 @@ filerecovery scan card.img -o recovered --type image
     --no-validate      Keep every signature match without structural validation
     --dedup            Write identical content (by SHA-256) only once
     --organize         Group recovered files into per-type subdirs (jpg/, png/, ...)
+    --dry-run          Preview what would be recovered without writing any files
     --unallocated      Carve only the volume's free space (skip live data)
     --report <FILE>    Write a manifest of carved files (.json => JSON, else CSV)
     --summary <FILE>   Write a run summary (.json => JSON, else text)

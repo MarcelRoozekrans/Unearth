@@ -76,6 +76,7 @@ fn recovers_an_aac_stream() {
         checkpoint: None,
         resume: false,
         organize: false,
+        dry_run: false,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 1, "one aac stream");
