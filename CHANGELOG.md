@@ -55,6 +55,13 @@ formats.
   carver previously stopped at the thumbnail's End-of-Image marker, producing a
   truncated file. It now tracks nested Start/End-of-Image markers and carves to
   the outer image's `FF D9`.
+- **ZIP carving no longer truncates at a nested archive, and keeps the EOCD
+  comment.** A ZIP stored inside a ZIP (a JAR/asset bundle, etc.) has its own
+  End-of-Central-Directory record; the carver previously stopped at the first one,
+  truncating the outer archive, and also dropped any EOCD comment. It now selects
+  the EOCD whose recorded central-directory geometry matches the archive and
+  includes the declared comment. This also covers the ZIP-based formats (DOCX,
+  XLSX, PPTX, ODT, JAR, APK, EPUB).
 
 ## [0.2.0] - 2026-06-23
 

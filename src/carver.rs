@@ -517,7 +517,63 @@ fn file_length(
         Extent::Nes => Ok(nes_length(source, file_start, limit)?),
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
         Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
+        Extent::Zip => Ok(zip_length(source, file_start, limit)?),
     }
+}
+
+/// ZIP length. Locate the End-of-Central-Directory record (`PK\x05\x06`) and end
+/// the file after it plus its declared comment. The EOCD records the central
+/// directory's size and offset; the record whose geometry matches this archive
+/// (`file_start + cd_offset + cd_size == eocd_pos`) is the archive's own — this
+/// skips the EOCD of a ZIP nested *inside* the archive, which a first-match
+/// search would wrongly stop at, and rejects a coincidental marker. A ZIP64
+/// archive (whose 32-bit geometry fields are `0xFFFFFFFF` sentinels) can't be
+/// validated this way, so the last such candidate is used as a best effort.
+fn zip_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const EOCD: &[u8] = &[0x50, 0x4B, 0x05, 0x06];
+    let window = 1024 * 1024usize;
+    let overlap = EOCD.len() - 1;
+    let mut buf = vec![0u8; window + overlap];
+    let mut pos = file_start;
+    let mut zip64_best: Option<u64> = None; // fallback end offset for ZIP64
+    loop {
+        if pos >= limit {
+            break;
+        }
+        let want = ((limit - pos) as usize).min(window + overlap);
+        let n = source.read_at(pos, &mut buf[..want])?;
+        if n == 0 {
+            break;
+        }
+        let mut from = 0usize;
+        while let Some(rel) = find_subsequence(&buf[from..n], EOCD) {
+            let idx = from + rel;
+            let eocd_abs = pos + idx as u64;
+            let mut e = [0u8; 22];
+            if source.read_at(eocd_abs, &mut e)? >= 22 {
+                let cd_size = u32::from_le_bytes([e[12], e[13], e[14], e[15]]) as u64;
+                let cd_off = u32::from_le_bytes([e[16], e[17], e[18], e[19]]) as u64;
+                let comment_len = u16::from_le_bytes([e[20], e[21]]) as u64;
+                let end = eocd_abs + 22 + comment_len;
+                let is_zip64 = cd_size == 0xFFFF_FFFF || cd_off == 0xFFFF_FFFF;
+                if end <= limit {
+                    if !is_zip64 && file_start + cd_off + cd_size == eocd_abs {
+                        // This EOCD describes the archive that starts at file_start.
+                        return Ok(Some(end - file_start));
+                    }
+                    if is_zip64 {
+                        zip64_best = Some(end - file_start);
+                    }
+                }
+            }
+            from = idx + EOCD.len();
+        }
+        if n < want || pos + n as u64 >= limit {
+            break;
+        }
+        pos += (n - overlap) as u64;
+    }
+    Ok(zip64_best)
 }
 
 /// JPEG length. Scan for the End-of-Image marker (`FF D9`), tracking nested

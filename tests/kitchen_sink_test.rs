@@ -80,8 +80,13 @@ fn pdf(p: &[u8]) -> Vec<u8> {
 fn zip(p: &[u8]) -> Vec<u8> {
     let mut v = vec![0x50, 0x4B, 0x03, 0x04];
     v.extend_from_slice(p);
-    v.extend_from_slice(&[0x50, 0x4B, 0x05, 0x06]); // EOCD
-    v.extend_from_slice(&[0u8; 18]); // minimal EOCD remainder
+    let eocd_off = v.len() as u32; // offset of the EOCD record within the file
+    v.extend_from_slice(&[0x50, 0x4B, 0x05, 0x06]); // EOCD signature
+    let mut rem = [0u8; 18]; // EOCD remainder
+                             // Make the geometry self-consistent: central directory of size 0 located at
+                             // the EOCD offset, so `cd_offset + cd_size == eocd_offset` validates.
+    rem[12..16].copy_from_slice(&eocd_off.to_le_bytes()); // cd offset
+    v.extend_from_slice(&rem);
     v
 }
 
@@ -245,11 +250,11 @@ fn ogg(p: &[u8]) -> Vec<u8> {
 fn carves_every_extent_strategy_in_one_pass() {
     // One representative file per extent strategy.
     let files: Vec<(&str, Vec<u8>)> = vec![
-        ("jpg", jpeg(&filler(1, 3000))),  // Footer
+        ("jpg", jpeg(&filler(1, 3000))),  // Jpeg (nesting-aware EOI)
         ("png", png(&filler(2, 2500))),   // Footer
         ("gif", gif(&filler(3, 1800))),   // Footer
         ("pdf", pdf(&filler(4, 2200))),   // Footer
-        ("zip", zip(&filler(5, 2600))),   // Footer
+        ("zip", zip(&filler(5, 2600))),   // Zip (EOCD geometry)
         ("bmp", bmp(&filler(6, 2000))),   // HeaderSizeLe32
         ("wav", wav(&filler(7, 2400))),   // RiffSize
         ("sqlite", sqlite(512, 8)),       // Sqlite

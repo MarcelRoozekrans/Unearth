@@ -243,6 +243,14 @@ pub enum Extent {
     /// JPEG entropy data `FF` is only ever followed by `00` or `D0`–`D7`, so
     /// scanning for `FF D8`/`FF D9` is unambiguous for well-formed images.
     Jpeg,
+    /// ZIP archive (and the many ZIP-based formats: DOCX/XLSX/PPTX, ODT, JAR,
+    /// APK, EPUB): locate the End-of-Central-Directory record (`PK\x05\x06`) and
+    /// end the file after it and its declared comment. The EOCD records the
+    /// central directory's offset and size, so the record whose geometry matches
+    /// this archive is chosen — this skips the EOCD of a ZIP nested inside the
+    /// archive (which would otherwise truncate it) and rejects a coincidental
+    /// marker.
+    Zip,
 }
 
 /// A recoverable file type.
@@ -353,11 +361,7 @@ pub static SIGNATURES: &[Signature] = &[
         magic: &[0x50, 0x4B, 0x03, 0x04],
         magic_offset: 0,
         secondary: None,
-        extent: Extent::Footer {
-            // End of central directory record.
-            marker: &[0x50, 0x4B, 0x05, 0x06],
-            trailing: 18, // minimal EOCD is 22 bytes (4 marker + 18); ignores any comment
-        },
+        extent: Extent::Zip,
         max_size: 2 * GB,
     },
     Signature {
