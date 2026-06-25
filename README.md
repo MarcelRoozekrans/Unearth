@@ -581,13 +581,15 @@ alongside the per-file manifest.
 | shp    | ESRI Shapefile                                   | length field in header (BE)  |
 | blend  | Blender file                                     | block chain to ENDB block   |
 | nes    | NES ROM (iNES / NES 2.0)                         | PRG/CHR bank counts         |
-| ole    | Compound File (OLE2) — legacy doc/xls/ppt        | FAT walk to last used sector |
+| ole    | Compound File (OLE2) — doc/xls/ppt/msg/msi       | FAT walk to last used sector |
 
 Run `filerecovery list-types` to see what your build supports.
 
-Compound files (`.ole`) are refined to their real legacy-Office extension —
-`.doc`, `.xls`, or `.ppt` — by inspecting the directory stream names, the same
-way a carved ZIP becomes `.docx`/`.xlsx`/etc.
+Compound files (`.ole`) are refined to their real extension — `.doc`, `.xls`,
+`.ppt` (legacy Office), `.msg` (Outlook message), or `.msi` (Windows Installer)
+— by inspecting the directory stream names, or the root storage CLSID for an
+installer, the same way a carved ZIP becomes `.docx`/`.xlsx`/etc. An
+unrecognised compound file stays `.ole`.
 
 ### Adding a new type
 

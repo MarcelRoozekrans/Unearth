@@ -1351,17 +1351,56 @@ pub fn classify_zip(head: &[u8]) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// Refine a Compound File Binary (OLE2) container into the specific legacy
-/// Office format it carries, by looking for a marker stream name in its bytes.
-/// Directory entry names are stored as UTF-16LE, so each ASCII letter is
-/// matched interleaved with a NUL byte. Returns `(extension, name)`, or `None`
-/// for an unrecognised compound file (which stays a generic `.ole`).
+/// Root storage CLSID of a Windows Installer database (`{000C1084-0000-0000-
+/// C000-000000000046}`), stored as a GUID: the first three fields little-endian,
+/// the last eight bytes in order.
+const MSI_CLSID: [u8; 16] = [
+    0x84, 0x10, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
+];
+
+/// Read the root directory entry's CLSID (16 bytes at directory-entry offset 80)
+/// and compare it to `clsid`. Returns false if the directory sector isn't within
+/// `head` (so the caller falls back to other checks).
+fn root_clsid_is(head: &[u8], clsid: &[u8; 16]) -> bool {
+    if head.len() < 512 {
+        return false;
+    }
+    let sector_size = match u16::from_le_bytes([head[30], head[31]]) {
+        9 => 512usize,
+        12 => 4096usize,
+        _ => return false,
+    };
+    let first_dir = u32::from_le_bytes([head[48], head[49], head[50], head[51]]) as usize;
+    // The root entry is the first 128-byte record of the directory sector, which
+    // starts at byte `(sector + 1) * sector_size`.
+    let clsid_off = match first_dir
+        .checked_add(1)
+        .and_then(|s| s.checked_mul(sector_size))
+        .and_then(|o| o.checked_add(80))
+    {
+        Some(o) => o,
+        None => return false,
+    };
+    head.len() >= clsid_off + 16 && &head[clsid_off..clsid_off + 16] == clsid
+}
+
+/// Refine a Compound File Binary (OLE2) container into the specific format it
+/// carries. Most legacy formats are recognised by a marker stream name (stored
+/// as UTF-16LE, so each ASCII letter is matched interleaved with a NUL byte);
+/// installer databases, whose stream names are mangled, are recognised by the
+/// root storage CLSID instead. Returns `(extension, name)`, or `None` for an
+/// unrecognised compound file (which stays a generic `.ole`).
 pub fn classify_cfbf(head: &[u8]) -> Option<(&'static str, &'static str)> {
     let has = |name: &str| {
         let needle: Vec<u8> = name.bytes().flat_map(|b| [b, 0]).collect();
         head.windows(needle.len()).any(|w| w == needle)
     };
-    if has("PowerPoint Document") {
+    if root_clsid_is(head, &MSI_CLSID) {
+        Some(("msi", "Windows Installer package"))
+    } else if has("__substg1.0_") {
+        // Property-stream prefix unique to Outlook .msg messages.
+        Some(("msg", "Outlook message"))
+    } else if has("PowerPoint Document") {
         Some(("ppt", "PowerPoint 97-2003 presentation"))
     } else if has("WordDocument") {
         Some(("doc", "Word 97-2003 document"))
@@ -1381,11 +1420,12 @@ pub fn category_of(ext: &str) -> Category {
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" => Category::Audio,
         "mp4" | "3gp" | "mkv" | "avi" | "flv" | "asf" => Category::Video,
         // The OOXML/OpenDocument/e-book types come from ZIP-content
-        // classification; doc/xls/ppt (and a generic OLE2 container) from CFBF.
+        // classification; doc/xls/ppt/msg (and a generic OLE2 container) from
+        // CFBF.
         "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "doc"
-        | "xls" | "ppt" | "ole" => Category::Document,
+        | "xls" | "ppt" | "msg" | "ole" => Category::Document,
         "zip" | "7z" | "rar" | "cab" | "ar" | "zst" | "lz4" | "jar" => Category::Archive,
-        "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" => Category::Executable,
+        "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" => Category::System,
         _ => Category::Other,

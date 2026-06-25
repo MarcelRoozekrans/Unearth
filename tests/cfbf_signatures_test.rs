@@ -39,8 +39,9 @@ fn utf16le(s: &str) -> Vec<u8> {
 /// A 1536-byte v3 CFBF: header + one FAT sector + one directory sector. The FAT
 /// marks sector 0 (itself) and sector 1 (the directory) as used, so the file is
 /// `(1 + 2) * 512 = 1536` bytes. `stream_name`, if given, is written as a
-/// directory entry so `classify_cfbf` can refine the type.
-fn make_cfbf(stream_name: Option<&str>) -> Vec<u8> {
+/// directory entry, and `root_clsid`, if given, as the root entry's CLSID — both
+/// so `classify_cfbf` can refine the type.
+fn make_cfbf(stream_name: Option<&str>, root_clsid: Option<[u8; 16]>) -> Vec<u8> {
     let sector = 512usize;
     let mut v = vec![0u8; 512 + sector * 2];
 
@@ -78,6 +79,9 @@ fn make_cfbf(stream_name: Option<&str>) -> Vec<u8> {
     v[dir..dir + root.len()].copy_from_slice(&root);
     put_u16(&mut v, dir + 64, (root.len() + 2) as u16);
     v[dir + 66] = 5; // root storage
+    if let Some(clsid) = root_clsid {
+        v[dir + 80..dir + 96].copy_from_slice(&clsid); // root entry CLSID
+    }
     if let Some(name) = stream_name {
         let e1 = dir + 128;
         let n = utf16le(name);
@@ -126,9 +130,14 @@ fn carve_one(data: &[u8]) -> (carver::CarveStats, Vec<Vec<u8>>, tempfile::TempDi
     (stats, recovered, tmp)
 }
 
+/// `{000C1084-0000-0000-C000-000000000046}` as a GUID byte layout.
+const MSI_CLSID: [u8; 16] = [
+    0x84, 0x10, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
+];
+
 #[test]
 fn recovers_a_compound_file_sized_from_the_fat() {
-    let cfbf = make_cfbf(Some("WordDocument"));
+    let cfbf = make_cfbf(Some("WordDocument"), None);
     assert_eq!(cfbf.len(), 1536, "test fixture is 3 sectors");
 
     let (stats, recovered, _tmp) = carve_one(&cfbf);
@@ -143,9 +152,29 @@ fn recovers_a_compound_file_sized_from_the_fat() {
 }
 
 #[test]
+fn classifies_an_outlook_message() {
+    // The __substg1.0_ property-stream prefix marks an Outlook .msg file.
+    let cfbf = make_cfbf(Some("__substg1.0_0037001F"), None);
+    let (stats, recovered, _tmp) = carve_one(&cfbf);
+    assert_eq!(stats.files_recovered, 1);
+    assert_eq!(recovered[0], cfbf);
+    assert_eq!(stats.per_type.get("msg"), Some(&1));
+}
+
+#[test]
+fn classifies_a_windows_installer_by_root_clsid() {
+    // No textual marker — the MSI root storage CLSID identifies it.
+    let cfbf = make_cfbf(None, Some(MSI_CLSID));
+    let (stats, recovered, _tmp) = carve_one(&cfbf);
+    assert_eq!(stats.files_recovered, 1);
+    assert_eq!(recovered[0], cfbf);
+    assert_eq!(stats.per_type.get("msi"), Some(&1));
+}
+
+#[test]
 fn an_unclassified_compound_file_stays_ole() {
-    // No marker stream -> classification can't refine it, so it stays `.ole`.
-    let cfbf = make_cfbf(None);
+    // No marker stream or known CLSID -> can't refine it, so it stays `.ole`.
+    let cfbf = make_cfbf(None, None);
     let (stats, recovered, _tmp) = carve_one(&cfbf);
     assert_eq!(stats.files_recovered, 1);
     assert_eq!(recovered[0], cfbf);
