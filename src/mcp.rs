@@ -242,6 +242,10 @@ fn tool_definitions() -> Json {
                     int_prop("Ignore carved files smaller than this many bytes."),
                 ),
                 (
+                    "max_size",
+                    int_prop("Ignore carved files larger than this many bytes."),
+                ),
+                (
                     "include_files",
                     bool_prop("Include the per-file list with SHA-256 (default true)."),
                 ),
@@ -341,6 +345,10 @@ fn tool_definitions() -> Json {
                 (
                     "min_size",
                     int_prop("Ignore deleted files smaller than this many bytes."),
+                ),
+                (
+                    "max_size",
+                    int_prop("Ignore deleted files larger than this many bytes."),
                 ),
                 (
                     "dry_run",
@@ -504,6 +512,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     let del = if deleted {
                         let opts = recover::RecoverOptions {
                             min_size: 0,
+                            max_size: None,
                             dry_run: true,
                         };
                         match v.recover_deleted(&source, Path::new("."), &opts) {
@@ -560,6 +569,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                 })
                 .unwrap_or_default();
             let min_size = arg_u64("min_size").unwrap_or(0);
+            let max_size = arg_u64("max_size");
             let validate = arg_bool("validate").unwrap_or(true);
             let dedup = arg_bool("dedup").unwrap_or(false);
             let organize = arg_bool("organize").unwrap_or(false);
@@ -581,6 +591,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     start: 0,
                     end: None,
                     min_size,
+                    max_size,
                     max_files: None,
                     allow_nested: false,
                     validate,
@@ -607,6 +618,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     ("bytes_recovered", n(stats.bytes_recovered)),
                     ("rejected", n(stats.rejected)),
                     ("duplicates", n(stats.duplicates)),
+                    ("skipped_large", n(stats.skipped_large)),
                     ("per_type", per_type),
                 ];
                 if include_files {
@@ -736,6 +748,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             let output_dir = arg_str("output_dir")?.to_string();
             let opts = recover::RecoverOptions {
                 min_size: arg_u64("min_size").unwrap_or(0),
+                max_size: arg_u64("max_size"),
                 dry_run: arg_bool("dry_run").unwrap_or(false),
             };
             let volumes = match arg_u64("offset") {

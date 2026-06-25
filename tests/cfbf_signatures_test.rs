@@ -107,6 +107,7 @@ fn carve_one(data: &[u8]) -> (carver::CarveStats, Vec<Vec<u8>>, tempfile::TempDi
         start: 0,
         end: None,
         min_size: 0,
+        max_size: None,
         max_files: None,
         allow_nested: false,
         validate: true,

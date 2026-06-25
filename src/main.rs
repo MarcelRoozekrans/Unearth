@@ -107,6 +107,7 @@ fn deleted_count(vol: &recover::Volume, source: &Source, requested: bool) -> Opt
     }
     let opts = recover::RecoverOptions {
         min_size: 0,
+        max_size: None,
         dry_run: true,
     };
     Some(
@@ -528,6 +529,7 @@ fn merge_carve_stats(into: &mut carver::CarveStats, from: carver::CarveStats) {
     into.bytes_recovered += from.bytes_recovered;
     into.rejected += from.rejected;
     into.duplicates += from.duplicates;
+    into.skipped_large += from.skipped_large;
     for (k, v) in from.per_type {
         *into.per_type.entry(k).or_insert(0) += v;
     }
@@ -569,6 +571,7 @@ fn scan(args: ScanArgs) -> Result<()> {
         start: args.start,
         end: args.end,
         min_size: args.min_size,
+        max_size: args.max_size,
         max_files: args.max_files,
         allow_nested: args.allow_nested,
         validate: !args.no_validate,
@@ -618,6 +621,7 @@ fn scan(args: ScanArgs) -> Result<()> {
                     start: rstart,
                     end: Some(rstart + rlen),
                     min_size: opts.min_size,
+                    max_size: opts.max_size,
                     max_files: remaining,
                     allow_nested: opts.allow_nested,
                     validate: opts.validate,
@@ -683,6 +687,12 @@ fn scan(args: ScanArgs) -> Result<()> {
             stats.duplicates
         );
     }
+    if stats.skipped_large > 0 {
+        println!(
+            "Skipped {} file(s) larger than the --max-size cap.",
+            stats.skipped_large
+        );
+    }
     if let Some(summary_path) = &args.summary {
         let per_type: Vec<(String, u64)> = stats
             .per_type
@@ -704,6 +714,7 @@ fn scan(args: ScanArgs) -> Result<()> {
             ("bytes_recovered", Sv::N(stats.bytes_recovered)),
             ("rejected", Sv::N(stats.rejected)),
             ("duplicates", Sv::N(stats.duplicates)),
+            ("skipped_large", Sv::N(stats.skipped_large)),
             ("per_type", Sv::Map(per_type)),
             ("elapsed_ms", Sv::N(started.elapsed().as_millis() as u64)),
             ("timestamp_unix", Sv::N(unix_now())),
@@ -736,6 +747,7 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
 
     let opts = recover::RecoverOptions {
         min_size: args.min_size,
+        max_size: args.max_size,
         dry_run: args.dry_run,
     };
     if args.dry_run {
@@ -856,6 +868,7 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
     }
     let ropts = recover::RecoverOptions {
         min_size: args.min_size,
+        max_size: args.max_size,
         dry_run: args.dry_run,
     };
     let multi = volumes.len() > 1;
@@ -934,6 +947,7 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
         start,
         end,
         min_size: args.min_size,
+        max_size: args.max_size,
         max_files: None,
         allow_nested: false,
         validate: true,

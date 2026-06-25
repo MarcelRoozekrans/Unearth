@@ -22,8 +22,17 @@ use crate::{apfs, btrfs, encrypted, exfat, ext4, fat, hfsplus, ntfs};
 pub struct RecoverOptions {
     /// Ignore deleted files smaller than this many bytes.
     pub min_size: u64,
+    /// Ignore deleted files larger than this many bytes (`None` = no cap).
+    pub max_size: Option<u64>,
     /// Report what would be recovered without writing any files.
     pub dry_run: bool,
+}
+
+impl RecoverOptions {
+    /// Whether a file of `size` bytes falls within the configured size window.
+    pub fn size_ok(&self, size: u64) -> bool {
+        size >= self.min_size && self.max_size.map_or(true, |max| size <= max)
+    }
 }
 
 /// One file the recovery considered, for reporting.
@@ -403,4 +412,28 @@ pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     }
     let v = fat::Volume::parse(src, offset)?;
     Ok(Volume::Fat(v))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RecoverOptions;
+
+    #[test]
+    fn size_ok_applies_the_min_and_max_window() {
+        // Default: no bounds, everything passes.
+        let any = RecoverOptions::default();
+        assert!(any.size_ok(0));
+        assert!(any.size_ok(u64::MAX));
+
+        // A min and max together define an inclusive window.
+        let windowed = RecoverOptions {
+            min_size: 100,
+            max_size: Some(1000),
+            dry_run: false,
+        };
+        assert!(!windowed.size_ok(99), "below the floor is rejected");
+        assert!(windowed.size_ok(100), "the floor is inclusive");
+        assert!(windowed.size_ok(1000), "the cap is inclusive");
+        assert!(!windowed.size_ok(1001), "above the cap is rejected");
+    }
 }

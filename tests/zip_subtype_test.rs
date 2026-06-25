@@ -41,6 +41,7 @@ fn carve_one_ext(file: &[u8]) -> (String, std::collections::BTreeMap<String, u64
         start: 0,
         end: None,
         min_size: 0,
+        max_size: None,
         max_files: None,
         allow_nested: false,
         validate: true,

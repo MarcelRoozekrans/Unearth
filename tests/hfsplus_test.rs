@@ -58,6 +58,7 @@ fn dry_run_reports_without_writing() {
     let out = tmp.path().join("out");
     let opts = RecoverOptions {
         min_size: 0,
+        max_size: None,
         dry_run: true,
     };
     let stats = vols[0].recover_deleted(&src, &out, &opts).unwrap();

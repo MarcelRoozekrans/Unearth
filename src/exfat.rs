@@ -260,7 +260,7 @@ impl Volume {
 
         let mut stats = RecoverStats::default();
         for df in deleted {
-            if df.data_length < opts.min_size {
+            if !opts.size_ok(df.data_length) {
                 continue;
             }
             if !self.valid_extent(&df) {

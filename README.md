@@ -356,7 +356,8 @@ partition table). Override the location with `--offset <BYTES>` if needed.
 ```text
 -o, --output <DIR>     Where to write recovered files (default: ./recovered)
     --offset <BYTES>   Byte offset of the volume (default: auto-detect)
-    --min-size <BYTES> Skip deleted files smaller than this
+    --min-size <SIZE>  Skip deleted files smaller than this
+    --max-size <SIZE>  Skip deleted files larger than this
     --dry-run          List what would be recovered without writing any files
     --report <FILE>    Write a report of what was found (.json => JSON, else CSV)
     --summary <FILE>   Write a run summary (.json => JSON, else text)
@@ -406,7 +407,8 @@ filerecovery recover card.img -o recovered
 The carving pass is **content-deduplicated against the undelete results** (by
 SHA-256), so `carved/` only holds data that wasn't already recovered by name —
 you get the named files plus the extras carving finds, without duplicate copies.
-Accepts `--type`, `--min-size`, `--organize` (group `carved/` by type),
+Accepts `--type`, `--min-size`, `--max-size` (both size bounds apply to the
+undelete *and* carving passes), `--organize` (group `carved/` by type),
 `--offset` (volume offset for the undelete pass), and `--dry-run` (preview both
 passes — counts, sizes, and the `--report` manifest — without writing anything).
 
@@ -469,6 +471,7 @@ filerecovery scan card.img -o recovered --type image
     --start <SIZE>     Start scanning at this offset (accepts K/M/G/T suffixes)
     --end <SIZE>       Stop scanning at this offset (exclusive)
     --min-size <SIZE>  Skip carved files smaller than this
+    --max-size <SIZE>  Skip carved files larger than this
     --max-files <N>    Stop after recovering N files
     --allow-nested     Also recover files embedded in other files (e.g. thumbnails)
     --no-validate      Keep every signature match without structural validation

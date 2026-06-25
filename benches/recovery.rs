@@ -136,6 +136,7 @@ fn bench_carve(c: &mut Criterion) {
                     start: 0,
                     end: None,
                     min_size: 0,
+                    max_size: None,
                     max_files: None,
                     allow_nested: false,
                     validate: true,
@@ -168,6 +169,7 @@ fn bench_undelete(c: &mut Criterion) {
             |out| {
                 let opts = RecoverOptions {
                     min_size: 0,
+                    max_size: None,
                     dry_run: false,
                 };
                 let volumes = recover::detect(&source).unwrap();
