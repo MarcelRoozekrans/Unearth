@@ -201,8 +201,10 @@ pub struct RecoverArgs {
     #[arg(long, value_name = "BYTES", default_value_t = 1024 * 1024)]
     pub scan_step: u64,
 
-    /// Restrict the carving pass to these file types (extensions). Repeatable.
-    #[arg(short, long = "type", value_name = "EXT")]
+    /// Restrict the carving pass to these file types. Each value is an extension
+    /// (e.g. `jpg`) or a category (`image`, `audio`, `video`, `document`,
+    /// `archive`, `executable`, `font`, `system`). Repeatable.
+    #[arg(short, long = "type", value_name = "EXT|CATEGORY")]
     pub types: Vec<String>,
 
     /// Ignore files smaller than this many bytes (both passes).
@@ -320,9 +322,11 @@ pub struct ScanArgs {
     #[arg(short, long, value_name = "DIR", default_value = "recovered")]
     pub output: PathBuf,
 
-    /// Restrict recovery to these file types (extensions). Repeatable.
-    /// Omit, or use "all", to recover every known type.
-    #[arg(short, long = "type", value_name = "EXT")]
+    /// Restrict recovery to these file types. Each value is an extension (e.g.
+    /// `jpg`) or a category (`image`, `audio`, `video`, `document`, `archive`,
+    /// `executable`, `font`, `system`). Repeatable. Omit, or use "all", to
+    /// recover every known type.
+    #[arg(short, long = "type", value_name = "EXT|CATEGORY")]
     pub types: Vec<String>,
 
     /// Start scanning at this byte offset.
