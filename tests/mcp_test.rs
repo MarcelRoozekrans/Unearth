@@ -246,6 +246,12 @@ fn list_volumes_and_undelete_tools() {
         Some("ext2/3/4")
     );
     assert_eq!(vols[0].get("deleted").unwrap().as_u64(), Some(1));
+    // ext exposes its allocation map, so free_bytes is a number (not null) and
+    // cannot exceed the volume's size.
+    let free = vols[0].get("free_bytes").unwrap().as_u64();
+    assert!(free.is_some(), "ext should report numeric free_bytes");
+    let size = vols[0].get("size").unwrap().as_u64().unwrap();
+    assert!(free.unwrap() <= size, "free cannot exceed volume size");
 
     let undelete = tool_result(&resps[1]);
     assert_eq!(undelete.get("recovered").unwrap().as_u64(), Some(1));

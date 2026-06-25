@@ -6,7 +6,7 @@
 //! and `ping`, exposing the tool's capabilities as callable tools:
 //!
 //! * `list_types`   — the file types carving can recover
-//! * `list_volumes` — detect partitions/filesystems in a source (+ deleted counts)
+//! * `list_volumes` — detect partitions/filesystems in a source (+ free/deleted counts)
 //! * `scan`         — start background signature carving (returns a job id)
 //! * `scan_status`  — poll a scan job's progress and result
 //! * `scan_cancel`  — request cancellation of a scan/image job
@@ -176,6 +176,8 @@ fn tool_definitions() -> Json {
     tool(
         "list_volumes",
         "Detect the partitions/filesystems in a source (disk image or device). \
+         Each volume reports its free (unallocated) space as free_bytes (null when \
+         the filesystem's allocation map is not parsed). \
          Set deleted=true to also count recoverable deleted files per volume. \
          Set scan=true to find lost/orphaned volumes by a whole-source signature \
          scan when the partition table is missing or corrupt.",
@@ -511,11 +513,16 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     } else {
                         Json::Null
                     };
+                    let free = match v.free_extents(&source) {
+                        Some(ex) => n(ex.iter().map(|(_, len)| len).sum::<u64>()),
+                        None => Json::Null,
+                    };
                     obj(vec![
                         ("index", n(i as u64)),
                         ("filesystem", s(v.fs_label())),
                         ("offset", n(v.offset())),
                         ("size", n(v.size())),
+                        ("free_bytes", free),
                         ("deleted", del),
                         (
                             "label",

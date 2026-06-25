@@ -19,7 +19,7 @@ formats.
   how much deleted data might be recoverable before running a carve. The text
   view adds a `free:` line (bytes and unallocated percentage) under each volume;
   `--json` adds a `free_bytes` field (`null` when the filesystem's map is not
-  parsed).
+  parsed). The MCP `list_volumes` tool reports the same `free_bytes` per volume.
 - **Free-space-aware carving** — `recover --unallocated` and `scan --unallocated`
   carve only a volume's unallocated space (less noise, faster), reading the
   allocation map for FAT, exFAT, ext2/3/4, NTFS, and HFS+/HFSX. Falls back to a
