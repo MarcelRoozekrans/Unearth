@@ -53,6 +53,9 @@ formats.
   breakdown, and (with `--report`) the manifest of what *would* be recovered,
   without writing any files — useful for sizing up a device first. Also exposed
   as a `dry_run` argument on the MCP `scan` tool.
+- **`recover --dry-run`** previews both passes (filesystem undelete and carving)
+  without writing any files, so dry-run is now available on `scan`, `undelete`,
+  and `recover` alike.
 - **Type categories** — `--type` (on `scan` and `recover`) now accepts a category
   name (`image`, `audio`, `video`, `document`, `archive`, `executable`, `font`,
   `system`) to select a whole class of types at once, instead of listing every

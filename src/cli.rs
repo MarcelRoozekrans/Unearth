@@ -215,6 +215,11 @@ pub struct RecoverArgs {
     #[arg(long)]
     pub organize: bool,
 
+    /// Preview only: report what both passes (undelete and carving) would
+    /// recover — counts, sizes, and the manifest — without writing any files.
+    #[arg(long)]
+    pub dry_run: bool,
+
     /// Carve only the volume's unallocated (free) space, skipping data that is
     /// still allocated to live files. Recovers deleted content with much less
     /// noise. Falls back to carving the whole source if the filesystem's
