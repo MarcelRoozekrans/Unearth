@@ -57,6 +57,10 @@ formats.
 - **`recover --dry-run`** previews both passes (filesystem undelete and carving)
   without writing any files, so dry-run is now available on `scan`, `undelete`,
   and `recover` alike.
+- **Human-readable size suffixes** — every byte-valued option (`--start`, `--end`,
+  `--min-size`, `--offset`, `--scan-step`, `--sector-size`) now accepts binary
+  unit suffixes like `5M`, `2G`, or `1.5G` (powers of 1024), not just raw byte
+  counts.
 - **Type categories** — `--type` (on `scan` and `recover`) now accepts a category
   name (`image`, `audio`, `video`, `document`, `archive`, `executable`, `font`,
   `system`) to select a whole class of types at once, instead of listing every

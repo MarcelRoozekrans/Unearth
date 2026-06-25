@@ -452,9 +452,9 @@ filerecovery scan card.img -o recovered --type image
 ```text
 -o, --output <DIR>     Where to write recovered files (default: ./recovered)
 -t, --type <EXT|CAT>   Restrict to a file type or category; repeatable (default: all)
-    --start <BYTES>    Start scanning at this offset
-    --end <BYTES>      Stop scanning at this offset (exclusive)
-    --min-size <BYTES> Skip carved files smaller than this
+    --start <SIZE>     Start scanning at this offset (accepts K/M/G/T suffixes)
+    --end <SIZE>       Stop scanning at this offset (exclusive)
+    --min-size <SIZE>  Skip carved files smaller than this
     --max-files <N>    Stop after recovering N files
     --allow-nested     Also recover files embedded in other files (e.g. thumbnails)
     --no-validate      Keep every signature match without structural validation
