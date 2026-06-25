@@ -1,6 +1,7 @@
 //! ISO 9660 (data CD/DVD discs and `.iso` images) is recognised by
-//! `detect`/`info` — with its size and volume label — but it is not recovered
-//! from metadata; carving is the fallback.
+//! `detect`/`info` — with its size and volume label — and its files are
+//! extracted with their names and folder paths (see the unit tests in
+//! `src/iso9660.rs` for the directory-walk extraction itself).
 
 use std::process::Command;
 
@@ -11,7 +12,8 @@ const VDS_OFFSET: usize = 16 * 2048;
 const VD_SIZE: usize = 2048;
 
 /// A minimal ISO 9660 image: a Primary Volume Descriptor at sector 16 with a
-/// volume size (block count × block size) and a volume label.
+/// volume size (block count × block size) and a volume label. No directory tree,
+/// so there are no files to extract.
 fn iso_image(blocks: u32, label: &str) -> Vec<u8> {
     let mut v = vec![0u8; VDS_OFFSET + 4 * VD_SIZE];
     let off = VDS_OFFSET; // sector 16
@@ -25,7 +27,7 @@ fn iso_image(blocks: u32, label: &str) -> Vec<u8> {
 }
 
 #[test]
-fn detect_reports_iso9660_but_recovers_nothing() {
+fn detect_reports_iso9660_with_size_and_label() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("disc.iso");
     std::fs::write(&img, iso_image(50, "MY_DISC")).unwrap();
@@ -37,6 +39,7 @@ fn detect_reports_iso9660_but_recovers_nothing() {
     assert_eq!(vols[0].size(), 50 * 2048);
     assert_eq!(vols[0].volume_label().as_deref(), Some("MY_DISC"));
 
+    // This image has no root directory tree, so there is nothing to extract.
     let out = tmp.path().join("out");
     let stats = vols[0]
         .recover_deleted(&src, &out, &RecoverOptions::default())

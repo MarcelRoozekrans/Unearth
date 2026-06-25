@@ -7,9 +7,11 @@
 //! ([`crate::apfs`]) and Btrfs volumes ([`crate::btrfs`]) are recognised for
 //! reporting (their copy-on-write design leaves no stale metadata to scavenge)
 //! but not recovered from metadata — carving (`scan`) is the fallback there.
-//! UDF volumes ([`crate::udf`]) and ISO 9660 discs ([`crate::iso9660`]: optical
-//! media and `.iso` images) are likewise recognised and reported but carved
-//! rather than recovered from metadata. Encrypted containers
+//! UDF volumes ([`crate::udf`]) are likewise recognised and reported but carved
+//! rather than recovered from metadata. ISO 9660 discs ([`crate::iso9660`]:
+//! optical media and `.iso` images) are read-only, so their files *are* extracted
+//! with original names and paths by walking the directory tree. Encrypted
+//! containers
 //! ([`crate::encrypted`]: LUKS, BitLocker) are recognised so the user is told to
 //! unlock them first; nothing can be read until then.
 

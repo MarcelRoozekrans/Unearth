@@ -679,10 +679,13 @@ Common to both strategies:
   cards) is *recognised* and reported by `info`/`list_volumes` (via its Volume
   Recognition Sequence at sector 16), but its descriptor metadata is not parsed,
   so it is not recovered from metadata. Use `scan` (carving).
-- **ISO 9660** (data CD/DVD discs and `.iso` images) is *recognised* and reported
-  by `info`/`list_volumes` with its size and volume label (from the Primary
-  Volume Descriptor at sector 16); a hybrid UDF disc is reported as UDF. Its
-  directory metadata is not parsed, so use `scan` (carving) to recover contents.
+- **ISO 9660** (data CD/DVD discs and `.iso` images) is recognised by
+  `info`/`list_volumes` (with its size and volume label from the Primary Volume
+  Descriptor at sector 16), and its **files are extracted with their original
+  names and folder paths** by `undelete`/`recover`, walking the directory tree —
+  far better than carving, which loses names and structure. (Long-name extensions
+  — Joliet, Rock Ridge — are not yet decoded, so those names fall back to the
+  short ISO 9660 identifier.) A hybrid UDF disc is reported as UDF.
 - **Encrypted volumes** — **LUKS** (LUKS1/LUKS2) and **BitLocker** — are
   *recognised* and reported by `info`/`list_volumes`, but they hold only
   ciphertext until unlocked, so nothing can be recovered (and carving the raw
