@@ -56,6 +56,7 @@ pub mod hash;
 pub mod hfsplus;
 pub mod identify;
 pub mod image;
+pub mod iso9660;
 pub mod job;
 pub mod json;
 pub mod manifest;
