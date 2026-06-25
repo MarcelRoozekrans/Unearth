@@ -52,6 +52,7 @@ fn opts(out: &std::path::Path, checkpoint: &std::path::Path, resume: bool) -> Ca
         resume,
         organize: false,
         dry_run: false,
+        align: 1,
     }
 }
 

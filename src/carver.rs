@@ -62,6 +62,11 @@ pub struct CarveOptions {
     /// per-type, and the manifest records) without writing any output. Useful
     /// for sizing up a device before committing disk space to a real recovery.
     pub dry_run: bool,
+    /// Only accept candidates whose start offset is a multiple of this many
+    /// bytes (1 = every offset). Files inside a filesystem begin on cluster
+    /// (sector-multiple) boundaries, so a sector alignment like 512 discards
+    /// the coincidental mid-sector magic matches that produce false positives.
+    pub align: u64,
 }
 
 /// One carved file, recorded for the recovery report.
@@ -190,8 +195,12 @@ pub fn carve_seeded(
                 // `file_start` underflows past the device start only if magic
                 // appears in the first few bytes; guard against that.
                 let valid_start = magic_abs >= sig.magic_offset;
+                // Optional sector/cluster alignment: real files inside a
+                // filesystem start on a cluster boundary, so an unaligned start
+                // is almost always a coincidental magic match.
+                let aligned = opts.align <= 1 || file_start % opts.align == 0;
 
-                if valid_start && (opts.allow_nested || file_start >= skip_until) {
+                if valid_start && aligned && (opts.allow_nested || file_start >= skip_until) {
                     if let Some(len) =
                         file_length(source, sig, file_start, scan_end, &mut footer_buf)?
                     {

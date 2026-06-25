@@ -226,6 +226,11 @@ pub struct RecoverArgs {
     #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     pub max_size: Option<u64>,
 
+    /// Only carve files starting on a multiple of this many bytes (e.g. 512 or
+    /// 4K). Cuts false positives, since real files start on cluster boundaries.
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 1)]
+    pub align: u64,
+
     /// Group carved files into per-type subdirectories under `carved/`.
     #[arg(long)]
     pub organize: bool,
@@ -378,6 +383,11 @@ pub struct ScanArgs {
     /// Ignore carved files larger than this many bytes.
     #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     pub max_size: Option<u64>,
+
+    /// Only carve files starting on a multiple of this many bytes (e.g. 512 or
+    /// 4K). Cuts false positives, since real files start on cluster boundaries.
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 1)]
+    pub align: u64,
 
     /// Stop after recovering this many files.
     #[arg(long, value_name = "N")]

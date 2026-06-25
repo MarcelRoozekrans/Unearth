@@ -59,6 +59,7 @@ fn carve_buf(buf: &[u8], out_dir: &std::path::Path) {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     // Must not panic; result content is irrelevant.
     let _ = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();

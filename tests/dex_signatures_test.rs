@@ -70,6 +70,7 @@ fn recovers_a_dex_file() {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 1, "one dex file");

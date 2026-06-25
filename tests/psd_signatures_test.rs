@@ -103,6 +103,7 @@ fn recovers_psd_raw_and_rle() {
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     let stats = carver::carve(&source, &sigs, &opts, &NoProgress).unwrap();
     assert_eq!(stats.files_recovered, 2, "raw and RLE PSD");

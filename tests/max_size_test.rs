@@ -64,6 +64,7 @@ fn carve_with_max(max_size: Option<u64>, files: &[&[u8]]) -> carver::CarveStats 
         resume: false,
         organize: false,
         dry_run: false,
+        align: 1,
     };
     carver::carve(&source, &sigs, &opts, &NoProgress).unwrap()
 }

@@ -246,6 +246,13 @@ fn tool_definitions() -> Json {
                     int_prop("Ignore carved files larger than this many bytes."),
                 ),
                 (
+                    "align",
+                    int_prop(
+                        "Only carve files starting on a multiple of this many bytes \
+                         (e.g. 512); cuts false positives. Default 1 (any offset).",
+                    ),
+                ),
+                (
                     "include_files",
                     bool_prop("Include the per-file list with SHA-256 (default true)."),
                 ),
@@ -570,6 +577,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                 .unwrap_or_default();
             let min_size = arg_u64("min_size").unwrap_or(0);
             let max_size = arg_u64("max_size");
+            let align = arg_u64("align").unwrap_or(1);
             let validate = arg_bool("validate").unwrap_or(true);
             let dedup = arg_bool("dedup").unwrap_or(false);
             let organize = arg_bool("organize").unwrap_or(false);
@@ -601,6 +609,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     resume,
                     organize,
                     dry_run,
+                    align,
                 };
                 let stats =
                     carver::carve(&source, &active, &opts, progress).map_err(|e| e.to_string())?;
