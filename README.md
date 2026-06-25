@@ -153,7 +153,9 @@ tolerant), `undelete`, `verify`, `read_file` (read a recovered file's bytes
 back, base64, for inspection), `triage` (summarize a recovery directory —
 counts per type, largest files, duplicates, empties), and `identify` (detect a
 file's type from its contents). It speaks JSON-RPC 2.0 and needs no extra
-dependencies or network access.
+dependencies or network access. `list_types` reports each type's category, and
+`scan`'s `types` argument accepts either extensions or a category name
+(`image`, `audio`, …) to recover a whole class at once.
 
 Because carving or imaging a large drive can take an hour, `scan` and `image`
 run as **background jobs**: each returns a `job_id` immediately, the agent polls

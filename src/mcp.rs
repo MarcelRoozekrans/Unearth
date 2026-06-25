@@ -167,7 +167,10 @@ fn tool_definitions() -> Json {
 
     tool(
         "list_types",
-        "List the file types signature carving can recover.",
+        "List the file types signature carving can recover. Each entry has its \
+         extension, description, and category (image/audio/video/document/\
+         archive/executable/font/system) — a category name can be passed to \
+         `scan` to select that whole class.",
         schema(vec![], vec![]),
     );
     tool(
@@ -224,7 +227,11 @@ fn tool_definitions() -> Json {
                         ("items", obj(vec![("type", s("string"))])),
                         (
                             "description",
-                            s("File-type extensions to recover (default: all)."),
+                            s("File types to recover (default: all). Each entry is \
+                               an extension (e.g. \"jpg\") or a category that \
+                               expands to a whole class: \"image\", \"audio\", \
+                               \"video\", \"document\", \"archive\", \"executable\", \
+                               \"font\", or \"system\"."),
                         ),
                     ]),
                 ),
@@ -452,12 +459,25 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
     let arg_u64 = |key: &str| args.and_then(|a| a.get(key)).and_then(|v| v.as_u64());
 
     match name {
-        "list_types" => Ok(Json::Arr(
-            signatures::SIGNATURES
-                .iter()
-                .map(|sig| obj(vec![("ext", s(sig.ext)), ("name", s(sig.name))]))
-                .collect(),
-        )),
+        "list_types" => {
+            // One entry per distinct extension (several signatures can share an
+            // extension, e.g. the two GIF variants), each tagged with its
+            // selectable category.
+            let mut seen: Vec<&str> = Vec::new();
+            let mut out = Vec::new();
+            for sig in signatures::SIGNATURES {
+                if seen.contains(&sig.ext) {
+                    continue;
+                }
+                seen.push(sig.ext);
+                out.push(obj(vec![
+                    ("ext", s(sig.ext)),
+                    ("name", s(sig.name)),
+                    ("category", s(signatures::category_of(sig.ext).as_str())),
+                ]));
+            }
+            Ok(Json::Arr(out))
+        }
 
         "list_volumes" => {
             let source = open(arg_str("source")?)?;
@@ -993,13 +1013,24 @@ mod tests {
             .unwrap()
             .as_str()
             .unwrap();
-        // The text is a JSON array of {ext,name}; jpg must be in there.
+        // The text is a JSON array of {ext,name,category}; jpg must be present
+        // and tagged as an image.
         let parsed = json::parse(text).unwrap();
-        assert!(parsed
+        let jpg = parsed
             .as_array()
             .unwrap()
             .iter()
-            .any(|e| e.get("ext").and_then(|x| x.as_str()) == Some("jpg")));
+            .find(|e| e.get("ext").and_then(|x| x.as_str()) == Some("jpg"))
+            .expect("jpg listed");
+        assert_eq!(jpg.get("category").and_then(|x| x.as_str()), Some("image"));
+        // Distinct extensions only: gif (two signature variants) appears once.
+        let gifs = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e.get("ext").and_then(|x| x.as_str()) == Some("gif"))
+            .count();
+        assert_eq!(gifs, 1, "extensions are de-duplicated");
     }
 
     #[test]
