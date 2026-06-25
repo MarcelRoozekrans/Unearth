@@ -70,7 +70,8 @@ formats.
   extension), and the `scan` tool's `types` argument accepts category names.
   `identify` (CLI and MCP) reports the detected file's category, and `triage`
   adds a per-category rollup (image/audio/video/…) alongside its per-type
-  breakdown.
+  breakdown. `--type` also accepts a comma-separated list (`--type image,pdf`),
+  not just repetition.
 
 ### Fixed
 

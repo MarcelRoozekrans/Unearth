@@ -255,6 +255,42 @@ fn scan_recovers_embedded_file() {
 }
 
 #[test]
+fn scan_type_accepts_a_comma_list() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+
+    let jpeg = common::jpeg(&vec![0x41u8; 2000]);
+    let mut data = vec![0u8; 1000];
+    data.extend_from_slice(&jpeg);
+    data.extend_from_slice(&vec![0u8; 1000]);
+    std::fs::write(&img, &data).unwrap();
+
+    // A comma-separated list (here a category plus an extension) is accepted in
+    // one --type value; the "image" category covers jpg.
+    let out = run(&[
+        "scan",
+        img.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--type",
+        "image,zip",
+        "-q",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let recovered: Vec<_> = std::fs::read_dir(&out_dir).unwrap().collect();
+    assert_eq!(
+        recovered.len(),
+        1,
+        "the jpeg is carved via the image category"
+    );
+}
+
+#[test]
 fn scan_organize_groups_files_by_type() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("disk.img");
