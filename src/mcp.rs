@@ -358,6 +358,14 @@ fn tool_definitions() -> Json {
                     int_prop("Ignore deleted files larger than this many bytes."),
                 ),
                 (
+                    "modified_after",
+                    str_prop("Only recover files modified at/after this UTC date (YYYY-MM-DD[THH:MM:SS])."),
+                ),
+                (
+                    "modified_before",
+                    str_prop("Only recover files modified at/before this UTC date (YYYY-MM-DD[THH:MM:SS])."),
+                ),
+                (
                     "dry_run",
                     bool_prop("Report what would be recovered without writing."),
                 ),
@@ -481,6 +489,13 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
     };
     let arg_bool = |key: &str| args.and_then(|a| a.get(key)).and_then(|v| v.as_bool());
     let arg_u64 = |key: &str| args.and_then(|a| a.get(key)).and_then(|v| v.as_u64());
+    // A UTC date/date-time argument (`YYYY-MM-DD[THH:MM:SS]`) for time filters.
+    let arg_date = |key: &str| -> Result<Option<std::time::SystemTime>, String> {
+        match args.and_then(|a| a.get(key)).and_then(|v| v.as_str()) {
+            Some(s) => crate::times::parse_date(s).map(Some),
+            None => Ok(None),
+        }
+    };
 
     match name {
         "list_types" => {
@@ -520,6 +535,8 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                         let opts = recover::RecoverOptions {
                             min_size: 0,
                             max_size: None,
+                            modified_after: None,
+                            modified_before: None,
                             dry_run: true,
                         };
                         match v.recover_deleted(&source, Path::new("."), &opts) {
@@ -758,6 +775,8 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             let opts = recover::RecoverOptions {
                 min_size: arg_u64("min_size").unwrap_or(0),
                 max_size: arg_u64("max_size"),
+                modified_after: arg_date("modified_after")?,
+                modified_before: arg_date("modified_before")?,
                 dry_run: arg_bool("dry_run").unwrap_or(false),
             };
             let volumes = match arg_u64("offset") {

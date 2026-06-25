@@ -81,6 +81,8 @@ fn dry_run_reports_without_writing() {
     let opts = RecoverOptions {
         min_size: 0,
         max_size: None,
+        modified_after: None,
+        modified_before: None,
         dry_run: true,
     };
     let stats = vol.recover_deleted(&source, &out_dir, &opts).unwrap();

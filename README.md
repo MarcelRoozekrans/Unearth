@@ -358,6 +358,8 @@ partition table). Override the location with `--offset <BYTES>` if needed.
     --offset <BYTES>   Byte offset of the volume (default: auto-detect)
     --min-size <SIZE>  Skip deleted files smaller than this
     --max-size <SIZE>  Skip deleted files larger than this
+    --modified-after <DATE>   Only files modified on/after this UTC date
+    --modified-before <DATE>  Only files modified on/before this UTC date
     --dry-run          List what would be recovered without writing any files
     --report <FILE>    Write a report of what was found (.json => JSON, else CSV)
     --summary <FILE>   Write a run summary (.json => JSON, else text)
@@ -408,7 +410,9 @@ The carving pass is **content-deduplicated against the undelete results** (by
 SHA-256), so `carved/` only holds data that wasn't already recovered by name —
 you get the named files plus the extras carving finds, without duplicate copies.
 Accepts `--type`, `--min-size`, `--max-size` (both size bounds apply to the
-undelete *and* carving passes), `--align` (carve only sector/cluster-aligned
+undelete *and* carving passes), `--modified-after`/`--modified-before` (filter
+the undelete pass by each file's modification date — accepts `YYYY-MM-DD` or
+`YYYY-MM-DDTHH:MM:SS`, UTC), `--align` (carve only sector/cluster-aligned
 files), `--organize` (group `carved/` by type), `--offset` (volume offset for
 the undelete pass), and `--dry-run` (preview both passes — counts, sizes, and
 the `--report` manifest — without writing anything).

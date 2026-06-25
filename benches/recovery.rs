@@ -171,6 +171,8 @@ fn bench_undelete(c: &mut Criterion) {
                 let opts = RecoverOptions {
                     min_size: 0,
                     max_size: None,
+                    modified_after: None,
+                    modified_before: None,
                     dry_run: false,
                 };
                 let volumes = recover::detect(&source).unwrap();

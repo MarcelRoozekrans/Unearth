@@ -346,6 +346,9 @@ impl Volume {
             if !opts.size_ok(size) {
                 continue;
             }
+            if !opts.time_ok(crate::times::from_unix(inode_mtime(&inode))) {
+                continue;
+            }
             if size == 0 || size > volume_bytes {
                 stats.record_skipped(rel, size);
                 continue;

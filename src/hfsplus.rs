@@ -341,6 +341,9 @@ impl Volume {
                 if !opts.size_ok(size) {
                     continue;
                 }
+                if !opts.time_ok(crate::times::from_unix(hfs_to_unix(rec.mod_date))) {
+                    continue;
+                }
                 if size == 0 || size > vol_bytes {
                     stats.record_skipped(rel, size);
                     continue;

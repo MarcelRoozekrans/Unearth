@@ -160,6 +160,8 @@ fn never_panics_on_truncated_volume() {
                         &RecoverOptions {
                             min_size: 0,
                             max_size: None,
+                            modified_after: None,
+                            modified_before: None,
                             dry_run: true,
                         },
                     );
