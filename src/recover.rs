@@ -16,6 +16,7 @@
 //! unlock them first; nothing can be read until then.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use anyhow::{bail, Result};
 
@@ -29,11 +30,31 @@ pub struct RecoverOptions {
     pub min_size: u64,
     /// Ignore deleted files larger than this many bytes (`None` = no cap).
     pub max_size: Option<u64>,
+    /// Only recover files modified at or after this time (`None` = no bound).
+    pub modified_after: Option<SystemTime>,
+    /// Only recover files modified at or before this time (`None` = no bound).
+    pub modified_before: Option<SystemTime>,
     /// Report what would be recovered without writing any files.
     pub dry_run: bool,
 }
 
 impl RecoverOptions {
+    /// Whether a file modified at `mtime` falls within the configured time
+    /// window. A file whose timestamp is unknown (`None`) is kept, so a filter
+    /// never silently drops files a filesystem can't date (e.g. a wiped inode).
+    pub fn time_ok(&self, mtime: Option<SystemTime>) -> bool {
+        if self.modified_after.is_none() && self.modified_before.is_none() {
+            return true;
+        }
+        match mtime {
+            Some(t) => {
+                self.modified_after.map_or(true, |a| t >= a)
+                    && self.modified_before.map_or(true, |b| t <= b)
+            }
+            None => true,
+        }
+    }
+
     /// Whether a file of `size` bytes falls within the configured size window.
     pub fn size_ok(&self, size: u64) -> bool {
         size >= self.min_size && self.max_size.map_or(true, |max| size <= max)
@@ -456,7 +477,7 @@ mod tests {
         let windowed = RecoverOptions {
             min_size: 100,
             max_size: Some(1000),
-            dry_run: false,
+            ..Default::default()
         };
         assert!(!windowed.size_ok(99), "below the floor is rejected");
         assert!(windowed.size_ok(100), "the floor is inclusive");

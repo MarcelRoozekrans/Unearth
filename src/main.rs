@@ -108,6 +108,8 @@ fn deleted_count(vol: &recover::Volume, source: &Source, requested: bool) -> Opt
     let opts = recover::RecoverOptions {
         min_size: 0,
         max_size: None,
+        modified_after: None,
+        modified_before: None,
         dry_run: true,
     };
     Some(
@@ -750,6 +752,8 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
     let opts = recover::RecoverOptions {
         min_size: args.min_size,
         max_size: args.max_size,
+        modified_after: args.modified_after,
+        modified_before: args.modified_before,
         dry_run: args.dry_run,
     };
     if args.dry_run {
@@ -871,6 +875,8 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
     let ropts = recover::RecoverOptions {
         min_size: args.min_size,
         max_size: args.max_size,
+        modified_after: args.modified_after,
+        modified_before: args.modified_before,
         dry_run: args.dry_run,
     };
     let multi = volumes.len() > 1;

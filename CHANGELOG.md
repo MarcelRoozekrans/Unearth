@@ -79,6 +79,13 @@ formats.
 - **`recover --dry-run`** previews both passes (filesystem undelete and carving)
   without writing any files, so dry-run is now available on `scan`, `undelete`,
   and `recover` alike.
+- **Time-range filtering** — `--modified-after` and `--modified-before` (on
+  `undelete` and `recover`, and the MCP `undelete` tool) restrict the undelete
+  pass to files whose modification time falls in a window, e.g. `--modified-after
+  2021-01-01`. Accepts `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS` (UTC). Applies to
+  every filesystem backend (FAT, exFAT, NTFS, ext, HFS+); a file whose timestamp
+  can't be read is kept rather than silently dropped. (As with timestamp
+  restoration, FAT/exFAT times are treated as UTC for lack of a recorded zone.)
 - **`--align`** — restrict carving (on `scan` and `recover`, and the MCP `scan`
   tool) to candidates whose start offset is a multiple of the given size (e.g.
   `--align 512` or `--align 4K`). Files inside a filesystem begin on cluster

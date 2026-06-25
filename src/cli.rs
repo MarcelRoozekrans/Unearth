@@ -226,6 +226,15 @@ pub struct RecoverArgs {
     #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     pub max_size: Option<u64>,
 
+    /// Only recover files modified at/after this UTC date (the undelete pass),
+    /// e.g. `2021-01-01` or `2021-01-01T12:00:00`.
+    #[arg(long, value_name = "DATE", value_parser = filerecovery::times::parse_date)]
+    pub modified_after: Option<std::time::SystemTime>,
+
+    /// Only recover files modified at/before this UTC date (the undelete pass).
+    #[arg(long, value_name = "DATE", value_parser = filerecovery::times::parse_date)]
+    pub modified_before: Option<std::time::SystemTime>,
+
     /// Only carve files starting on a multiple of this many bytes (e.g. 512 or
     /// 4K). Cuts false positives, since real files start on cluster boundaries.
     #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 1)]
@@ -324,6 +333,15 @@ pub struct UndeleteArgs {
     /// Ignore deleted files larger than this many bytes.
     #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     pub max_size: Option<u64>,
+
+    /// Only recover files modified at/after this UTC date, e.g. `2021-01-01` or
+    /// `2021-01-01T12:00:00`.
+    #[arg(long, value_name = "DATE", value_parser = filerecovery::times::parse_date)]
+    pub modified_after: Option<std::time::SystemTime>,
+
+    /// Only recover files modified at/before this UTC date.
+    #[arg(long, value_name = "DATE", value_parser = filerecovery::times::parse_date)]
+    pub modified_before: Option<std::time::SystemTime>,
 
     /// List what would be recovered without writing any files.
     #[arg(long)]

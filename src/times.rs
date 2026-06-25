@@ -85,6 +85,57 @@ pub fn from_exfat(ts: u32) -> Option<SystemTime> {
     from_dos((ts >> 16) as u16, (ts & 0xFFFF) as u16)
 }
 
+/// Parse a UTC date (`YYYY-MM-DD`) or date-time (`YYYY-MM-DDTHH:MM:SS`, with a
+/// space also accepted as the separator) into a [`SystemTime`]. Used by the
+/// `--modified-after`/`--modified-before` recovery filters; with no recorded
+/// time zone, all times are treated as UTC, matching how timestamps are read
+/// back from the filesystems. Returns an error string suitable for clap.
+pub fn parse_date(s: &str) -> Result<SystemTime, String> {
+    let s = s.trim();
+    let (date, time) = match s.split_once(['T', ' ']) {
+        Some((d, t)) => (d, Some(t)),
+        None => (s, None),
+    };
+    let mut dp = date.split('-');
+    let year = next_num(&mut dp, "year", s)?;
+    let month = next_num(&mut dp, "month", s)?;
+    let day = next_num(&mut dp, "day", s)?;
+    if dp.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return Err(format!("invalid date '{s}' (expected YYYY-MM-DD)"));
+    }
+    let (mut h, mut mi, mut sec) = (0i64, 0i64, 0i64);
+    if let Some(t) = time {
+        let mut tp = t.split(':');
+        h = next_num(&mut tp, "hour", s)?;
+        mi = next_num(&mut tp, "minute", s)?;
+        sec = tp.next().map_or(0, |v| v.parse().unwrap_or(-1));
+        if tp.next().is_some()
+            || !(0..=23).contains(&h)
+            || !(0..=59).contains(&mi)
+            || !(0..=60).contains(&sec)
+        {
+            return Err(format!("invalid time in '{s}' (expected HH:MM[:SS])"));
+        }
+    }
+    let secs = days_from_civil(year, month, day) * 86400 + h * 3600 + mi * 60 + sec;
+    if secs < 0 {
+        return Err(format!("date '{s}' is before the Unix epoch (1970)"));
+    }
+    Ok(UNIX_EPOCH + Duration::from_secs(secs as u64))
+}
+
+/// Parse the next `-`/`:`-separated numeric field, or report a clear error.
+fn next_num<'a>(
+    parts: &mut impl Iterator<Item = &'a str>,
+    field: &str,
+    whole: &str,
+) -> Result<i64, String> {
+    parts
+        .next()
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| format!("invalid {field} in '{whole}'"))
+}
+
 /// Days from 1970-01-01 to a civil (proleptic Gregorian) date.
 /// Howard Hinnant's `days_from_civil` algorithm.
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
@@ -122,5 +173,27 @@ mod tests {
         let ft = 11_644_473_600u64 * 10_000_000;
         let t = from_filetime(ft).unwrap();
         assert_eq!(t.duration_since(UNIX_EPOCH).unwrap().as_secs(), 0);
+    }
+
+    #[test]
+    fn parse_date_handles_dates_and_datetimes() {
+        // 2021-01-01 is 18628 days after the epoch.
+        assert_eq!(
+            parse_date("2021-01-01").unwrap(),
+            UNIX_EPOCH + Duration::from_secs(18628 * 86400)
+        );
+        assert_eq!(parse_date("1970-01-01").unwrap(), UNIX_EPOCH);
+        let dt = UNIX_EPOCH + Duration::from_secs(18628 * 86400 + 12 * 3600 + 30 * 60 + 5);
+        assert_eq!(parse_date("2021-01-01T12:30:05").unwrap(), dt);
+        assert_eq!(parse_date("2021-01-01 12:30:05").unwrap(), dt);
+    }
+
+    #[test]
+    fn parse_date_rejects_bad_input() {
+        assert!(parse_date("2021-13-01").is_err());
+        assert!(parse_date("2021-01-32").is_err());
+        assert!(parse_date("not-a-date").is_err());
+        assert!(parse_date("2021-01-01T25:00").is_err());
+        assert!(parse_date("1969-01-01").is_err());
     }
 }

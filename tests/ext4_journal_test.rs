@@ -174,6 +174,8 @@ fn recovers_via_journal_when_live_inode_zeroed() {
             &RecoverOptions {
                 min_size: 0,
                 max_size: None,
+                modified_after: None,
+                modified_before: None,
                 dry_run: true,
             },
         )

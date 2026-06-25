@@ -377,6 +377,9 @@ impl Volume {
             if !opts.size_ok(df.size as u64) {
                 continue;
             }
+            if !opts.time_ok(df.mtime) {
+                continue;
+            }
             // Validate before trusting the entry's cluster/size fields.
             if df.size == 0 || df.start_cluster < 2 || df.start_cluster > self.max_valid_cluster() {
                 stats.record_skipped(df.path.clone(), df.size as u64);

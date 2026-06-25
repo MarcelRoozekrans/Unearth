@@ -263,6 +263,9 @@ impl Volume {
             if !opts.size_ok(df.data_length) {
                 continue;
             }
+            if !opts.time_ok(df.mtime) {
+                continue;
+            }
             if !self.valid_extent(&df) {
                 stats.record_skipped(df.path.clone(), df.data_length);
                 continue;
