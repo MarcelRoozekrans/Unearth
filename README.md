@@ -262,11 +262,19 @@ Each volume's **label** (its user-set name) is shown when set — for FAT,
 exFAT, NTFS, ext, and Btrfs (the text view prints it on a `label:` line under
 the volume; `--json` includes a `label` field).
 
+Each volume's **free (unallocated) space** is also reported — read from the
+filesystem's allocation map for FAT, exFAT, ext2/3/4, NTFS, and HFS+/HFSX. The
+text view prints a `free:` line (bytes and the unallocated percentage) under the
+volume, so you can gauge how much deleted data might be recoverable before
+running a carve; `--json` includes a `free_bytes` field. It is `null` for
+filesystems whose allocation map is not parsed.
+
 With `--json`, the detected layout is written to stdout as a single object
 (`source`, `source_bytes`, and a `volumes` array of
-`index`/`filesystem`/`offset`/`size`/`deleted`/`label`/`contained_volumes`),
+`index`/`filesystem`/`offset`/`size`/`free_bytes`/`deleted`/`label`/`contained_volumes`),
 so the tool's output can be consumed by scripts. `deleted` is `null` unless
-`--deleted` is also passed; `label` is `null` when the volume has none.
+`--deleted` is also passed; `label` and `free_bytes` are `null` when the volume
+has none / cannot report it.
 
 Example output:
 
@@ -276,6 +284,7 @@ Detected 1 volume(s):
   #   FS         OFFSET         SIZE       DELETED
   -   --         ------         ----       -------
   0   ext2/3/4   17408          32.00 KiB  1
+      free:  20.00 KiB (62.5% unallocated)
 ```
 
 The `OFFSET` column is handy if you ever need to pass `--offset` to `undelete`.

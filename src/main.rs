@@ -302,12 +302,17 @@ fn info(args: InfoArgs) -> Result<()> {
                     Some(l) => format!("\"{}\"", json_escape(&l)),
                     None => "null".to_string(),
                 };
+                let free = match free_bytes(vol, &source) {
+                    Some(n) => n.to_string(),
+                    None => "null".to_string(),
+                };
                 out.push_str(&format!(
-                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"deleted\": {}, \"label\": {}, \"contained_volumes\": [{}]}}{}\n",
+                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"contained_volumes\": [{}]}}{}\n",
                     i,
                     json_escape(&vol.fs_label()),
                     vol.offset(),
                     vol.size(),
+                    free,
                     deleted,
                     label,
                     volumes,
@@ -383,6 +388,14 @@ fn info(args: InfoArgs) -> Result<()> {
         );
         if let Some(label) = vol.volume_label() {
             println!("      label: {label}");
+        }
+        if let Some(free) = free_bytes(vol, &source) {
+            let pct = if vol.size() > 0 {
+                free as f64 / vol.size() as f64 * 100.0
+            } else {
+                0.0
+            };
+            println!("      free:  {} ({pct:.1}% unallocated)", human_bytes(free));
         }
         let contained = vol.contained_volumes();
         if !contained.is_empty() {
@@ -501,6 +514,12 @@ fn free_space_regions(source: &Source) -> Option<Vec<(u64, u64)>> {
         regions.extend(v.free_extents(source)?);
     }
     Some(regions)
+}
+
+/// Total free (unallocated) bytes in a single volume, or `None` when the
+/// backend cannot report its allocation map.
+fn free_bytes(vol: &recover::Volume, source: &Source) -> Option<u64> {
+    Some(vol.free_extents(source)?.iter().map(|(_, len)| len).sum())
 }
 
 /// Accumulate one region's carve stats into a running total.
