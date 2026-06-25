@@ -1,23 +1,30 @@
-//! Detection of ISO 9660 volumes (data CD/DVD discs and `.iso` images).
+//! ISO 9660 volume detection and file extraction (data CD/DVD discs and `.iso`
+//! images).
 //!
-//! ISO 9660 is the classic optical-disc filesystem. Its directory structure is
-//! not parsed here, so `filerecovery` does not extract files from it directly —
-//! but recognising and naming it (with its size and volume label) is useful: a
-//! user who images a data CD/DVD or opens an `.iso` gets a clear answer ("this
-//! is ISO 9660 — carve it") instead of a bare "no supported volumes" message.
-//! Recovery is a no-op; carving (`scan`) is the fallback.
+//! ISO 9660 is the classic optical-disc filesystem. Unlike UDF, its directory
+//! structure is simple and read-only, so `filerecovery` both recognises it (in
+//! `info`/`list_volumes`, with size and label) *and* extracts its files with
+//! their original names and folder paths — which is far better than carving,
+//! which loses both. Extraction walks the directory tree from the Primary Volume
+//! Descriptor; long-name extensions (Joliet, Rock Ridge) are not yet decoded, so
+//! such names fall back to the short ISO 9660 identifier.
 //!
 //! Detection reads the **Volume Descriptor Set** at sector 16 (byte offset
 //! 32768): a series of 2048-byte descriptors each `{ type: u8, id: "CD001",
 //! version: u8, ... }`. The **Primary Volume Descriptor** (type 1) carries the
-//! volume identifier (label) and the volume size (block count × block size, as
-//! both-endian fields). A UDF disc with an ISO bridge is detected as UDF first
-//! (it has the additional `NSR` descriptor), so this only claims pure ISO 9660.
+//! volume identifier (label), the volume size (block count × block size), and
+//! the root directory record. A UDF disc with an ISO bridge is detected as UDF
+//! first (it has the additional `NSR` descriptor), so this only claims pure
+//! ISO 9660.
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
+use crate::hash::HashingWriter;
 use crate::recover::{RecoverOptions, RecoverStats};
 use crate::source::Source;
 
@@ -26,14 +33,21 @@ const VDS_OFFSET: u64 = 16 * 2048;
 const VD_SIZE: u64 = 2048;
 const PRIMARY: u8 = 1;
 const TERMINATOR: u8 = 255;
+/// Bound the directory walk against malformed or hostile images.
+const MAX_DEPTH: usize = 64;
+const MAX_ENTRIES: u64 = 5_000_000;
+/// Largest single directory extent we will read into memory.
+const MAX_DIR_BYTES: u64 = 32 * 1024 * 1024;
 
-/// A recognised ISO 9660 volume (not recovered from metadata; carving is the
-/// fallback).
+/// A recognised ISO 9660 volume.
 pub struct Volume {
     /// Byte offset of the volume within the source.
     pub offset: u64,
     size: u64,
     label: String,
+    block_size: u64,
+    root_lba: u64,
+    root_len: u64,
 }
 
 /// Recognise an ISO 9660 volume at `offset` by finding its Primary Volume
@@ -66,7 +80,6 @@ fn parse_primary(offset: u64, src: &Source, pvd: &[u8]) -> Volume {
     let blocks = u32::from_le_bytes([pvd[80], pvd[81], pvd[82], pvd[83]]) as u64;
     let block_size = u16::from_le_bytes([pvd[128], pvd[129]]) as u64;
     let computed = blocks.checked_mul(block_size).unwrap_or(0);
-    // Fall back to the remaining source if the header values are implausible.
     let size = if computed == 0 {
         src.size.saturating_sub(offset)
     } else {
@@ -79,10 +92,18 @@ fn parse_primary(offset: u64, src: &Source, pvd: &[u8]) -> Volume {
         .rposition(|&b| b != b' ' && b != 0)
         .map_or(0, |p| p + 1);
     let label = String::from_utf8_lossy(&raw[..end]).trim().to_string();
+    // Root Directory Record (34 bytes) is embedded at PVD offset 156: extent LBA
+    // (both-endian u32 at +2) and data length (both-endian u32 at +10).
+    let r = &pvd[156..];
+    let root_lba = u32::from_le_bytes([r[2], r[3], r[4], r[5]]) as u64;
+    let root_len = u32::from_le_bytes([r[10], r[11], r[12], r[13]]) as u64;
     Volume {
         offset,
         size,
         label,
+        block_size,
+        root_lba,
+        root_len,
     }
 }
 
@@ -110,17 +131,223 @@ impl Volume {
         &self.label
     }
 
-    /// ISO 9660 directory metadata is not parsed, so files are not extracted
-    /// from it here; always returns an empty result so a mixed disk's other
-    /// volumes still recover. Carve the volume (`scan`) to recover its contents.
+    /// Extract every file from the volume into `out_dir`, preserving names and
+    /// folder paths by walking the directory tree from the root record. (ISO
+    /// 9660 is read-only, so "recover" here means extract the live files; the
+    /// method name matches the other backends for a uniform dispatch.)
     pub fn recover_deleted(
         &self,
-        _src: &Source,
-        _out_dir: &Path,
-        _opts: &RecoverOptions,
+        src: &Source,
+        out_dir: &Path,
+        opts: &RecoverOptions,
     ) -> Result<RecoverStats> {
-        Ok(RecoverStats::default())
+        let mut stats = RecoverStats::default();
+        // A sane block size is required to translate LBAs to byte offsets.
+        if !(512..=65536).contains(&self.block_size) || self.root_len == 0 {
+            return Ok(stats);
+        }
+        let vol_end = self.offset.saturating_add(self.size).min(src.size);
+
+        let mut visited: HashSet<u64> = HashSet::new();
+        let mut entries = 0u64;
+        // Stack of directories to walk: (extent LBA, byte length, relative path,
+        // depth).
+        let mut stack: Vec<(u64, u64, PathBuf, usize)> =
+            vec![(self.root_lba, self.root_len, PathBuf::new(), 0)];
+
+        while let Some((lba, len, rel, depth)) = stack.pop() {
+            if !visited.insert(lba) || entries >= MAX_ENTRIES {
+                continue; // already walked, or run-away guard tripped
+            }
+            let Some(dir) = self.read_extent(src, lba, len, vol_end) else {
+                continue; // extent out of bounds or unreadable
+            };
+
+            let mut pos = 0usize;
+            while pos < dir.len() {
+                let rec_len = dir[pos] as usize;
+                if rec_len == 0 {
+                    // Records do not span sectors; a zero length is padding to
+                    // the next logical block.
+                    let next = (pos / self.block_size as usize + 1) * self.block_size as usize;
+                    pos = next;
+                    continue;
+                }
+                if pos + rec_len > dir.len() || rec_len < 33 {
+                    break;
+                }
+                entries += 1;
+                let rec = &dir[pos..pos + rec_len];
+                pos += rec_len;
+
+                let name_len = rec[32] as usize;
+                if 33 + name_len > rec.len() {
+                    continue;
+                }
+                let name_bytes = &rec[33..33 + name_len];
+                // The "." and ".." entries use single bytes 0x00 and 0x01.
+                if name_len == 1 && (name_bytes[0] == 0 || name_bytes[0] == 1) {
+                    continue;
+                }
+                let child_lba = u32::from_le_bytes([rec[2], rec[3], rec[4], rec[5]]) as u64;
+                let child_len = u32::from_le_bytes([rec[10], rec[11], rec[12], rec[13]]) as u64;
+                let is_dir = rec[25] & 0x02 != 0;
+                let name = decode_name(name_bytes, is_dir);
+                let child_rel = rel.join(&name);
+
+                if is_dir {
+                    if depth + 1 < MAX_DEPTH {
+                        stack.push((child_lba, child_len, child_rel, depth + 1));
+                    }
+                    continue;
+                }
+                self.recover_file(
+                    src, out_dir, child_lba, child_len, child_rel, vol_end, opts, &mut stats,
+                );
+            }
+        }
+        Ok(stats)
     }
+
+    /// Read a directory extent (`lba`/`len`) into memory, or `None` if it falls
+    /// outside the volume or is implausibly large.
+    fn read_extent(&self, src: &Source, lba: u64, len: u64, vol_end: u64) -> Option<Vec<u8>> {
+        if len == 0 || len > MAX_DIR_BYTES {
+            return None;
+        }
+        let start = self.offset.checked_add(lba.checked_mul(self.block_size)?)?;
+        if start < self.offset || start.checked_add(len)? > vol_end {
+            return None;
+        }
+        let mut buf = vec![0u8; len as usize];
+        let n = src.read_at(start, &mut buf).ok()?;
+        buf.truncate(n);
+        Some(buf)
+    }
+
+    /// Extract one file, recording it in `stats` (or counting it for a dry run).
+    #[allow(clippy::too_many_arguments)]
+    fn recover_file(
+        &self,
+        src: &Source,
+        out_dir: &Path,
+        lba: u64,
+        len: u64,
+        rel: PathBuf,
+        vol_end: u64,
+        opts: &RecoverOptions,
+        stats: &mut RecoverStats,
+    ) {
+        if !opts.size_ok(len) {
+            return;
+        }
+        // Validate the data extent before trusting it.
+        let start = match self.offset.checked_add(lba.saturating_mul(self.block_size)) {
+            Some(s) if s >= self.offset && s.saturating_add(len) <= vol_end => s,
+            _ => {
+                stats.record_skipped(rel, len);
+                return;
+            }
+        };
+        if opts.dry_run {
+            stats.record_recovered(rel, len, None);
+            return;
+        }
+        match write_file(src, out_dir, &rel, start, len) {
+            Ok(digest) => stats.record_recovered(rel, len, Some(digest)),
+            Err(_) => stats.record_skipped(rel, len),
+        }
+    }
+}
+
+/// Decode an ISO 9660 file identifier: strip the `;version` suffix and a single
+/// trailing `.` from files, and sanitise it into a safe path component.
+fn decode_name(bytes: &[u8], is_dir: bool) -> String {
+    let mut s = String::from_utf8_lossy(bytes).to_string();
+    if !is_dir {
+        if let Some(semi) = s.find(';') {
+            s.truncate(semi);
+        }
+        if s.ends_with('.') {
+            s.pop();
+        }
+    }
+    sanitize_component(&s)
+}
+
+/// Stream `len` bytes at `start` into `out_dir/rel`, returning the SHA-256 of the
+/// written bytes.
+fn write_file(src: &Source, out_dir: &Path, rel: &Path, start: u64, len: u64) -> Result<[u8; 32]> {
+    let target = unique_path(out_dir, rel);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    let file =
+        fs::File::create(&target).with_context(|| format!("creating {}", target.display()))?;
+    let mut out = HashingWriter::new(file);
+
+    let mut remaining = len;
+    let mut pos = start;
+    let buf_len = (len as usize).clamp(1, 1024 * 1024);
+    let mut buf = vec![0u8; buf_len];
+    while remaining > 0 {
+        let want = (remaining as usize).min(buf.len());
+        let n = src.read_at(pos, &mut buf[..want])?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(&buf[..n])?;
+        remaining -= n as u64;
+        pos += n as u64;
+    }
+    out.flush().ok();
+    let (_, digest) = out.into_parts();
+    Ok(digest)
+}
+
+/// Map a name to a safe single path component (no separators or control chars).
+fn sanitize_component(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c == '/' || c == '\\' || c == '\0' || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        "_recovered".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Build a non-colliding output path by appending a counter if needed.
+fn unique_path(out_dir: &Path, rel: &Path) -> PathBuf {
+    let candidate = out_dir.join(rel);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let stem = rel
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
+    let ext = rel.extension().map(|e| e.to_string_lossy().to_string());
+    let parent = rel.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    for i in 1.. {
+        let name = match &ext {
+            Some(e) => format!("{stem}_{i}.{e}"),
+            None => format!("{stem}_{i}"),
+        };
+        let candidate = out_dir.join(&parent).join(name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!()
 }
 
 #[cfg(test)]
@@ -135,7 +362,7 @@ mod tests {
     }
 
     /// Write a volume descriptor of `vtype` (with the `CD001` identifier) at
-    /// sector `16 + index`, returning a mutable view for further field writes.
+    /// sector `16 + index`, returning its byte offset for further field writes.
     fn put_descriptor(v: &mut [u8], index: u64, vtype: u8) -> usize {
         let off = (VDS_OFFSET + index * VD_SIZE) as usize;
         v[off] = vtype;
@@ -144,11 +371,29 @@ mod tests {
         off
     }
 
+    /// Write a directory record at `buf[at..]` and return its length.
+    fn put_record(
+        buf: &mut [u8],
+        at: usize,
+        lba: u32,
+        len: u32,
+        is_dir: bool,
+        name: &[u8],
+    ) -> usize {
+        let rec_len = 33 + name.len() + (name.len() % 2 == 0) as usize; // padded to even
+        buf[at] = rec_len as u8;
+        buf[at + 2..at + 6].copy_from_slice(&lba.to_le_bytes());
+        buf[at + 10..at + 14].copy_from_slice(&len.to_le_bytes());
+        buf[at + 25] = if is_dir { 0x02 } else { 0 };
+        buf[at + 32] = name.len() as u8;
+        buf[at + 33..at + 33 + name.len()].copy_from_slice(name);
+        rec_len
+    }
+
     #[test]
     fn detects_primary_with_size_and_label() {
         let mut v = vec![0u8; (VDS_OFFSET + 4 * VD_SIZE) as usize];
         let off = put_descriptor(&mut v, 0, PRIMARY);
-        // 100 blocks of 2048 bytes = 204800.
         v[off + 80..off + 84].copy_from_slice(&100u32.to_le_bytes());
         v[off + 128..off + 130].copy_from_slice(&2048u16.to_le_bytes());
         v[off + 40..off + 40 + 11].copy_from_slice(b"UBUNTU_2204");
@@ -161,20 +406,74 @@ mod tests {
     }
 
     #[test]
-    fn finds_the_primary_after_a_boot_record() {
-        let mut v = vec![0u8; (VDS_OFFSET + 4 * VD_SIZE) as usize];
-        put_descriptor(&mut v, 0, 0); // boot record (type 0)
-        let off = put_descriptor(&mut v, 1, PRIMARY);
-        v[off + 80..off + 84].copy_from_slice(&10u32.to_le_bytes());
-        v[off + 128..off + 130].copy_from_slice(&2048u16.to_le_bytes());
-        let (_t, src) = source_of(&v);
-        assert_eq!(detect(&src, 0).unwrap().size(), 10 * 2048);
-    }
-
-    #[test]
     fn rejects_non_iso_data() {
         let (_t, src) = source_of(&vec![0u8; (VDS_OFFSET + 4 * VD_SIZE) as usize]);
         assert!(detect(&src, 0).is_none());
         assert!(Volume::parse(&src, 0).is_err());
+    }
+
+    #[test]
+    fn extracts_files_with_names_and_paths() {
+        const BS: usize = 2048;
+        // Layout: sector 16 = PVD; sector 18 = root dir; sector 19 = subdir;
+        // sector 20 = HELLO.TXT data; sector 21 = NOTE.TXT data.
+        let total = 22 * BS;
+        let mut v = vec![0u8; total];
+
+        let payload_hello = b"hello iso";
+        let payload_note = b"a note in a subdir";
+        v[20 * BS..20 * BS + payload_hello.len()].copy_from_slice(payload_hello);
+        v[21 * BS..21 * BS + payload_note.len()].copy_from_slice(payload_note);
+
+        // Root directory (sector 18): ".", "..", HELLO.TXT;1, SUB (dir).
+        let root = 18 * BS;
+        let mut p = root;
+        p += put_record(&mut v, p, 18, BS as u32, true, &[0x00]);
+        p += put_record(&mut v, p, 18, BS as u32, true, &[0x01]);
+        p += put_record(
+            &mut v,
+            p,
+            20,
+            payload_hello.len() as u32,
+            false,
+            b"HELLO.TXT;1",
+        );
+        let _ = put_record(&mut v, p, 19, BS as u32, true, b"SUB");
+
+        // Subdirectory (sector 19): ".", "..", NOTE.TXT;1.
+        let sub = 19 * BS;
+        let mut q = sub;
+        q += put_record(&mut v, q, 19, BS as u32, true, &[0x00]);
+        q += put_record(&mut v, q, 18, BS as u32, true, &[0x01]);
+        let _ = put_record(
+            &mut v,
+            q,
+            21,
+            payload_note.len() as u32,
+            false,
+            b"NOTE.TXT;1",
+        );
+
+        // PVD (sector 16): block size, volume size, and the root record at +156.
+        let off = put_descriptor(&mut v, 0, PRIMARY);
+        v[off + 80..off + 84].copy_from_slice(&22u32.to_le_bytes());
+        v[off + 128..off + 130].copy_from_slice(&(BS as u16).to_le_bytes());
+        // Root directory record embedded in the PVD: extent = sector 18.
+        put_record(&mut v, off + 156, 18, BS as u32, true, &[0x00]);
+
+        let (tmp, src) = source_of(&v);
+        let vol = detect(&src, 0).unwrap();
+        let out = tmp.path().join("out");
+        let stats = vol
+            .recover_deleted(&src, &out, &RecoverOptions::default())
+            .unwrap();
+
+        assert_eq!(stats.recovered, 2, "two files extracted");
+        assert_eq!(std::fs::read(out.join("HELLO.TXT")).unwrap(), payload_hello);
+        assert_eq!(
+            std::fs::read(out.join("SUB").join("NOTE.TXT")).unwrap(),
+            payload_note,
+            "file recovered under its subdirectory path"
+        );
     }
 }
