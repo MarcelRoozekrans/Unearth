@@ -527,6 +527,7 @@ fn file_length(
         Extent::Gif => Ok(gif_length(source, file_start, limit)?),
         Extent::Wim => Ok(wim_length(source, file_start, limit)?),
         Extent::Swf => Ok(swf_length(source, file_start, limit)?),
+        Extent::Cfbf => Ok(cfbf_length(source, file_start, limit)?),
     }
 }
 
@@ -3067,6 +3068,106 @@ fn blend_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u
     Ok(None) // no ENDB terminator found within bounds
 }
 
+/// Compound File Binary Format (OLE2) length. Reads the header for the sector
+/// size and the FAT (located via the DIFAT — the first 109 FAT-sector pointers
+/// live in the header, the rest follow a DIFAT-sector chain), then walks the
+/// FAT to find the highest sector index that is not marked free. The file is
+/// that many sectors plus the leading header sector, so it ends at
+/// `(max_used_sector + 2) * sector_size`.
+fn cfbf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const FREESECT: u32 = 0xFFFF_FFFF;
+    const ENDOFCHAIN: u32 = 0xFFFF_FFFE;
+
+    let mut hdr = [0u8; 512];
+    if source.read_at(file_start, &mut hdr)? < 512 {
+        return Ok(None);
+    }
+    if hdr[0..8] != [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1] {
+        return Ok(None);
+    }
+    // Little-endian byte-order mark; CFBF is always little-endian in practice.
+    if hdr[28] != 0xFE || hdr[29] != 0xFF {
+        return Ok(None);
+    }
+    let sector_size: u64 = match u16::from_le_bytes([hdr[30], hdr[31]]) {
+        9 => 512,
+        12 => 4096,
+        _ => return Ok(None),
+    };
+    let entries_per_sector = (sector_size / 4) as usize;
+    let num_fat_sectors = u32::from_le_bytes([hdr[44], hdr[45], hdr[46], hdr[47]]) as u64;
+    if num_fat_sectors == 0 {
+        return Ok(None);
+    }
+    // A corrupt header could claim more FAT sectors than could fit in the carve
+    // window; reject it rather than reading wildly.
+    let max_sectors = (limit.saturating_sub(file_start) / sector_size) + 2;
+    if num_fat_sectors > max_sectors {
+        return Ok(None);
+    }
+
+    // Collect the FAT sector numbers: the first 109 from the header DIFAT array
+    // (offset 76), then any further ones via the DIFAT-sector chain.
+    let mut fat_sectors: Vec<u32> = Vec::new();
+    for i in 0..109usize {
+        let off = 76 + i * 4;
+        let s = u32::from_le_bytes([hdr[off], hdr[off + 1], hdr[off + 2], hdr[off + 3]]);
+        if s != FREESECT && s != ENDOFCHAIN {
+            fat_sectors.push(s);
+        }
+    }
+    let num_difat_sectors = u32::from_le_bytes([hdr[72], hdr[73], hdr[74], hdr[75]]) as u64;
+    let mut difat = u32::from_le_bytes([hdr[68], hdr[69], hdr[70], hdr[71]]);
+    let mut difat_seen = 0u64;
+    let mut sec = vec![0u8; sector_size as usize];
+    while difat != FREESECT && difat != ENDOFCHAIN && difat_seen < num_difat_sectors {
+        let sec_off = file_start + (difat as u64 + 1) * sector_size;
+        if source.read_at(sec_off, &mut sec)? < sector_size as usize {
+            return Ok(None);
+        }
+        // All but the last entry are FAT-sector pointers; the last points to the
+        // next DIFAT sector.
+        for i in 0..entries_per_sector - 1 {
+            let s = u32::from_le_bytes(sec[i * 4..i * 4 + 4].try_into().unwrap());
+            if s != FREESECT && s != ENDOFCHAIN {
+                fat_sectors.push(s);
+            }
+        }
+        let last = (entries_per_sector - 1) * 4;
+        difat = u32::from_le_bytes(sec[last..last + 4].try_into().unwrap());
+        difat_seen += 1;
+    }
+    // The DIFAT must yield exactly the declared number of FAT sectors, or the
+    // structure is inconsistent and a computed size can't be trusted.
+    if fat_sectors.len() as u64 != num_fat_sectors {
+        return Ok(None);
+    }
+
+    // Walk the FAT, tracking the highest sector index that is in use (any entry
+    // other than FREESECT marks its sector as allocated).
+    let mut max_used: i64 = -1;
+    for (fi, &fat_sec) in fat_sectors.iter().enumerate() {
+        let sec_off = file_start + (fat_sec as u64 + 1) * sector_size;
+        if source.read_at(sec_off, &mut sec)? < sector_size as usize {
+            return Ok(None);
+        }
+        for i in 0..entries_per_sector {
+            let v = u32::from_le_bytes(sec[i * 4..i * 4 + 4].try_into().unwrap());
+            if v != FREESECT {
+                max_used = max_used.max((fi * entries_per_sector + i) as i64);
+            }
+        }
+    }
+    if max_used < 0 {
+        return Ok(None);
+    }
+    let size = (max_used as u64 + 2) * sector_size;
+    if file_start + size > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
+}
+
 /// iNES / NES 2.0 ROM length. The 16-byte header records the PRG ROM size at
 /// byte 4 (in 16 KiB units) and the CHR ROM size at byte 5 (in 8 KiB units),
 /// plus an optional 512-byte trainer (flag bit 2 of byte 6), so the file ends at
@@ -3233,15 +3334,20 @@ fn effective_ext(
     file_start: u64,
     len: u64,
 ) -> Result<&'static str> {
-    if sig.ext != "zip" {
+    if sig.ext != "zip" && sig.ext != "ole" {
         return Ok(sig.ext);
     }
-    // The marker entry names live in the local-file-header / central-directory
-    // region near the start; a 64 KiB window comfortably covers it.
+    // The marker entry / directory-stream names live near the start; a 64 KiB
+    // window comfortably covers both ZIP and CFBF.
     let want = len.min(64 * 1024) as usize;
     let mut head = vec![0u8; want];
     let n = source.read_at(file_start, &mut head)?;
     head.truncate(n);
+    if sig.ext == "ole" {
+        return Ok(crate::signatures::classify_cfbf(&head)
+            .map(|(ext, _)| ext)
+            .unwrap_or("ole"));
+    }
     Ok(crate::signatures::classify_zip(&head)
         .map(|(ext, _)| ext)
         .unwrap_or("zip"))

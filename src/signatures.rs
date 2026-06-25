@@ -272,6 +272,14 @@ pub enum Extent {
     /// length there, which is not the on-disk size. The version byte and a
     /// minimum length are checked to reject a coincidental magic.
     Swf,
+    /// Compound File Binary Format (OLE2 — legacy `.doc`/`.xls`/`.ppt`/`.msi`).
+    /// The 512-byte header records the sector size (`1 << shift` at offset 30,
+    /// either 512 or 4096), the number of FAT sectors, and a DIFAT array
+    /// listing them (the first 109 in the header, the rest via a DIFAT-sector
+    /// chain). The file is a whole number of sectors; its length is found by
+    /// reading the FAT and taking the highest sector index that is not marked
+    /// free, so the file ends at `(max_used_sector + 2) * sector_size`.
+    Cfbf,
 }
 
 /// A recoverable file type.
@@ -1150,6 +1158,19 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::RiffSize,
         max_size: 16 * MB,
     },
+    Signature {
+        // Legacy Office and other OLE2 containers; refined to doc/xls/ppt by
+        // inspecting the directory stream names (see `classify_cfbf`).
+        name: "Compound File Binary (OLE2)",
+        ext: "ole",
+        magic: &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1],
+        magic_offset: 0,
+        // The little-endian byte-order mark at offset 28 rejects a coincidental
+        // magic; CFBF is always little-endian in practice.
+        secondary: Some((28, &[0xFE, 0xFF])),
+        extent: Extent::Cfbf,
+        max_size: 2 * GB,
+    },
 ];
 
 /// Look up signatures relevant to a single source byte, keyed by the first
@@ -1330,6 +1351,27 @@ pub fn classify_zip(head: &[u8]) -> Option<(&'static str, &'static str)> {
     }
 }
 
+/// Refine a Compound File Binary (OLE2) container into the specific legacy
+/// Office format it carries, by looking for a marker stream name in its bytes.
+/// Directory entry names are stored as UTF-16LE, so each ASCII letter is
+/// matched interleaved with a NUL byte. Returns `(extension, name)`, or `None`
+/// for an unrecognised compound file (which stays a generic `.ole`).
+pub fn classify_cfbf(head: &[u8]) -> Option<(&'static str, &'static str)> {
+    let has = |name: &str| {
+        let needle: Vec<u8> = name.bytes().flat_map(|b| [b, 0]).collect();
+        head.windows(needle.len()).any(|w| w == needle)
+    };
+    if has("PowerPoint Document") {
+        Some(("ppt", "PowerPoint 97-2003 presentation"))
+    } else if has("WordDocument") {
+        Some(("doc", "Word 97-2003 document"))
+    } else if has("Workbook") || has("Book") {
+        Some(("xls", "Excel 97-2003 workbook"))
+    } else {
+        None
+    }
+}
+
 /// Classify a file-type extension into a [`Category`].
 pub fn category_of(ext: &str) -> Category {
     match ext {
@@ -1338,10 +1380,10 @@ pub fn category_of(ext: &str) -> Category {
         | "ani" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" => Category::Audio,
         "mp4" | "3gp" | "mkv" | "avi" | "flv" | "asf" => Category::Video,
-        // The OOXML/OpenDocument/e-book types come from ZIP-content classification.
-        "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" => {
-            Category::Document
-        }
+        // The OOXML/OpenDocument/e-book types come from ZIP-content
+        // classification; doc/xls/ppt (and a generic OLE2 container) from CFBF.
+        "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "doc"
+        | "xls" | "ppt" | "ole" => Category::Document,
         "zip" | "7z" | "rar" | "cab" | "ar" | "zst" | "lz4" | "jar" => Category::Archive,
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" => Category::Font,
