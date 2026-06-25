@@ -516,6 +516,62 @@ fn file_length(
         Extent::Blend => Ok(blend_length(source, file_start, limit)?),
         Extent::Nes => Ok(nes_length(source, file_start, limit)?),
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
+        Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
+    }
+}
+
+/// JPEG length. Scan for the End-of-Image marker (`FF D9`), tracking nested
+/// Start-of-Image markers (`FF D8`) so an embedded thumbnail's EOI does not end
+/// the carve early; the file ends at the EOI that closes the outer image. Within
+/// JPEG entropy-coded data an `FF` is always stuffed (`FF 00`) or a restart
+/// marker (`FF D0`–`FF D7`), so `FF D8`/`FF D9` only ever mark real image
+/// boundaries.
+fn jpeg_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut soi = [0u8; 3];
+    if source.read_at(file_start, &mut soi)? < 3 || soi[0] != 0xFF || soi[1] != 0xD8 {
+        return Ok(None);
+    }
+    const WINDOW: usize = 1 << 20;
+    const OVERLAP: usize = 1; // a marker is two bytes, so carry one byte over
+    let mut buf = vec![0u8; WINDOW + OVERLAP];
+    let mut pos = file_start + 2; // start scanning just past the outer SOI
+    let mut depth: u32 = 0; // nested SOI/EOI pairs currently open
+    loop {
+        if pos >= limit {
+            return Ok(None);
+        }
+        let want = ((limit - pos) as usize).min(WINDOW + OVERLAP);
+        let n = source.read_at(pos, &mut buf[..want])?;
+        if n == 0 {
+            return Ok(None);
+        }
+        let mut i = 0;
+        while i + 1 < n {
+            if buf[i] != 0xFF {
+                i += 1;
+                continue;
+            }
+            match buf[i + 1] {
+                0xD8 => {
+                    depth += 1;
+                    i += 2;
+                }
+                0xD9 => {
+                    if depth == 0 {
+                        return Ok(Some((pos - file_start) + i as u64 + 2));
+                    }
+                    depth -= 1;
+                    i += 2;
+                }
+                _ => i += 1,
+            }
+        }
+        if pos + n as u64 >= limit {
+            // Scanned to the end of the source without a closing EOI.
+            return Ok(None);
+        }
+        // Re-examine the final (unpaired) byte at the head of the next window.
+        pos += (n - OVERLAP) as u64;
     }
 }
 

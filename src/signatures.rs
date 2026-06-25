@@ -237,6 +237,12 @@ pub enum Extent {
     /// because the sync is only 11 bits, a longer run of consecutive valid frames
     /// is required to avoid a false carve.
     Mp3Raw,
+    /// JPEG image: scan for the End-of-Image marker (`FF D9`), but track nested
+    /// Start-of-Image markers (`FF D8`, e.g. an embedded EXIF thumbnail) so the
+    /// file ends at the *outer* image's `FF D9` rather than a thumbnail's. Within
+    /// JPEG entropy data `FF` is only ever followed by `00` or `D0`–`D7`, so
+    /// scanning for `FF D8`/`FF D9` is unambiguous for well-formed images.
+    Jpeg,
 }
 
 /// A recoverable file type.
@@ -279,10 +285,7 @@ pub static SIGNATURES: &[Signature] = &[
         magic: &[0xFF, 0xD8, 0xFF],
         magic_offset: 0,
         secondary: None,
-        extent: Extent::Footer {
-            marker: &[0xFF, 0xD9],
-            trailing: 0,
-        },
+        extent: Extent::Jpeg,
         max_size: 50 * MB,
     },
     Signature {
