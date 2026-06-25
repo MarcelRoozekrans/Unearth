@@ -43,8 +43,9 @@ formats.
   `info`/`list_volumes` (with their size and volume label), and `undelete`/
   `recover` **extract their files with original names and folder paths** by
   walking the directory tree — far better than carving, which loses names and
-  structure. Long-name extensions (Joliet, Rock Ridge) are not yet decoded. A
-  hybrid UDF disc is reported as UDF.
+  structure. **Joliet** long (Unicode/UCS-2) names are decoded and preferred when
+  present, so Windows-authored discs come back with full filenames; Rock Ridge is
+  not yet decoded. A hybrid UDF disc is reported as UDF.
 - **Lost/corrupt partition recovery** — `info --scan` finds volumes that have no
   partition-table entry via a whole-source signature scan, and `undelete --scan`
   / `recover --scan` recover from every volume found, in one command.
