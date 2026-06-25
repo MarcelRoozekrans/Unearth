@@ -436,11 +436,19 @@ sudo filerecovery scan /dev/sdb     -o recovered     # USB stick / disk
 filerecovery scan card.img -o recovered --type jpg --type png
 ```
 
+`--type` also accepts a *category* to select a whole class at once —
+`image`, `audio`, `video`, `document`, `archive`, `executable`, `font`, or
+`system`:
+
+```sh
+filerecovery scan card.img -o recovered --type image
+```
+
 `scan` options:
 
 ```text
 -o, --output <DIR>     Where to write recovered files (default: ./recovered)
--t, --type <EXT>       Restrict to a file type; repeatable (default: all)
+-t, --type <EXT|CAT>   Restrict to a file type or category; repeatable (default: all)
     --start <BYTES>    Start scanning at this offset
     --end <BYTES>      Stop scanning at this offset (exclusive)
     --min-size <BYTES> Skip carved files smaller than this

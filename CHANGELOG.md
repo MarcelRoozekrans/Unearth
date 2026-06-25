@@ -49,6 +49,10 @@ formats.
 - **MP3 without an ID3v2 tag** is now carved by anchoring directly on a Layer III
   frame sync (requiring a long run of valid frames), so ID3v1-only and tagless
   MP3s are recovered, not just ID3v2-tagged ones.
+- **Type categories** — `--type` (on `scan` and `recover`) now accepts a category
+  name (`image`, `audio`, `video`, `document`, `archive`, `executable`, `font`,
+  `system`) to select a whole class of types at once, instead of listing every
+  extension. Categories and extensions can be mixed.
 
 ### Fixed
 

@@ -1198,6 +1198,12 @@ pub fn select(types: &[String]) -> anyhow::Result<Vec<&'static Signature>> {
     }
     let mut selected = Vec::new();
     for t in types {
+        // A token may name a whole category (e.g. "image", "audio") or a single
+        // extension. Categories are tried first so they take precedence.
+        if let Some(cat) = Category::from_name(t) {
+            selected.extend(SIGNATURES.iter().filter(|s| category_of(s.ext) == cat));
+            continue;
+        }
         let matches: Vec<&'static Signature> = SIGNATURES
             .iter()
             .filter(|s| s.ext.eq_ignore_ascii_case(t))
@@ -1206,11 +1212,79 @@ pub fn select(types: &[String]) -> anyhow::Result<Vec<&'static Signature>> {
             // De-duplicate known extensions for the error message.
             let mut known: Vec<&str> = SIGNATURES.iter().map(|s| s.ext).collect();
             known.dedup();
-            anyhow::bail!("unknown file type '{t}'. Known types: {}", known.join(", "));
+            anyhow::bail!(
+                "unknown file type or category '{t}'. Categories: {}. Known types: {}",
+                Category::NAMES.join(", "),
+                known.join(", ")
+            );
         }
         selected.extend(matches);
     }
     Ok(selected)
+}
+
+/// A broad grouping of file types, so a whole class (e.g. all images) can be
+/// selected with one name instead of listing every extension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Category {
+    Image,
+    Audio,
+    Video,
+    Document,
+    Archive,
+    Executable,
+    Font,
+    System,
+    Other,
+}
+
+impl Category {
+    /// The selectable category names, in display order.
+    pub const NAMES: &'static [&'static str] = &[
+        "image",
+        "audio",
+        "video",
+        "document",
+        "archive",
+        "executable",
+        "font",
+        "system",
+    ];
+
+    /// Resolve a user-supplied category name (case-insensitive; a trailing "s"
+    /// is allowed, e.g. "images"). `Other` is not selectable by name.
+    pub fn from_name(name: &str) -> Option<Category> {
+        let n = name.trim().to_ascii_lowercase();
+        let n = n.strip_suffix('s').unwrap_or(&n);
+        match n {
+            "image" => Some(Category::Image),
+            "audio" => Some(Category::Audio),
+            "video" => Some(Category::Video),
+            "document" | "doc" => Some(Category::Document),
+            "archive" => Some(Category::Archive),
+            "executable" => Some(Category::Executable), // "exe" stays a file type
+            "font" => Some(Category::Font),
+            "system" => Some(Category::System),
+            _ => None,
+        }
+    }
+}
+
+/// Classify a file-type extension into a [`Category`].
+pub fn category_of(ext: &str) -> Category {
+    match ext {
+        "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
+        | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
+        | "ani" => Category::Image,
+        "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" => Category::Audio,
+        "mp4" | "3gp" | "mkv" | "avi" | "flv" | "asf" => Category::Video,
+        "pdf" | "rtf" => Category::Document,
+        "zip" | "7z" | "rar" | "cab" | "ar" | "zst" | "lz4" => Category::Archive,
+        "elf" | "exe" | "macho" | "dex" | "wasm" => Category::Executable,
+        "ttf" | "otf" | "woff" | "woff2" | "ttc" => Category::Font,
+        "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" => Category::System,
+        _ => Category::Other,
+    }
 }
 
 #[cfg(test)]
@@ -1259,6 +1333,31 @@ mod tests {
         assert_eq!(select(&["gif".to_string()]).unwrap().len(), 2);
         assert!(select(&["all".to_string()]).unwrap().len() >= 13);
         let err = select(&["nope".to_string()]).unwrap_err().to_string();
-        assert!(err.contains("unknown file type"));
+        assert!(err.contains("unknown file type or category"));
+    }
+
+    #[test]
+    fn select_by_category() {
+        // A category expands to every signature classified into it.
+        let images = select(&["image".to_string()]).unwrap();
+        assert!(images.iter().all(|s| category_of(s.ext) == Category::Image));
+        assert!(images.iter().any(|s| s.ext == "jpg"));
+        assert!(images.iter().any(|s| s.ext == "png"));
+        assert!(!images.iter().any(|s| s.ext == "mp3"));
+
+        // Plural form is accepted.
+        assert_eq!(select(&["images".to_string()]).unwrap().len(), images.len());
+
+        // "executable" is a category; "exe" remains a single file type.
+        assert!(select(&["executable".to_string()])
+            .unwrap()
+            .iter()
+            .any(|s| s.ext == "elf"));
+        assert_eq!(select(&["exe".to_string()]).unwrap().len(), 1);
+
+        // Categories and extensions can be mixed in one selection.
+        let mixed = select(&["audio".to_string(), "pdf".to_string()]).unwrap();
+        assert!(mixed.iter().any(|s| s.ext == "mp3"));
+        assert!(mixed.iter().any(|s| s.ext == "pdf"));
     }
 }
