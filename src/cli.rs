@@ -203,8 +203,14 @@ pub struct RecoverArgs {
 
     /// Restrict the carving pass to these file types. Each value is an extension
     /// (e.g. `jpg`) or a category (`image`, `audio`, `video`, `document`,
-    /// `archive`, `executable`, `font`, `system`). Repeatable.
-    #[arg(short, long = "type", value_name = "EXT|CATEGORY")]
+    /// `archive`, `executable`, `font`, `system`). Repeatable or comma-separated
+    /// (e.g. `--type image,pdf`).
+    #[arg(
+        short,
+        long = "type",
+        value_name = "EXT|CATEGORY",
+        value_delimiter = ','
+    )]
     pub types: Vec<String>,
 
     /// Ignore files smaller than this many bytes (both passes).
@@ -329,9 +335,14 @@ pub struct ScanArgs {
 
     /// Restrict recovery to these file types. Each value is an extension (e.g.
     /// `jpg`) or a category (`image`, `audio`, `video`, `document`, `archive`,
-    /// `executable`, `font`, `system`). Repeatable. Omit, or use "all", to
-    /// recover every known type.
-    #[arg(short, long = "type", value_name = "EXT|CATEGORY")]
+    /// `executable`, `font`, `system`). Repeatable or comma-separated. Omit, or
+    /// use "all", to recover every known type.
+    #[arg(
+        short,
+        long = "type",
+        value_name = "EXT|CATEGORY",
+        value_delimiter = ','
+    )]
     pub types: Vec<String>,
 
     /// Start scanning at this byte offset.
