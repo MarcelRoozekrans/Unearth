@@ -42,9 +42,16 @@ pub fn identify(head: &[u8]) -> Option<Detected> {
         if validity == Validity::Invalid {
             continue; // magic matched but the header is structurally wrong
         }
+        // A ZIP may actually be a DOCX/EPUB/APK/…; refine it from its content so
+        // identify matches what the carver names the file.
+        let (ext, name) = if sig.ext == "zip" {
+            crate::signatures::classify_zip(head).unwrap_or((sig.ext, sig.name))
+        } else {
+            (sig.ext, sig.name)
+        };
         return Some(Detected {
-            ext: sig.ext,
-            name: sig.name,
+            ext,
+            name,
             validated: validity == Validity::Valid,
         });
     }
@@ -70,6 +77,18 @@ mod tests {
         let d = identify(&zip).unwrap();
         assert_eq!(d.ext, "zip");
         assert!(!d.validated);
+    }
+
+    #[test]
+    fn refines_a_zip_into_its_subtype() {
+        // A ZIP carrying the DOCX marker member is identified as docx, not zip.
+        let mut docx = vec![0x50, 0x4B, 0x03, 0x04];
+        docx.extend_from_slice(b"word/document.xml");
+        let d = identify(&docx).unwrap();
+        assert_eq!(d.ext, "docx");
+        // A ZIP with no marker stays a plain zip.
+        let zip = [0x50, 0x4B, 0x03, 0x04, b'x', b'y'];
+        assert_eq!(identify(&zip).unwrap().ext, "zip");
     }
 
     #[test]

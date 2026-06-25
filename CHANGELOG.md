@@ -78,7 +78,8 @@ formats.
   recovered Office (`.docx`/`.xlsx`/`.pptx`), OpenDocument (`.odt`/`.ods`/`.odp`),
   e-book (`.epub`), Java (`.jar`), or Android (`.apk`) file is written with that
   extension (and counted under it) instead of a generic `.zip`. A plain ZIP stays
-  `.zip`.
+  `.zip`. `identify` reports the same refined type, and these types are mapped to
+  their categories (documents, archives) for `--type`, `triage`, and `identify`.
 
 ### Fixed
 

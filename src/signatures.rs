@@ -1301,6 +1301,35 @@ impl Category {
     }
 }
 
+/// Refine a ZIP into the specific ZIP-based format it carries, by looking for a
+/// marker member name in its bytes. Returns `(extension, name)` for a known
+/// format, or `None` for a plain ZIP. APK is checked before JAR because both
+/// carry `META-INF/MANIFEST.MF`.
+pub fn classify_zip(head: &[u8]) -> Option<(&'static str, &'static str)> {
+    let has = |needle: &[u8]| head.windows(needle.len()).any(|w| w == needle);
+    if has(b"application/epub+zip") {
+        Some(("epub", "EPUB e-book"))
+    } else if has(b"application/vnd.oasis.opendocument.text") {
+        Some(("odt", "OpenDocument text"))
+    } else if has(b"application/vnd.oasis.opendocument.spreadsheet") {
+        Some(("ods", "OpenDocument spreadsheet"))
+    } else if has(b"application/vnd.oasis.opendocument.presentation") {
+        Some(("odp", "OpenDocument presentation"))
+    } else if has(b"AndroidManifest.xml") {
+        Some(("apk", "Android package"))
+    } else if has(b"word/document.xml") {
+        Some(("docx", "Word (OOXML) document"))
+    } else if has(b"xl/workbook.xml") {
+        Some(("xlsx", "Excel (OOXML) workbook"))
+    } else if has(b"ppt/presentation.xml") {
+        Some(("pptx", "PowerPoint (OOXML) presentation"))
+    } else if has(b"META-INF/MANIFEST.MF") {
+        Some(("jar", "Java archive"))
+    } else {
+        None
+    }
+}
+
 /// Classify a file-type extension into a [`Category`].
 pub fn category_of(ext: &str) -> Category {
     match ext {
@@ -1309,9 +1338,12 @@ pub fn category_of(ext: &str) -> Category {
         | "ani" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" => Category::Audio,
         "mp4" | "3gp" | "mkv" | "avi" | "flv" | "asf" => Category::Video,
-        "pdf" | "rtf" => Category::Document,
-        "zip" | "7z" | "rar" | "cab" | "ar" | "zst" | "lz4" => Category::Archive,
-        "elf" | "exe" | "macho" | "dex" | "wasm" => Category::Executable,
+        // The OOXML/OpenDocument/e-book types come from ZIP-content classification.
+        "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" => {
+            Category::Document
+        }
+        "zip" | "7z" | "rar" | "cab" | "ar" | "zst" | "lz4" | "jar" => Category::Archive,
+        "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" => Category::System,
         _ => Category::Other,
