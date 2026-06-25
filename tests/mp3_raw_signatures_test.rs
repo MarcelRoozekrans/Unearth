@@ -64,6 +64,7 @@ fn recovers_a_tagless_mp3() {
         start: 0,
         end: None,
         min_size: 0,
+        max_size: None,
         max_files: None,
         allow_nested: false,
         validate: true,

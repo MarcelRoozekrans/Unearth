@@ -34,6 +34,7 @@ fn run_all(src: &Source, out_dir: &Path) {
         start: 0,
         end: None,
         min_size: 0,
+        max_size: None,
         max_files: Some(50),
         allow_nested: false,
         validate: true,
@@ -157,6 +158,7 @@ fn never_panics_on_truncated_volume() {
                         &out_dir,
                         &RecoverOptions {
                             min_size: 0,
+                            max_size: None,
                             dry_run: true,
                         },
                     );

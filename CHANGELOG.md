@@ -66,6 +66,12 @@ formats.
 - **`recover --dry-run`** previews both passes (filesystem undelete and carving)
   without writing any files, so dry-run is now available on `scan`, `undelete`,
   and `recover` alike.
+- **`--max-size`** — a size cap symmetric with `--min-size`, on `scan`, `undelete`,
+  and `recover` (and the MCP `scan`/`undelete` tools). Recognised files larger than
+  the cap are skipped — carving counts them under `skipped_large` (reported in the
+  text output, the `--summary`, and the MCP scan result) rather than writing them.
+  Both bounds apply to the undelete *and* carving passes of `recover`. Useful for
+  fast triage: recover the small stuff first, or skip multi-gigabyte files.
 - **Human-readable size suffixes** — every byte-valued option (`--start`, `--end`,
   `--min-size`, `--offset`, `--scan-step`, `--sector-size`) now accepts binary
   unit suffixes like `5M`, `2G`, or `1.5G` (powers of 1024), not just raw byte

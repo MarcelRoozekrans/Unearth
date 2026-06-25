@@ -49,6 +49,7 @@ fn carve_buf(buf: &[u8], out_dir: &std::path::Path) {
         start: 0,
         end: None,
         min_size: 0,
+        max_size: None,
         max_files: Some(20),
         allow_nested: false,
         validate: true,

@@ -313,7 +313,7 @@ impl Volume {
                 Some(d) => d,
                 None => continue,
             };
-            if data.size < opts.min_size {
+            if !opts.size_ok(data.size) {
                 continue;
             }
 

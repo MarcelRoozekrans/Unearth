@@ -222,6 +222,10 @@ pub struct RecoverArgs {
     #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 0)]
     pub min_size: u64,
 
+    /// Ignore files larger than this many bytes (both passes).
+    #[arg(long, value_name = "SIZE", value_parser = parse_size)]
+    pub max_size: Option<u64>,
+
     /// Group carved files into per-type subdirectories under `carved/`.
     #[arg(long)]
     pub organize: bool,
@@ -312,6 +316,10 @@ pub struct UndeleteArgs {
     #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 0)]
     pub min_size: u64,
 
+    /// Ignore deleted files larger than this many bytes.
+    #[arg(long, value_name = "SIZE", value_parser = parse_size)]
+    pub max_size: Option<u64>,
+
     /// List what would be recovered without writing any files.
     #[arg(long)]
     pub dry_run: bool,
@@ -366,6 +374,10 @@ pub struct ScanArgs {
     /// Ignore carved files smaller than this many bytes.
     #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 0)]
     pub min_size: u64,
+
+    /// Ignore carved files larger than this many bytes.
+    #[arg(long, value_name = "SIZE", value_parser = parse_size)]
+    pub max_size: Option<u64>,
 
     /// Stop after recovering this many files.
     #[arg(long, value_name = "N")]

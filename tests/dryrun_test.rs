@@ -80,6 +80,7 @@ fn dry_run_reports_without_writing() {
     let vol = ext4::Volume::parse(&source, 0).unwrap();
     let opts = RecoverOptions {
         min_size: 0,
+        max_size: None,
         dry_run: true,
     };
     let stats = vol.recover_deleted(&source, &out_dir, &opts).unwrap();

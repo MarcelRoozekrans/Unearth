@@ -343,7 +343,7 @@ impl Volume {
                 }
             };
             let size = reg_size(&inode);
-            if size < opts.min_size {
+            if !opts.size_ok(size) {
                 continue;
             }
             if size == 0 || size > volume_bytes {

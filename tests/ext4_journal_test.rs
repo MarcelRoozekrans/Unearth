@@ -173,6 +173,7 @@ fn recovers_via_journal_when_live_inode_zeroed() {
             &tmp.path().join("none"),
             &RecoverOptions {
                 min_size: 0,
+                max_size: None,
                 dry_run: true,
             },
         )

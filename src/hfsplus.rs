@@ -338,7 +338,7 @@ impl Volume {
                 }
                 let rel = resolve_path(&folders, rec.parent_id).join(sanitize_component(&rec.name));
                 let size = rec.logical_size;
-                if size < opts.min_size {
+                if !opts.size_ok(size) {
                     continue;
                 }
                 if size == 0 || size > vol_bytes {

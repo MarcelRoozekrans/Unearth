@@ -374,7 +374,7 @@ impl Volume {
         let volume_end = self.offset + self.total_sectors as u64 * self.bytes_per_sector as u64;
 
         for df in deleted {
-            if (df.size as u64) < opts.min_size {
+            if !opts.size_ok(df.size as u64) {
                 continue;
             }
             // Validate before trusting the entry's cluster/size fields.

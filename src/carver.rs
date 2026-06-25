@@ -31,6 +31,10 @@ pub struct CarveOptions {
     pub end: Option<u64>,
     /// Ignore carved files smaller than this many bytes.
     pub min_size: u64,
+    /// Ignore carved files larger than this many bytes (`None` = no cap). This
+    /// gates the *computed* file length, on top of each type's built-in
+    /// `max_size` runaway guard, so a run can skip large files entirely.
+    pub max_size: Option<u64>,
     /// Stop after recovering this many files (`None` = no limit).
     pub max_files: Option<u64>,
     /// Find files even when nested inside another carved file (e.g. a JPEG
@@ -84,6 +88,8 @@ pub struct CarveStats {
     pub rejected: u64,
     /// Files dropped by `--dedup` because identical content was already written.
     pub duplicates: u64,
+    /// Recognised files skipped because they exceeded the `--max-size` cap.
+    pub skipped_large: u64,
     /// Recovered-file count per extension.
     pub per_type: std::collections::BTreeMap<&'static str, u64>,
     /// Per-file records, populated for the recovery report.
@@ -190,7 +196,17 @@ pub fn carve_seeded(
                         file_length(source, sig, file_start, scan_end, &mut footer_buf)?
                     {
                         if len >= opts.min_size {
-                            if opts.validate && !passes_validation(source, sig, file_start, len)? {
+                            if opts.max_size.is_some_and(|max| len > max) {
+                                // Recognised but over the run's size cap: skip past
+                                // it without writing, so its interior isn't
+                                // rescanned for nested magics.
+                                stats.skipped_large += 1;
+                                if !opts.allow_nested {
+                                    skip_until = file_start + len;
+                                }
+                            } else if opts.validate
+                                && !passes_validation(source, sig, file_start, len)?
+                            {
                                 stats.rejected += 1;
                             } else {
                                 write_file(
