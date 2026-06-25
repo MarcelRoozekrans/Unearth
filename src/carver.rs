@@ -518,6 +518,102 @@ fn file_length(
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
         Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
         Extent::Zip => Ok(zip_length(source, file_start, limit)?),
+        Extent::Gif => Ok(gif_length(source, file_start, limit)?),
+    }
+}
+
+/// GIF length. Walk the block stream — the 13-byte header/logical-screen
+/// descriptor (and an optional global colour table), then image (`0x2C`) and
+/// extension (`0x21`) blocks (each ending in a chain of length-prefixed
+/// sub-blocks) — to the trailer byte (`0x3B`), which ends the file. Walking the
+/// structure avoids stopping at a `00 3B` byte pair that occurs by chance inside
+/// the LZW-compressed image data.
+fn gif_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let avail = limit.saturating_sub(file_start);
+    let mut hdr = [0u8; 13];
+    if source.read_at(file_start, &mut hdr)? < 13 || &hdr[0..3] != b"GIF" {
+        return Ok(None);
+    }
+    // Colour-table size encoded in a packed byte: present iff bit 7 is set, with
+    // 3 * 2^(n+1) bytes where n is the low three bits.
+    let color_table = |packed: u8| -> u64 {
+        if packed & 0x80 != 0 {
+            3 * (1u64 << ((packed & 0x07) + 1))
+        } else {
+            0
+        }
+    };
+
+    let mut pos = 13u64 + color_table(hdr[10]); // global colour table
+    loop {
+        if pos >= avail {
+            return Ok(None);
+        }
+        let mut b = [0u8; 1];
+        if source.read_at(file_start + pos, &mut b)? < 1 {
+            return Ok(None);
+        }
+        pos += 1;
+        match b[0] {
+            0x3B => return Ok(Some(pos)), // trailer: the file ends here
+            0x2C => {
+                // Image descriptor: 9 bytes, then an optional local colour table.
+                let mut d = [0u8; 9];
+                if pos + 9 > avail || source.read_at(file_start + pos, &mut d)? < 9 {
+                    return Ok(None);
+                }
+                pos += 9 + color_table(d[8]);
+                // LZW minimum-code-size byte, then the image data sub-blocks.
+                if pos >= avail {
+                    return Ok(None);
+                }
+                pos += 1;
+                pos = match gif_skip_subblocks(source, file_start, pos, avail)? {
+                    Some(p) => p,
+                    None => return Ok(None),
+                };
+            }
+            0x21 => {
+                // Extension: a 1-byte label, then its sub-block chain.
+                if pos >= avail {
+                    return Ok(None);
+                }
+                pos += 1;
+                pos = match gif_skip_subblocks(source, file_start, pos, avail)? {
+                    Some(p) => p,
+                    None => return Ok(None),
+                };
+            }
+            _ => return Ok(None), // not a valid block introducer
+        }
+    }
+}
+
+/// Advance past a GIF sub-block chain: a sequence of (1-byte length, that many
+/// bytes) runs ending in a zero-length block terminator. Returns the position
+/// just past the terminator.
+fn gif_skip_subblocks(
+    source: &Source,
+    file_start: u64,
+    mut pos: u64,
+    avail: u64,
+) -> Result<Option<u64>> {
+    loop {
+        if pos >= avail {
+            return Ok(None);
+        }
+        let mut len = [0u8; 1];
+        if source.read_at(file_start + pos, &mut len)? < 1 {
+            return Ok(None);
+        }
+        pos += 1;
+        if len[0] == 0 {
+            return Ok(Some(pos)); // block terminator
+        }
+        pos += len[0] as u64;
+        if pos > avail {
+            return Ok(None);
+        }
     }
 }
 

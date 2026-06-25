@@ -48,9 +48,18 @@ fn gif(p: &[u8]) -> Vec<u8> {
     let mut v = b"GIF89a".to_vec();
     v.extend_from_slice(&64u16.to_le_bytes()); // width
     v.extend_from_slice(&64u16.to_le_bytes()); // height
-    v.extend_from_slice(&[0, 0, 0]); // packed, background, aspect
-    v.extend_from_slice(p);
-    v.extend_from_slice(&[0x00, 0x3B]);
+    v.extend_from_slice(&[0, 0, 0]); // packed (no GCT), background, aspect
+    v.push(0x2C); // image descriptor
+    v.extend_from_slice(&[0u8; 8]); // position + size
+    v.push(0); // packed (no local colour table)
+    v.push(8); // LZW minimum code size
+               // image data as length-prefixed sub-blocks
+    for chunk in p.chunks(255) {
+        v.push(chunk.len() as u8);
+        v.extend_from_slice(chunk);
+    }
+    v.push(0x00); // block terminator
+    v.push(0x3B); // trailer
     v
 }
 
@@ -252,7 +261,7 @@ fn carves_every_extent_strategy_in_one_pass() {
     let files: Vec<(&str, Vec<u8>)> = vec![
         ("jpg", jpeg(&filler(1, 3000))),  // Jpeg (nesting-aware EOI)
         ("png", png(&filler(2, 2500))),   // Footer
-        ("gif", gif(&filler(3, 1800))),   // Footer
+        ("gif", gif(&filler(3, 1800))),   // Gif (block walk)
         ("pdf", pdf(&filler(4, 2200))),   // Footer
         ("zip", zip(&filler(5, 2600))),   // Zip (EOCD geometry)
         ("bmp", bmp(&filler(6, 2000))),   // HeaderSizeLe32

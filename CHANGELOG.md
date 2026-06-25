@@ -62,6 +62,10 @@ formats.
   the EOCD whose recorded central-directory geometry matches the archive and
   includes the declared comment. This also covers the ZIP-based formats (DOCX,
   XLSX, PPTX, ODT, JAR, APK, EPUB).
+- **GIF carving now walks the block structure** instead of stopping at the first
+  `00 3B` byte pair, which can occur by chance inside the LZW-compressed image
+  data and truncate the file. The carver follows the image and extension blocks
+  (and their sub-block chains) to the real trailer.
 
 ## [0.2.0] - 2026-06-23
 
