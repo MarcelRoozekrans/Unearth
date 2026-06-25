@@ -799,7 +799,7 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
     }
     let ropts = recover::RecoverOptions {
         min_size: args.min_size,
-        dry_run: false,
+        dry_run: args.dry_run,
     };
     let multi = volumes.len() > 1;
     let mut named_recovered = 0u64;
@@ -884,7 +884,7 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
         checkpoint: None,
         resume: false,
         organize: args.organize,
-        dry_run: false,
+        dry_run: args.dry_run,
     };
     let (mut carved_files, mut carved_bytes, mut carved_dups) = (0u64, 0u64, 0u64);
     let push_carved = |files: &[carver::CarvedFile],
@@ -937,17 +937,31 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
     }
 
     eprintln!();
-    println!(
-        "Done. Undelete recovered {} named file(s), {}.",
-        named_recovered,
-        human_bytes(named_bytes)
-    );
-    println!(
-        "Carving recovered {} additional file(s), {} ({} duplicate(s) of already-recovered content skipped).",
-        carved_files,
-        human_bytes(carved_bytes),
-        carved_dups
-    );
+    if args.dry_run {
+        println!(
+            "Dry run (nothing written). Undelete would recover {} named file(s), {}.",
+            named_recovered,
+            human_bytes(named_bytes)
+        );
+        println!(
+            "Carving would recover {} additional file(s), {} ({} duplicate(s) skipped).",
+            carved_files,
+            human_bytes(carved_bytes),
+            carved_dups
+        );
+    } else {
+        println!(
+            "Done. Undelete recovered {} named file(s), {}.",
+            named_recovered,
+            human_bytes(named_bytes)
+        );
+        println!(
+            "Carving recovered {} additional file(s), {} ({} duplicate(s) of already-recovered content skipped).",
+            carved_files,
+            human_bytes(carved_bytes),
+            carved_dups
+        );
+    }
 
     if let Some(report_path) = &args.report {
         write_recover_report(report_path, &report_rows)?;

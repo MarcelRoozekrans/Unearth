@@ -358,6 +358,43 @@ fn recover_runs_undelete_then_dedup_carve() {
 }
 
 #[test]
+fn recover_dry_run_writes_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img_path = tmp.path().join("disk.img");
+    let out_dir = tmp.path().join("out");
+
+    let jpeg_named = common::jpeg(&vec![0x41u8; 800]);
+    let jpeg_carved = common::jpeg(&vec![0x42u8; 1500]);
+    let mut img = common::ext_volume("photo.jpg", &jpeg_named);
+    img.extend_from_slice(&vec![0u8; 500]);
+    img.extend_from_slice(&jpeg_carved);
+    img.extend_from_slice(&vec![0u8; 500]);
+    std::fs::write(&img_path, &img).unwrap();
+
+    let out = run(&[
+        "recover",
+        img_path.to_str().unwrap(),
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--dry-run",
+        "-q",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The preview reports what would be recovered...
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Dry run"), "{stdout}");
+    // ...but nothing is written: no output tree at all.
+    assert!(
+        !out_dir.exists() || std::fs::read_dir(&out_dir).unwrap().next().is_none(),
+        "dry run must not write any files"
+    );
+}
+
+#[test]
 fn recover_unallocated_skips_live_clusters() {
     // Geometry of common::fat32_volume: 512-byte sectors, 32 reserved + 512 FAT
     // sectors, so the data region starts at sector 544 and the FAT at byte 16384.

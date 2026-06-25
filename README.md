@@ -393,8 +393,9 @@ filerecovery recover card.img -o recovered
 The carving pass is **content-deduplicated against the undelete results** (by
 SHA-256), so `carved/` only holds data that wasn't already recovered by name —
 you get the named files plus the extras carving finds, without duplicate copies.
-Accepts `--type`, `--min-size`, `--organize` (group `carved/` by type), and
-`--offset` (volume offset for the undelete pass).
+Accepts `--type`, `--min-size`, `--organize` (group `carved/` by type),
+`--offset` (volume offset for the undelete pass), and `--dry-run` (preview both
+passes — counts, sizes, and the `--report` manifest — without writing anything).
 
 Add `--unallocated` to carve **only the volume's free space**, skipping clusters
 still allocated to live files — so `carved/` holds deleted content with far less
