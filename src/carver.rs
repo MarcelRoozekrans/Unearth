@@ -553,6 +553,7 @@ fn file_length(
         Extent::Wim => Ok(wim_length(source, file_start, limit)?),
         Extent::Swf => Ok(swf_length(source, file_start, limit)?),
         Extent::Cfbf => Ok(cfbf_length(source, file_start, limit)?),
+        Extent::Pst => Ok(pst_length(source, file_start, limit)?),
     }
 }
 
@@ -3188,6 +3189,31 @@ fn cfbf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
     }
     let size = (max_used as u64 + 2) * sector_size;
     if file_start + size > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
+}
+
+/// Outlook data file (PST/OST) length. The NDB header records the file's own
+/// end offset (`ibFileEof`) — a little-endian u64 at offset 0xB8 in the Unicode
+/// format (`wVer` >= 23), which is the exact on-disk size. The ANSI format
+/// (`wVer` 14/15) places a 32-bit `ibFileEof` elsewhere and is not carved.
+fn pst_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut hdr = [0u8; 0xC0];
+    if source.read_at(file_start, &mut hdr)? < hdr.len() {
+        return Ok(None);
+    }
+    // "!BDN" magic and the "SM" client signature (also checked at match time).
+    if &hdr[0..4] != b"!BDN" || &hdr[8..10] != b"SM" {
+        return Ok(None);
+    }
+    let ver = u16::from_le_bytes([hdr[10], hdr[11]]);
+    if ver < 23 {
+        return Ok(None); // ANSI format: ibFileEof layout differs; not supported
+    }
+    let size = u64::from_le_bytes(hdr[0xB8..0xC0].try_into().unwrap());
+    // A valid file is at least the header; reject a corrupt or overlong size.
+    if size < hdr.len() as u64 || file_start + size > limit {
         return Ok(None);
     }
     Ok(Some(size))

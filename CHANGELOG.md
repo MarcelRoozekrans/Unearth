@@ -54,8 +54,9 @@ formats.
   movies (`.swf`/`FWS`, length field in the header), and Compound File Binary
   (OLE2) containers — the legacy Microsoft Office formats (`.doc`/`.xls`/`.ppt`)
   and other OLE2 files (e.g. `.msi`) — sized by reading the FAT (located via the
-  DIFAT) and taking the highest sector still marked in use — each with a
-  deterministic length strategy.
+  DIFAT) and taking the highest sector still marked in use, and Outlook data
+  files (`.pst`/`.ost`, Unicode format — sized from the `ibFileEof` field in the
+  NDB header) — each with a deterministic length strategy.
 - **MP3 without an ID3v2 tag** is now carved by anchoring directly on a Layer III
   frame sync (requiring a long run of valid frames), so ID3v1-only and tagless
   MP3s are recovered, not just ID3v2-tagged ones.
