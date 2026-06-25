@@ -90,12 +90,14 @@ formats.
   the selection (applied after `--type`), e.g. `--type image --exclude png` or
   `--exclude video`.
 
-- **OLE2 compound files are recovered with their real Office extension.** A
-  carved compound file (`.ole`) is inspected for the marker stream name of the
-  legacy Office formats, so it is written as `.doc` (Word), `.xls` (Excel), or
-  `.ppt` (PowerPoint) instead of a generic `.ole`. An unrecognised compound file
-  stays `.ole`. `identify` reports the same refined type, and these map to the
-  document category for `--type`, `triage`, and `identify`.
+- **OLE2 compound files are recovered with their real extension.** A carved
+  compound file (`.ole`) is inspected for the marker stream name of the format it
+  carries, so it is written as `.doc` (Word), `.xls` (Excel), `.ppt`
+  (PowerPoint), or `.msg` (Outlook message) instead of a generic `.ole`; a
+  Windows Installer is recognised by its root storage CLSID and written as
+  `.msi`. An unrecognised compound file stays `.ole`. `identify` reports the same
+  refined type; doc/xls/ppt/msg map to the document category and msi to the
+  executable category for `--type`, `triage`, and `identify`.
 
 - **ZIP-based formats are recovered with their real extension.** A carved ZIP is
   inspected for the marker member of the common ZIP container formats, so a
