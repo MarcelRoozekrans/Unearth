@@ -213,6 +213,11 @@ pub struct RecoverArgs {
     )]
     pub types: Vec<String>,
 
+    /// Exclude these file types or categories from recovery (applied after
+    /// `--type`). Repeatable or comma-separated, e.g. `--exclude video,iso`.
+    #[arg(long = "exclude", value_name = "EXT|CATEGORY", value_delimiter = ',')]
+    pub exclude: Vec<String>,
+
     /// Ignore files smaller than this many bytes (both passes).
     #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 0)]
     pub min_size: u64,
@@ -344,6 +349,11 @@ pub struct ScanArgs {
         value_delimiter = ','
     )]
     pub types: Vec<String>,
+
+    /// Exclude these file types or categories from recovery (applied after
+    /// `--type`). Repeatable or comma-separated, e.g. `--exclude video,iso`.
+    #[arg(long = "exclude", value_name = "EXT|CATEGORY", value_delimiter = ',')]
+    pub exclude: Vec<String>,
 
     /// Start scanning at this byte offset.
     #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 0)]

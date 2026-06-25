@@ -71,7 +71,9 @@ formats.
   `identify` (CLI and MCP) reports the detected file's category, and `triage`
   adds a per-category rollup (image/audio/video/…) alongside its per-type
   breakdown. `--type` also accepts a comma-separated list (`--type image,pdf`),
-  not just repetition.
+  not just repetition. A new `--exclude` option drops types or categories from
+  the selection (applied after `--type`), e.g. `--type image --exclude png` or
+  `--exclude video`.
 
 - **ZIP-based formats are recovered with their real extension.** A carved ZIP is
   inspected for the marker member of the common ZIP container formats, so a

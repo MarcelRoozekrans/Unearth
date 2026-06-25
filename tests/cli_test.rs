@@ -291,6 +291,53 @@ fn scan_type_accepts_a_comma_list() {
 }
 
 #[test]
+fn scan_exclude_drops_a_type() {
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("disk.img");
+
+    let jpeg = common::jpeg(&vec![0x41u8; 1500]);
+    let mut data = vec![0u8; 500];
+    data.extend_from_slice(&jpeg);
+    data.extend_from_slice(&vec![0u8; 500]);
+    std::fs::write(&img, &data).unwrap();
+
+    // Without exclusion, scanning the image category recovers the jpeg.
+    let out_kept = tmp.path().join("kept");
+    let out = run(&[
+        "scan",
+        img.to_str().unwrap(),
+        "-o",
+        out_kept.to_str().unwrap(),
+        "--type",
+        "image",
+        "-q",
+    ]);
+    assert!(out.status.success());
+    assert_eq!(std::fs::read_dir(&out_kept).unwrap().count(), 1);
+
+    // Excluding jpg from the image category leaves nothing to recover here.
+    let out_excl = tmp.path().join("excl");
+    let out = run(&[
+        "scan",
+        img.to_str().unwrap(),
+        "-o",
+        out_excl.to_str().unwrap(),
+        "--type",
+        "image",
+        "--exclude",
+        "jpg",
+        "-q",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let n = std::fs::read_dir(&out_excl).map(|d| d.count()).unwrap_or(0);
+    assert_eq!(n, 0, "jpg excluded, nothing recovered");
+}
+
+#[test]
 fn scan_organize_groups_files_by_type() {
     let tmp = tempfile::tempdir().unwrap();
     let img = tmp.path().join("disk.img");
