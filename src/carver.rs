@@ -3242,35 +3242,9 @@ fn effective_ext(
     let mut head = vec![0u8; want];
     let n = source.read_at(file_start, &mut head)?;
     head.truncate(n);
-    Ok(classify_zip(&head))
-}
-
-/// Classify a ZIP by the presence of well-known member names, returning the
-/// refined extension or `"zip"` when none match. Order matters: APK before JAR
-/// (both carry `META-INF/MANIFEST.MF`).
-fn classify_zip(head: &[u8]) -> &'static str {
-    let has = |needle: &[u8]| find_subsequence(head, needle).is_some();
-    if has(b"application/epub+zip") {
-        "epub"
-    } else if has(b"application/vnd.oasis.opendocument.text") {
-        "odt"
-    } else if has(b"application/vnd.oasis.opendocument.spreadsheet") {
-        "ods"
-    } else if has(b"application/vnd.oasis.opendocument.presentation") {
-        "odp"
-    } else if has(b"AndroidManifest.xml") {
-        "apk"
-    } else if has(b"word/document.xml") {
-        "docx"
-    } else if has(b"xl/workbook.xml") {
-        "xlsx"
-    } else if has(b"ppt/presentation.xml") {
-        "pptx"
-    } else if has(b"META-INF/MANIFEST.MF") {
-        "jar"
-    } else {
-        "zip"
-    }
+    Ok(crate::signatures::classify_zip(&head)
+        .map(|(ext, _)| ext)
+        .unwrap_or("zip"))
 }
 
 /// Stream `len` bytes from the source at `file_start` into a new output file,
