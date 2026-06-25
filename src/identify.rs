@@ -42,10 +42,13 @@ pub fn identify(head: &[u8]) -> Option<Detected> {
         if validity == Validity::Invalid {
             continue; // magic matched but the header is structurally wrong
         }
-        // A ZIP may actually be a DOCX/EPUB/APK/…; refine it from its content so
-        // identify matches what the carver names the file.
+        // A ZIP may actually be a DOCX/EPUB/APK/…, and an OLE2 container a
+        // legacy doc/xls/ppt; refine it from its content so identify matches
+        // what the carver names the file.
         let (ext, name) = if sig.ext == "zip" {
             crate::signatures::classify_zip(head).unwrap_or((sig.ext, sig.name))
+        } else if sig.ext == "ole" {
+            crate::signatures::classify_cfbf(head).unwrap_or((sig.ext, sig.name))
         } else {
             (sig.ext, sig.name)
         };

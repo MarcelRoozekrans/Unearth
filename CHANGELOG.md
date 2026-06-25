@@ -50,9 +50,12 @@ formats.
   (`.blend`, block chain walked to the terminating `ENDB` block), and NES ROMs
   (iNES / NES 2.0, sized from the PRG/CHR bank counts), raw JPEG 2000
   codestreams (`.j2k`, ended at the EOC marker), Windows Imaging images
-  (WIM/ESD, sized from the resource-table extents), and uncompressed Flash
-  movies (`.swf`/`FWS`, length field in the header) — each with a deterministic
-  length strategy.
+  (WIM/ESD, sized from the resource-table extents), uncompressed Flash
+  movies (`.swf`/`FWS`, length field in the header), and Compound File Binary
+  (OLE2) containers — the legacy Microsoft Office formats (`.doc`/`.xls`/`.ppt`)
+  and other OLE2 files (e.g. `.msi`) — sized by reading the FAT (located via the
+  DIFAT) and taking the highest sector still marked in use — each with a
+  deterministic length strategy.
 - **MP3 without an ID3v2 tag** is now carved by anchoring directly on a Layer III
   frame sync (requiring a long run of valid frames), so ID3v1-only and tagless
   MP3s are recovered, not just ID3v2-tagged ones.
@@ -80,6 +83,13 @@ formats.
   not just repetition. A new `--exclude` option drops types or categories from
   the selection (applied after `--type`), e.g. `--type image --exclude png` or
   `--exclude video`.
+
+- **OLE2 compound files are recovered with their real Office extension.** A
+  carved compound file (`.ole`) is inspected for the marker stream name of the
+  legacy Office formats, so it is written as `.doc` (Word), `.xls` (Excel), or
+  `.ppt` (PowerPoint) instead of a generic `.ole`. An unrecognised compound file
+  stays `.ole`. `identify` reports the same refined type, and these map to the
+  document category for `--type`, `triage`, and `identify`.
 
 - **ZIP-based formats are recovered with their real extension.** A carved ZIP is
   inspected for the marker member of the common ZIP container formats, so a
