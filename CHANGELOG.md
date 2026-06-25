@@ -38,6 +38,10 @@ formats.
   camcorder cards) are detected via their Volume Recognition Sequence and named by
   `info`/`list_volumes`. Their descriptor metadata is not parsed, so UDF is not
   recovered from metadata — carving (`scan`) is the fallback, as for APFS/Btrfs.
+- **ISO 9660 recognition** — data CD/DVD discs and `.iso` images are detected via
+  the Primary Volume Descriptor at sector 16 and named by `info`/`list_volumes`,
+  with their size and volume label. A hybrid UDF disc is reported as UDF. The
+  directory metadata is not parsed, so carving (`scan`) recovers the contents.
 - **Lost/corrupt partition recovery** — `info --scan` finds volumes that have no
   partition-table entry via a whole-source signature scan, and `undelete --scan`
   / `recover --scan` recover from every volume found, in one command.

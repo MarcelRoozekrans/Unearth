@@ -7,8 +7,9 @@
 //! ([`crate::apfs`]) and Btrfs volumes ([`crate::btrfs`]) are recognised for
 //! reporting (their copy-on-write design leaves no stale metadata to scavenge)
 //! but not recovered from metadata — carving (`scan`) is the fallback there.
-//! UDF volumes ([`crate::udf`]: optical/USB media) are likewise recognised and
-//! reported but carved rather than recovered from metadata. Encrypted containers
+//! UDF volumes ([`crate::udf`]) and ISO 9660 discs ([`crate::iso9660`]: optical
+//! media and `.iso` images) are likewise recognised and reported but carved
+//! rather than recovered from metadata. Encrypted containers
 //! ([`crate::encrypted`]: LUKS, BitLocker) are recognised so the user is told to
 //! unlock them first; nothing can be read until then.
 
@@ -17,7 +18,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Result};
 
 use crate::source::Source;
-use crate::{apfs, btrfs, encrypted, exfat, ext4, fat, hfsplus, ntfs, udf};
+use crate::{apfs, btrfs, encrypted, exfat, ext4, fat, hfsplus, iso9660, ntfs, udf};
 
 /// Options controlling a recovery run.
 #[derive(Clone, Copy, Default)]
@@ -97,6 +98,7 @@ pub enum Volume {
     Btrfs(btrfs::Volume),
     Encrypted(encrypted::Volume),
     Udf(udf::Volume),
+    Iso(iso9660::Volume),
 }
 
 impl Volume {
@@ -112,6 +114,7 @@ impl Volume {
             Volume::Btrfs(v) => v.offset,
             Volume::Encrypted(v) => v.offset,
             Volume::Udf(v) => v.offset,
+            Volume::Iso(v) => v.offset,
         }
     }
 
@@ -127,6 +130,7 @@ impl Volume {
             Volume::Btrfs(v) => v.size(),
             Volume::Encrypted(v) => v.size(),
             Volume::Udf(v) => v.size(),
+            Volume::Iso(v) => v.size(),
         }
     }
 
@@ -142,6 +146,7 @@ impl Volume {
             Volume::Btrfs(v) => v.fs_label().to_string(),
             Volume::Encrypted(v) => v.fs_label().to_string(),
             Volume::Udf(v) => v.fs_label().to_string(),
+            Volume::Iso(v) => v.fs_label().to_string(),
         }
     }
 
@@ -164,6 +169,7 @@ impl Volume {
             Volume::Ntfs(v) => v.label(),
             Volume::Ext(v) => v.label(),
             Volume::Btrfs(v) => v.label(),
+            Volume::Iso(v) => v.label(),
             _ => "",
         };
         if label.is_empty() {
@@ -205,6 +211,7 @@ impl Volume {
             Volume::Btrfs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Encrypted(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Udf(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Iso(v) => v.recover_deleted(src, out_dir, opts),
         }
     }
 }
@@ -249,7 +256,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ext2/3/4, HFS+, APFS, Btrfs, UDF, or encrypted (LUKS/BitLocker) volume found");
+        bail!("no FAT, exFAT, NTFS, ext2/3/4, HFS+, APFS, Btrfs, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
@@ -341,6 +348,11 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     // recovered).
     if let Some(v) = udf::detect(src, offset) {
         return Ok(Some(Volume::Udf(v)));
+    }
+    // ISO 9660 (plain data discs) shares the sector-16 descriptor area but lacks
+    // the UDF `NSR` marker, so it is checked after UDF.
+    if let Some(v) = iso9660::detect(src, offset) {
+        return Ok(Some(Volume::Iso(v)));
     }
     Ok(None)
 }
