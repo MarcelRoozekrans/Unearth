@@ -319,6 +319,9 @@ impl Volume {
             if !opts.time_ok(parsed.mtime) {
                 continue;
             }
+            if !opts.name_ok(&name) {
+                continue;
+            }
 
             let rel = self.resolve_path(src, parent, &name);
             if opts.dry_run {

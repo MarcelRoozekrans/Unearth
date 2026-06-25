@@ -162,6 +162,7 @@ fn never_panics_on_truncated_volume() {
                             max_size: None,
                             modified_after: None,
                             modified_before: None,
+                            names: Vec::new(),
                             dry_run: true,
                         },
                     );

@@ -110,6 +110,7 @@ fn deleted_count(vol: &recover::Volume, source: &Source, requested: bool) -> Opt
         max_size: None,
         modified_after: None,
         modified_before: None,
+        names: Vec::new(),
         dry_run: true,
     };
     Some(
@@ -754,6 +755,7 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
         max_size: args.max_size,
         modified_after: args.modified_after,
         modified_before: args.modified_before,
+        names: args.names.clone(),
         dry_run: args.dry_run,
     };
     if args.dry_run {
@@ -877,6 +879,7 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
         max_size: args.max_size,
         modified_after: args.modified_after,
         modified_before: args.modified_before,
+        names: args.names.clone(),
         dry_run: args.dry_run,
     };
     let multi = volumes.len() > 1;

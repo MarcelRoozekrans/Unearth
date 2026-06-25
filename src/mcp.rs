@@ -366,6 +366,18 @@ fn tool_definitions() -> Json {
                     str_prop("Only recover files modified at/before this UTC date (YYYY-MM-DD[THH:MM:SS])."),
                 ),
                 (
+                    "names",
+                    obj(vec![
+                        ("type", s("array")),
+                        ("items", obj(vec![("type", s("string"))])),
+                        (
+                            "description",
+                            s("Only recover files whose name matches one of these \
+                               case-insensitive globs (* and ?), e.g. \"*.jpg\"."),
+                        ),
+                    ]),
+                ),
+                (
                     "dry_run",
                     bool_prop("Report what would be recovered without writing."),
                 ),
@@ -537,6 +549,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                             max_size: None,
                             modified_after: None,
                             modified_before: None,
+                            names: Vec::new(),
                             dry_run: true,
                         };
                         match v.recover_deleted(&source, Path::new("."), &opts) {
@@ -772,11 +785,21 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
         "undelete" => {
             let source = open(arg_str("source")?)?;
             let output_dir = arg_str("output_dir")?.to_string();
+            let names = args
+                .and_then(|a| a.get("names"))
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
             let opts = recover::RecoverOptions {
                 min_size: arg_u64("min_size").unwrap_or(0),
                 max_size: arg_u64("max_size"),
                 modified_after: arg_date("modified_after")?,
                 modified_before: arg_date("modified_before")?,
+                names,
                 dry_run: arg_bool("dry_run").unwrap_or(false),
             };
             let volumes = match arg_u64("offset") {
