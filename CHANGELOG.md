@@ -48,6 +48,14 @@ formats.
   frame sync (requiring a long run of valid frames), so ID3v1-only and tagless
   MP3s are recovered, not just ID3v2-tagged ones.
 
+### Fixed
+
+- **JPEG carving no longer truncates at an embedded thumbnail.** Camera and phone
+  JPEGs embed a full thumbnail (its own `FF D8 … FF D9`) in the EXIF metadata; the
+  carver previously stopped at the thumbnail's End-of-Image marker, producing a
+  truncated file. It now tracks nested Start/End-of-Image markers and carves to
+  the outer image's `FF D9`.
+
 ## [0.2.0] - 2026-06-23
 
 A large release that grows `filerecovery` from a signature carver into a

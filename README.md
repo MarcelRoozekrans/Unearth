@@ -487,7 +487,7 @@ alongside the per-file manifest.
 
 | Ext    | Type                                            | How the end is found        |
 |--------|-------------------------------------------------|-----------------------------|
-| jpg    | JPEG image                                       | footer `FF D9`              |
+| jpg    | JPEG image                                       | `FF D9`, nesting-aware      |
 | png    | PNG image                                        | `IEND` chunk                |
 | gif    | GIF image (87a/89a)                              | trailer `00 3B`             |
 | bmp    | BMP image                                        | size field in header        |
