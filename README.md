@@ -675,6 +675,10 @@ Common to both strategies:
   physical addresses through the chunk map. But — like APFS — its copy-on-write
   design leaves no stale metadata to scavenge, so it is not recovered from
   metadata. Use `scan` (carving).
+- **UDF** (optical discs — DVD/Blu-ray — and many large USB drives and camcorder
+  cards) is *recognised* and reported by `info`/`list_volumes` (via its Volume
+  Recognition Sequence at sector 16), but its descriptor metadata is not parsed,
+  so it is not recovered from metadata. Use `scan` (carving).
 - **Encrypted volumes** — **LUKS** (LUKS1/LUKS2) and **BitLocker** — are
   *recognised* and reported by `info`/`list_volumes`, but they hold only
   ciphertext until unlocked, so nothing can be recovered (and carving the raw
