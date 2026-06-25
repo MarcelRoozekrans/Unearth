@@ -53,7 +53,9 @@ formats.
   name (`image`, `audio`, `video`, `document`, `archive`, `executable`, `font`,
   `system`) to select a whole class of types at once, instead of listing every
   extension. Categories and extensions can be mixed. `list-types` groups its
-  output by category so the names are discoverable.
+  output by category so the names are discoverable. The MCP server exposes this
+  too: `list_types` now reports each type's `category` (de-duplicated by
+  extension), and the `scan` tool's `types` argument accepts category names.
 
 ### Fixed
 

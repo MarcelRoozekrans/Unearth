@@ -1268,6 +1268,21 @@ impl Category {
             _ => None,
         }
     }
+
+    /// The category's lowercase name (the inverse of [`Category::from_name`]).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Category::Image => "image",
+            Category::Audio => "audio",
+            Category::Video => "video",
+            Category::Document => "document",
+            Category::Archive => "archive",
+            Category::Executable => "executable",
+            Category::Font => "font",
+            Category::System => "system",
+            Category::Other => "other",
+        }
+    }
 }
 
 /// Classify a file-type extension into a [`Category`].
