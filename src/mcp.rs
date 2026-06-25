@@ -873,6 +873,17 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     })
                     .collect(),
             );
+            let by_category = Json::Obj(
+                sum.by_category()
+                    .iter()
+                    .map(|(cat, st)| {
+                        (
+                            cat.to_string(),
+                            obj(vec![("count", n(st.count)), ("bytes", n(st.bytes))]),
+                        )
+                    })
+                    .collect(),
+            );
             let largest = sum
                 .largest
                 .iter()
@@ -885,6 +896,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                 ("empty_files", n(sum.empty_files)),
                 ("duplicate_sets", n(sum.duplicate_sets)),
                 ("duplicate_bytes", n(sum.duplicate_bytes)),
+                ("by_category", by_category),
                 ("by_type", by_type),
                 ("largest", Json::Arr(largest)),
             ]))

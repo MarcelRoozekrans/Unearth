@@ -147,6 +147,20 @@ fn triage(args: TriageArgs) -> Result<()> {
                 ])
             })
             .collect();
+        let by_category = Json::Obj(
+            sum.by_category()
+                .iter()
+                .map(|(cat, st)| {
+                    (
+                        cat.to_string(),
+                        obj(vec![
+                            ("count", Json::Num(st.count as f64)),
+                            ("bytes", Json::Num(st.bytes as f64)),
+                        ]),
+                    )
+                })
+                .collect(),
+        );
         let out = obj(vec![
             ("dir", s(args.dir.display().to_string())),
             ("total_files", Json::Num(sum.total_files as f64)),
@@ -154,6 +168,7 @@ fn triage(args: TriageArgs) -> Result<()> {
             ("empty_files", Json::Num(sum.empty_files as f64)),
             ("duplicate_sets", Json::Num(sum.duplicate_sets as f64)),
             ("duplicate_bytes", Json::Num(sum.duplicate_bytes as f64)),
+            ("by_category", by_category),
             ("by_type", by_type),
             ("largest", Json::Arr(largest)),
         ]);
@@ -175,6 +190,13 @@ fn triage(args: TriageArgs) -> Result<()> {
             sum.duplicate_sets,
             human_bytes(sum.duplicate_bytes)
         );
+    }
+    let by_category = sum.by_category();
+    if !by_category.is_empty() {
+        println!("\nBy category:");
+        for (cat, st) in &by_category {
+            println!("  {:<10} {:>5}  {}", cat, st.count, human_bytes(st.bytes));
+        }
     }
     if !sum.by_type.is_empty() {
         println!("\nBy type:");

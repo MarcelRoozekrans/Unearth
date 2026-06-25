@@ -36,6 +36,22 @@ pub struct Summary {
     pub duplicate_bytes: u64,
 }
 
+impl Summary {
+    /// Roll the per-extension tallies up into per-category tallies (`image`,
+    /// `audio`, …; unknown extensions fall under `other`). Categories with no
+    /// files are omitted. The keys are sorted for stable output.
+    pub fn by_category(&self) -> BTreeMap<&'static str, TypeStat> {
+        let mut out: BTreeMap<&'static str, TypeStat> = BTreeMap::new();
+        for (ext, st) in &self.by_type {
+            let cat = crate::signatures::category_of(ext).as_str();
+            let entry = out.entry(cat).or_default();
+            entry.count += st.count;
+            entry.bytes = entry.bytes.saturating_add(st.bytes);
+        }
+        out
+    }
+}
+
 /// Walk `dir` recursively and summarize the files under it. `top_n` bounds the
 /// `largest` list.
 pub fn summarize(dir: &Path, top_n: usize) -> Result<Summary> {
@@ -147,6 +163,14 @@ mod tests {
         assert_eq!(jpg.count, 3); // a, b, dup
         assert_eq!(jpg.bytes, 500);
         assert_eq!(sum.by_type.get("png").unwrap().count, 1);
+
+        // The jpg and png tallies roll up under the "image" category; the empty
+        // .bin is an unknown type and lands in "other".
+        let by_cat = sum.by_category();
+        let image = by_cat.get("image").unwrap();
+        assert_eq!(image.count, 4); // 3 jpg + 1 png
+        assert_eq!(image.bytes, 550);
+        assert_eq!(by_cat.get("other").unwrap().count, 1); // empty.bin
 
         // a.jpg and sub/dup.jpg share content => one duplicate set, 100 wasted.
         assert_eq!(sum.duplicate_sets, 1);
