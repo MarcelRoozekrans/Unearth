@@ -526,7 +526,27 @@ fn file_length(
         Extent::Zip => Ok(zip_length(source, file_start, limit)?),
         Extent::Gif => Ok(gif_length(source, file_start, limit)?),
         Extent::Wim => Ok(wim_length(source, file_start, limit)?),
+        Extent::Swf => Ok(swf_length(source, file_start, limit)?),
     }
+}
+
+/// Uncompressed Flash movie (`FWS`) length. The 8-byte header is `FWS`, a 1-byte
+/// version, then the total file length as a little-endian u32 at offset 4. The
+/// version must be non-zero and the length at least the header size, which
+/// rejects a coincidental `FWS` magic.
+fn swf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 8];
+    if source.read_at(file_start, &mut h)? < 8 || &h[0..3] != b"FWS" {
+        return Ok(None);
+    }
+    if h[3] == 0 {
+        return Ok(None); // version 0 does not exist
+    }
+    let size = u32::from_le_bytes([h[4], h[5], h[6], h[7]]) as u64;
+    if size < 8 || file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
 }
 
 /// Windows Imaging Format (WIM) length. The 208-byte header carries a resource

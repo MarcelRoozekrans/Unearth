@@ -61,6 +61,7 @@
 //! * [`Extent::Nes`] — iNES / NES 2.0 ROM: size from the PRG/CHR bank counts.
 //! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
 //! * [`Extent::Wim`] — Windows Imaging (WIM): furthest resource-table extent.
+//! * [`Extent::Swf`] — uncompressed Flash movie (`FWS`): `FileLength` at offset 4.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -265,6 +266,12 @@ pub enum Extent {
     /// XML data) is the last structure in the file. The header size field
     /// (0xD0) is checked to reject a coincidental magic.
     Wim,
+    /// Uncompressed Flash movie (`FWS`): the 8-byte header stores the total file
+    /// length as a little-endian u32 at offset 4. Only the uncompressed variant
+    /// is carved — the compressed `CWS`/`ZWS` variants store the *uncompressed*
+    /// length there, which is not the on-disk size. The version byte and a
+    /// minimum length are checked to reject a coincidental magic.
+    Swf,
 }
 
 /// A recoverable file type.
@@ -824,6 +831,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Wim,
         max_size: 8 * GB,
+    },
+    Signature {
+        name: "Flash movie (uncompressed)",
+        ext: "swf",
+        magic: b"FWS",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Swf,
+        max_size: 500 * MB,
     },
     Signature {
         name: "ICC colour profile",

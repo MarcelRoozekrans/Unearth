@@ -510,6 +510,7 @@ alongside the per-file manifest.
 | ani    | Windows animated cursor                          | RIFF size field             |
 | jp2    | JPEG 2000 image                                  | ISO box (atom) walk         |
 | j2k    | JPEG 2000 codestream                             | EOC marker `FF D9`          |
+| swf    | Flash movie (uncompressed FWS)                   | length field in header (LE) |
 | webp   | WebP image                                       | RIFF size field             |
 | heic   | HEIC / HEIF image                               | ISO box (atom) walk         |
 | avif   | AVIF image                                       | ISO box (atom) walk         |
