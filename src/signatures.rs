@@ -62,6 +62,8 @@
 //! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
 //! * [`Extent::Wim`] — Windows Imaging (WIM): furthest resource-table extent.
 //! * [`Extent::Swf`] — uncompressed Flash movie (`FWS`): `FileLength` at offset 4.
+//! * [`Extent::Cfbf`] — OLE2 compound file: walk the FAT to the last used sector.
+//! * [`Extent::Pst`] — Outlook data file (PST/OST): `ibFileEof` in the header.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -280,6 +282,12 @@ pub enum Extent {
     /// reading the FAT and taking the highest sector index that is not marked
     /// free, so the file ends at `(max_used_sector + 2) * sector_size`.
     Cfbf,
+    /// Outlook data file (PST/OST). The NDB header records the file's own end
+    /// offset (`ibFileEof`) directly: a little-endian u64 at offset 0xB8 in the
+    /// Unicode format (`wVer` >= 23). The ANSI format (`wVer` 14/15) stores a
+    /// 32-bit `ibFileEof` at a different offset and is not carved. The version
+    /// and the `SM` client signature are checked to reject a coincidental magic.
+    Pst,
 }
 
 /// A recoverable file type.
@@ -1171,6 +1179,17 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Cfbf,
         max_size: 2 * GB,
     },
+    Signature {
+        // Outlook data file (PST/OST). "!BDN" magic, then the "SM" client tag at
+        // offset 8; the size is read from the header's ibFileEof field.
+        name: "Outlook data file (PST/OST)",
+        ext: "pst",
+        magic: &[0x21, 0x42, 0x44, 0x4E],
+        magic_offset: 0,
+        secondary: Some((8, b"SM")),
+        extent: Extent::Pst,
+        max_size: 50 * GB,
+    },
 ];
 
 /// Look up signatures relevant to a single source byte, keyed by the first
@@ -1423,7 +1442,7 @@ pub fn category_of(ext: &str) -> Category {
         // classification; doc/xls/ppt/msg (and a generic OLE2 container) from
         // CFBF.
         "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "doc"
-        | "xls" | "ppt" | "msg" | "ole" => Category::Document,
+        | "xls" | "ppt" | "msg" | "pst" | "ole" => Category::Document,
         "zip" | "7z" | "rar" | "cab" | "ar" | "zst" | "lz4" | "jar" => Category::Archive,
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" => Category::Font,
