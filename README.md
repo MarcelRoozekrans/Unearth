@@ -175,9 +175,12 @@ Point an MCP client at the binary, for example in a Claude Desktop config:
 ```
 
 The agent can then detect volumes, carve or undelete into a directory you name,
-and verify the results — each tool returns a JSON summary. `list_volumes` also
-takes `scan: true` to find **lost/orphaned partitions** by a whole-source
-signature scan when the table is missing or corrupt. `scan` and `undelete`
+and verify the results — each tool returns a JSON summary. `list_volumes`
+reports each volume's free (unallocated) space as `free_bytes` (a number, or
+`null` for filesystems whose allocation map is not parsed), so the agent can
+gauge recoverable space, and it also takes `scan: true` to find
+**lost/orphaned partitions** by a whole-source signature scan when the table is
+missing or corrupt. `scan` and `undelete`
 also include a per-file list with each recovered file's path/name, size, and
 **SHA-256** (capped at 1000 entries; pass `include_files: false` to omit it), so
 the agent can reason over exactly what was recovered. All access is read-only on
