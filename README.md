@@ -546,6 +546,7 @@ alongside the per-file manifest.
 | pcapng | pcapng network capture                           | block walk                  |
 | evtx   | Windows Event Log                                | chunk count in header       |
 | regf   | Windows registry hive                            | base block + hive-bins size |
+| wim    | Windows Imaging (WIM/ESD)                        | resource-table extents      |
 | icc    | ICC colour profile                               | size field in profile header |
 | shp    | ESRI Shapefile                                   | length field in header (BE)  |
 | blend  | Blender file                                     | block chain to ENDB block   |
