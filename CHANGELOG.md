@@ -68,7 +68,9 @@ formats.
   output by category so the names are discoverable. The MCP server exposes this
   too: `list_types` now reports each type's `category` (de-duplicated by
   extension), and the `scan` tool's `types` argument accepts category names.
-  `identify` (CLI and MCP) reports the detected file's category.
+  `identify` (CLI and MCP) reports the detected file's category, and `triage`
+  adds a per-category rollup (image/audio/video/…) alongside its per-type
+  breakdown.
 
 ### Fixed
 

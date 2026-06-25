@@ -320,8 +320,9 @@ filerecovery identify mystery.dat --json
 
 ### Summarize a recovery directory
 
-After recovering, get the shape of what came back — counts per type, the
-largest files, content duplicates, and empty files:
+After recovering, get the shape of what came back — counts per category
+(image, audio, video, …) and per type, the largest files, content duplicates,
+and empty files:
 
 ```sh
 filerecovery triage recovered
