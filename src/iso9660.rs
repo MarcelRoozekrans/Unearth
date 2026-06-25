@@ -6,8 +6,10 @@
 //! `info`/`list_volumes`, with size and label) *and* extracts its files with
 //! their original names and folder paths — which is far better than carving,
 //! which loses both. Extraction walks the directory tree from the Primary Volume
-//! Descriptor; long-name extensions (Joliet, Rock Ridge) are not yet decoded, so
-//! such names fall back to the short ISO 9660 identifier.
+//! Descriptor, or from the **Joliet** Supplementary Volume Descriptor when one
+//! is present, so the long, Unicode (UCS-2) filenames that Windows-authored
+//! discs use are recovered intact. (Rock Ridge long names are not yet decoded,
+//! falling back to the short ISO 9660 identifier.)
 //!
 //! Detection reads the **Volume Descriptor Set** at sector 16 (byte offset
 //! 32768): a series of 2048-byte descriptors each `{ type: u8, id: "CD001",
@@ -32,6 +34,7 @@ use crate::source::Source;
 const VDS_OFFSET: u64 = 16 * 2048;
 const VD_SIZE: u64 = 2048;
 const PRIMARY: u8 = 1;
+const SUPPLEMENTARY: u8 = 2;
 const TERMINATOR: u8 = 255;
 /// Bound the directory walk against malformed or hostile images.
 const MAX_DEPTH: usize = 64;
@@ -48,12 +51,16 @@ pub struct Volume {
     block_size: u64,
     root_lba: u64,
     root_len: u64,
+    /// Directory names are UCS-2 (Joliet) rather than short ISO 9660 identifiers.
+    joliet: bool,
 }
 
 /// Recognise an ISO 9660 volume at `offset` by finding its Primary Volume
 /// Descriptor. Returns `None` when no `CD001` Primary descriptor is present.
 pub fn detect(src: &Source, offset: u64) -> Option<Volume> {
     let base = offset.checked_add(VDS_OFFSET)?;
+    let mut primary: Option<Volume> = None;
+    let mut joliet_root: Option<(u64, u64)> = None;
     for i in 0..16u64 {
         let pos = base.checked_add(i * VD_SIZE)?;
         let mut d = [0u8; 256];
@@ -64,12 +71,35 @@ pub fn detect(src: &Source, offset: u64) -> Option<Volume> {
             break; // not a volume descriptor: the set has ended
         }
         match d[0] {
-            PRIMARY => return Some(parse_primary(offset, src, &d)),
+            PRIMARY => primary = Some(parse_primary(offset, src, &d)),
+            SUPPLEMENTARY if is_joliet(&d) => joliet_root = Some(root_record(&d)),
             TERMINATOR => break,
-            _ => {} // boot record / supplementary: keep scanning for the primary
+            _ => {} // boot record / non-Joliet supplementary: keep scanning
         }
     }
-    None
+    let mut vol = primary?;
+    // Prefer the Joliet directory tree: its names are the full Unicode names.
+    if let Some((lba, len)) = joliet_root {
+        vol.root_lba = lba;
+        vol.root_len = len;
+        vol.joliet = true;
+    }
+    Some(vol)
+}
+
+/// Whether a Supplementary Volume Descriptor declares Joliet via its escape
+/// sequences field (offset 88): `%/@`, `%/C`, or `%/E` for UCS-2 levels 1–3.
+fn is_joliet(svd: &[u8]) -> bool {
+    matches!(&svd[88..91], b"%/@" | b"%/C" | b"%/E")
+}
+
+/// Extent LBA and data length of the root Directory Record embedded at offset
+/// 156 of a (primary or supplementary) volume descriptor.
+fn root_record(vd: &[u8]) -> (u64, u64) {
+    let r = &vd[156..];
+    let lba = u32::from_le_bytes([r[2], r[3], r[4], r[5]]) as u64;
+    let len = u32::from_le_bytes([r[10], r[11], r[12], r[13]]) as u64;
+    (lba, len)
 }
 
 /// Build a [`Volume`] from a Primary Volume Descriptor's bytes.
@@ -92,11 +122,7 @@ fn parse_primary(offset: u64, src: &Source, pvd: &[u8]) -> Volume {
         .rposition(|&b| b != b' ' && b != 0)
         .map_or(0, |p| p + 1);
     let label = String::from_utf8_lossy(&raw[..end]).trim().to_string();
-    // Root Directory Record (34 bytes) is embedded at PVD offset 156: extent LBA
-    // (both-endian u32 at +2) and data length (both-endian u32 at +10).
-    let r = &pvd[156..];
-    let root_lba = u32::from_le_bytes([r[2], r[3], r[4], r[5]]) as u64;
-    let root_len = u32::from_le_bytes([r[10], r[11], r[12], r[13]]) as u64;
+    let (root_lba, root_len) = root_record(pvd);
     Volume {
         offset,
         size,
@@ -104,6 +130,7 @@ fn parse_primary(offset: u64, src: &Source, pvd: &[u8]) -> Volume {
         block_size,
         root_lba,
         root_len,
+        joliet: false,
     }
 }
 
@@ -192,7 +219,7 @@ impl Volume {
                 let child_lba = u32::from_le_bytes([rec[2], rec[3], rec[4], rec[5]]) as u64;
                 let child_len = u32::from_le_bytes([rec[10], rec[11], rec[12], rec[13]]) as u64;
                 let is_dir = rec[25] & 0x02 != 0;
-                let name = decode_name(name_bytes, is_dir);
+                let name = decode_name(name_bytes, is_dir, self.joliet);
                 let child_rel = rel.join(&name);
 
                 if is_dir {
@@ -260,10 +287,20 @@ impl Volume {
     }
 }
 
-/// Decode an ISO 9660 file identifier: strip the `;version` suffix and a single
-/// trailing `.` from files, and sanitise it into a safe path component.
-fn decode_name(bytes: &[u8], is_dir: bool) -> String {
-    let mut s = String::from_utf8_lossy(bytes).to_string();
+/// Decode a directory-record file identifier: UCS-2 big-endian for Joliet, else
+/// ASCII d-characters. Strips the `;version` suffix and a single trailing `.`
+/// from files, and sanitises the result into a safe path component.
+fn decode_name(bytes: &[u8], is_dir: bool, joliet: bool) -> String {
+    let mut s = if joliet {
+        // Joliet names are UCS-2 (UTF-16) big-endian.
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(bytes).to_string()
+    };
     if !is_dir {
         if let Some(semi) = s.find(';') {
             s.truncate(semi);
@@ -475,5 +512,64 @@ mod tests {
             payload_note,
             "file recovered under its subdirectory path"
         );
+    }
+
+    /// Encode a string as UCS-2 big-endian, as Joliet stores names.
+    fn ucs2_be(s: &str) -> Vec<u8> {
+        s.encode_utf16().flat_map(|u| u.to_be_bytes()).collect()
+    }
+
+    #[test]
+    fn joliet_long_names_are_preferred() {
+        const BS: usize = 2048;
+        // sector 16 = PVD, 17 = Joliet SVD, 18 = primary root, 19 = Joliet root,
+        // 20 = file data.
+        let total = 22 * BS;
+        let mut v = vec![0u8; total];
+        let payload = b"joliet payload";
+        v[20 * BS..20 * BS + payload.len()].copy_from_slice(payload);
+
+        // Primary root (sector 18): the short 8.3 name.
+        let mut p = 18 * BS;
+        p += put_record(&mut v, p, 18, BS as u32, true, &[0x00]);
+        p += put_record(&mut v, p, 18, BS as u32, true, &[0x01]);
+        let _ = put_record(
+            &mut v,
+            p,
+            20,
+            payload.len() as u32,
+            false,
+            b"MYPHOT~1.JPG;1",
+        );
+
+        // Joliet root (sector 19): the full Unicode name (UCS-2 BE).
+        let mut q = 19 * BS;
+        q += put_record(&mut v, q, 19, BS as u32, true, &[0x00]);
+        q += put_record(&mut v, q, 18, BS as u32, true, &[0x01]);
+        let jname = ucs2_be("My Photo.jpg;1");
+        let _ = put_record(&mut v, q, 20, payload.len() as u32, false, &jname);
+
+        // PVD (sector 16): root at sector 18.
+        let off = put_descriptor(&mut v, 0, PRIMARY);
+        v[off + 80..off + 84].copy_from_slice(&22u32.to_le_bytes());
+        v[off + 128..off + 130].copy_from_slice(&(BS as u16).to_le_bytes());
+        put_record(&mut v, off + 156, 18, BS as u32, true, &[0x00]);
+
+        // Joliet SVD (sector 17): escape sequence "%/E" and root at sector 19.
+        let soff = put_descriptor(&mut v, 1, SUPPLEMENTARY);
+        v[soff + 88..soff + 91].copy_from_slice(b"%/E");
+        v[soff + 128..soff + 130].copy_from_slice(&(BS as u16).to_le_bytes());
+        put_record(&mut v, soff + 156, 19, BS as u32, true, &[0x00]);
+
+        let (tmp, src) = source_of(&v);
+        let vol = detect(&src, 0).unwrap();
+        let out = tmp.path().join("out");
+        let stats = vol
+            .recover_deleted(&src, &out, &RecoverOptions::default())
+            .unwrap();
+
+        assert_eq!(stats.recovered, 1);
+        // The Joliet long name is used, not the short MYPHOT~1.JPG.
+        assert_eq!(std::fs::read(out.join("My Photo.jpg")).unwrap(), payload);
     }
 }
