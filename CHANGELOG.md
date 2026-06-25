@@ -52,7 +52,8 @@ formats.
 - **Type categories** — `--type` (on `scan` and `recover`) now accepts a category
   name (`image`, `audio`, `video`, `document`, `archive`, `executable`, `font`,
   `system`) to select a whole class of types at once, instead of listing every
-  extension. Categories and extensions can be mixed.
+  extension. Categories and extensions can be mixed. `list-types` groups its
+  output by category so the names are discoverable.
 
 ### Fixed
 
