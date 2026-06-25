@@ -126,11 +126,11 @@ pub struct ImageArgs {
     pub output: PathBuf,
 
     /// Start copying at this byte offset.
-    #[arg(long, value_name = "BYTES", default_value_t = 0)]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 0)]
     pub start: u64,
 
     /// Stop copying at this byte offset (exclusive).
-    #[arg(long, value_name = "BYTES")]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     pub end: Option<u64>,
 
     /// Write every byte, including zero runs, instead of leaving holes. Use this
@@ -140,7 +140,7 @@ pub struct ImageArgs {
 
     /// Bad-sector retry granularity: when a larger read fails, fall back to
     /// reads of this size to salvage the good sectors around the bad one.
-    #[arg(long, value_name = "BYTES", default_value_t = 512)]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 512)]
     pub sector_size: u64,
 
     /// Checkpoint/map file recording progress and unreadable regions, so an
@@ -188,7 +188,7 @@ pub struct RecoverArgs {
     pub output: PathBuf,
 
     /// Byte offset of the volume for the undelete pass (default: auto-detect).
-    #[arg(long, value_name = "BYTES")]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     pub offset: Option<u64>,
 
     /// Run the undelete pass over every volume found by a whole-source signature
@@ -198,7 +198,7 @@ pub struct RecoverArgs {
     pub scan: bool,
 
     /// Alignment (in bytes) at which `--scan` probes for a volume (default 1 MiB).
-    #[arg(long, value_name = "BYTES", default_value_t = 1024 * 1024)]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 1024 * 1024)]
     pub scan_step: u64,
 
     /// Restrict the carving pass to these file types. Each value is an extension
@@ -208,7 +208,7 @@ pub struct RecoverArgs {
     pub types: Vec<String>,
 
     /// Ignore files smaller than this many bytes (both passes).
-    #[arg(long, value_name = "BYTES", default_value_t = 0)]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 0)]
     pub min_size: u64,
 
     /// Group carved files into per-type subdirectories under `carved/`.
@@ -267,7 +267,7 @@ pub struct InfoArgs {
 
     /// Alignment (in bytes) at which `--scan` probes for a volume; partitions
     /// are conventionally 1 MiB-aligned. Smaller finds more but is slower.
-    #[arg(long, value_name = "BYTES", default_value_t = 1024 * 1024)]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 1024 * 1024)]
     pub scan_step: u64,
 }
 
@@ -284,7 +284,7 @@ pub struct UndeleteArgs {
 
     /// Byte offset of the volume within the source. By default the source is
     /// auto-detected (bare volume, or a GPT or MBR partition table).
-    #[arg(long, value_name = "BYTES")]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     pub offset: Option<u64>,
 
     /// Recover from every volume found by a whole-source signature scan, not
@@ -294,11 +294,11 @@ pub struct UndeleteArgs {
     pub scan: bool,
 
     /// Alignment (in bytes) at which `--scan` probes for a volume (default 1 MiB).
-    #[arg(long, value_name = "BYTES", default_value_t = 1024 * 1024)]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 1024 * 1024)]
     pub scan_step: u64,
 
     /// Ignore deleted files smaller than this many bytes.
-    #[arg(long, value_name = "BYTES", default_value_t = 0)]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 0)]
     pub min_size: u64,
 
     /// List what would be recovered without writing any files.
@@ -335,15 +335,15 @@ pub struct ScanArgs {
     pub types: Vec<String>,
 
     /// Start scanning at this byte offset.
-    #[arg(long, value_name = "BYTES", default_value_t = 0)]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 0)]
     pub start: u64,
 
     /// Stop scanning at this byte offset (exclusive).
-    #[arg(long, value_name = "BYTES")]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     pub end: Option<u64>,
 
     /// Ignore carved files smaller than this many bytes.
-    #[arg(long, value_name = "BYTES", default_value_t = 0)]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 0)]
     pub min_size: u64,
 
     /// Stop after recovering this many files.
@@ -408,4 +408,71 @@ pub struct ScanArgs {
     /// Suppress the progress bar.
     #[arg(short, long)]
     pub quiet: bool,
+}
+
+/// Parse a byte size that may carry a binary unit suffix: `K`/`M`/`G`/`T`/`P`
+/// (and the equivalent `KB`/`KiB`/… forms) are powers of 1024, so `5M` is
+/// 5 × 1024 × 1024. A bare number is a byte count, and a decimal is allowed for
+/// a suffixed value (e.g. `1.5G`). Case-insensitive.
+pub fn parse_size(s: &str) -> Result<u64, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("empty size".to_string());
+    }
+    // Split the leading number (digits and an optional decimal point) from the
+    // unit suffix.
+    let split = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(s.len());
+    let (num, unit) = s.split_at(split);
+    let mult: u64 = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "b" => 1,
+        "k" | "kb" | "kib" => 1u64 << 10,
+        "m" | "mb" | "mib" => 1u64 << 20,
+        "g" | "gb" | "gib" => 1u64 << 30,
+        "t" | "tb" | "tib" => 1u64 << 40,
+        "p" | "pb" | "pib" => 1u64 << 50,
+        other => return Err(format!("unknown size unit '{other}'")),
+    };
+    if num.contains('.') {
+        // A decimal only makes sense with a unit (e.g. 1.5G); reject "1.5" bytes.
+        if mult == 1 {
+            return Err(format!("fractional byte count '{s}'"));
+        }
+        let f: f64 = num.parse().map_err(|_| format!("invalid size '{s}'"))?;
+        if !f.is_finite() || f < 0.0 {
+            return Err(format!("invalid size '{s}'"));
+        }
+        Ok((f * mult as f64) as u64)
+    } else {
+        let n: u64 = num.parse().map_err(|_| format!("invalid size '{s}'"))?;
+        n.checked_mul(mult)
+            .ok_or_else(|| format!("size '{s}' is too large"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_size;
+
+    #[test]
+    fn parses_plain_and_suffixed_sizes() {
+        assert_eq!(parse_size("0").unwrap(), 0);
+        assert_eq!(parse_size("512").unwrap(), 512);
+        assert_eq!(parse_size("5K").unwrap(), 5 * 1024);
+        assert_eq!(parse_size("5kib").unwrap(), 5 * 1024);
+        assert_eq!(parse_size("2M").unwrap(), 2 * 1024 * 1024);
+        assert_eq!(parse_size("2mb").unwrap(), 2 * 1024 * 1024);
+        assert_eq!(parse_size("1G").unwrap(), 1024 * 1024 * 1024);
+        assert_eq!(parse_size("1.5G").unwrap(), 1024 * 1024 * 1024 * 3 / 2);
+        assert_eq!(parse_size("  4K ").unwrap(), 4096);
+    }
+
+    #[test]
+    fn rejects_bad_sizes() {
+        assert!(parse_size("").is_err());
+        assert!(parse_size("12x").is_err());
+        assert!(parse_size("1.5").is_err()); // fractional bytes
+        assert!(parse_size("abc").is_err());
+    }
 }
