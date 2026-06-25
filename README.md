@@ -523,7 +523,7 @@ alongside the per-file manifest.
 | pdf    | PDF document                                     | `%%EOF`                     |
 | djvu   | DjVu document                                    | IFF FORM length             |
 | rtf    | Rich Text Format document                        | outer `{ }` group match     |
-| zip    | ZIP (also DOCX/XLSX/PPTX/ODT/JAR/APK)            | EOCD, geometry-validated    |
+| zip    | ZIP (DOCX/XLSX/PPTX/ODT/EPUB/JAR/APK auto-named) | EOCD, geometry-validated    |
 | 7z     | 7-Zip archive                                    | next-header offset + size   |
 | rar    | RAR archive (v4 and v5)                          | block-chain walk            |
 | zst    | Zstandard compressed                             | frame block walk            |

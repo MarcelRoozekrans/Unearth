@@ -73,6 +73,13 @@ formats.
   breakdown. `--type` also accepts a comma-separated list (`--type image,pdf`),
   not just repetition.
 
+- **ZIP-based formats are recovered with their real extension.** A carved ZIP is
+  inspected for the marker member of the common ZIP container formats, so a
+  recovered Office (`.docx`/`.xlsx`/`.pptx`), OpenDocument (`.odt`/`.ods`/`.odp`),
+  e-book (`.epub`), Java (`.jar`), or Android (`.apk`) file is written with that
+  extension (and counted under it) instead of a generic `.zip`. A plain ZIP stays
+  `.zip`.
+
 ### Fixed
 
 - **JPEG carving no longer truncates at an embedded thumbnail.** Camera and phone

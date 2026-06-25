@@ -3223,6 +3223,56 @@ fn passes_validation(source: &Source, sig: &Signature, file_start: u64, len: u64
     Ok(validate::validate(sig, &hdr[..n]).accept())
 }
 
+/// The extension to write a carved file under. Normally the signature's own
+/// extension, but a ZIP is inspected for the marker entries of the common
+/// ZIP-based formats so a recovered Office/OpenDocument/e-book/Java/Android file
+/// gets a usable name (`.docx`, `.xlsx`, …) instead of a generic `.zip`.
+fn effective_ext(
+    source: &Source,
+    sig: &Signature,
+    file_start: u64,
+    len: u64,
+) -> Result<&'static str> {
+    if sig.ext != "zip" {
+        return Ok(sig.ext);
+    }
+    // The marker entry names live in the local-file-header / central-directory
+    // region near the start; a 64 KiB window comfortably covers it.
+    let want = len.min(64 * 1024) as usize;
+    let mut head = vec![0u8; want];
+    let n = source.read_at(file_start, &mut head)?;
+    head.truncate(n);
+    Ok(classify_zip(&head))
+}
+
+/// Classify a ZIP by the presence of well-known member names, returning the
+/// refined extension or `"zip"` when none match. Order matters: APK before JAR
+/// (both carry `META-INF/MANIFEST.MF`).
+fn classify_zip(head: &[u8]) -> &'static str {
+    let has = |needle: &[u8]| find_subsequence(head, needle).is_some();
+    if has(b"application/epub+zip") {
+        "epub"
+    } else if has(b"application/vnd.oasis.opendocument.text") {
+        "odt"
+    } else if has(b"application/vnd.oasis.opendocument.spreadsheet") {
+        "ods"
+    } else if has(b"application/vnd.oasis.opendocument.presentation") {
+        "odp"
+    } else if has(b"AndroidManifest.xml") {
+        "apk"
+    } else if has(b"word/document.xml") {
+        "docx"
+    } else if has(b"xl/workbook.xml") {
+        "xlsx"
+    } else if has(b"ppt/presentation.xml") {
+        "pptx"
+    } else if has(b"META-INF/MANIFEST.MF") {
+        "jar"
+    } else {
+        "zip"
+    }
+}
+
 /// Stream `len` bytes from the source at `file_start` into a new output file,
 /// hashing as we go. With `--dedup` set, a file whose content was already
 /// written this run is removed again and counted as a duplicate.
@@ -3237,16 +3287,16 @@ fn write_file(
     buf: &mut Vec<u8>,
     seen: &mut HashSet<[u8; 32]>,
 ) -> Result<()> {
-    let base = format!(
-        "{:08}_{:#016x}.{}",
-        stats.files_recovered, file_start, sig.ext
-    );
+    // Refine the extension from content where useful (e.g. a ZIP that is really
+    // a .docx), so the recovered file gets a directly-usable name.
+    let ext = effective_ext(source, sig, file_start, len)?;
+    let base = format!("{:08}_{:#016x}.{}", stats.files_recovered, file_start, ext);
     // With `--organize`, group files into a per-type subdirectory; the manifest
     // name keeps the `<ext>/` prefix so `verify` still resolves it.
     let (name, path): (String, PathBuf) = if opts.organize {
         (
-            format!("{}/{}", sig.ext, base),
-            opts.output_dir.join(sig.ext).join(&base),
+            format!("{}/{}", ext, base),
+            opts.output_dir.join(ext).join(&base),
         )
     } else {
         (base.clone(), opts.output_dir.join(&base))
@@ -3302,10 +3352,10 @@ fn write_file(
     let written = len - remaining;
     stats.files_recovered += 1;
     stats.bytes_recovered += written;
-    *stats.per_type.entry(sig.ext).or_insert(0) += 1;
+    *stats.per_type.entry(ext).or_insert(0) += 1;
     stats.files.push(CarvedFile {
         name,
-        ext: sig.ext,
+        ext,
         offset: file_start,
         size: written,
         sha256: digest,
