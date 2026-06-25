@@ -429,6 +429,21 @@ fn info(args: InfoArgs) -> Result<()> {
     Ok(())
 }
 
+/// Drop from `active` every signature whose type is named (directly or via a
+/// category) in `exclude`. An unknown exclude value is an error.
+fn apply_exclude(
+    active: &mut Vec<&'static signatures::Signature>,
+    exclude: &[String],
+) -> Result<()> {
+    if exclude.is_empty() {
+        return Ok(());
+    }
+    let dropped = signatures::select(exclude)?;
+    let drop_exts: std::collections::HashSet<&str> = dropped.iter().map(|s| s.ext).collect();
+    active.retain(|s| !drop_exts.contains(s.ext));
+    Ok(())
+}
+
 fn list_types() {
     use filerecovery::signatures::{category_of, Category};
 
@@ -505,7 +520,8 @@ fn scan(args: ScanArgs) -> Result<()> {
     if args.unallocated && args.resume {
         anyhow::bail!("--unallocated cannot be combined with --resume");
     }
-    let active = signatures::select(&args.types)?;
+    let mut active = signatures::select(&args.types)?;
+    apply_exclude(&mut active, &args.exclude)?;
 
     let source = Source::open(&args.source)?;
     eprintln!(
@@ -891,7 +907,8 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
     };
 
     // Pass 2: carving for whatever the metadata could not restore.
-    let active = signatures::select(&args.types)?;
+    let mut active = signatures::select(&args.types)?;
+    apply_exclude(&mut active, &args.exclude)?;
     let carved_dir = args.output.join("carved");
     let mk_opts = |start: u64, end: Option<u64>, progress: bool| CarveOptions {
         output_dir: carved_dir.clone(),

@@ -453,6 +453,7 @@ filerecovery scan card.img -o recovered --type image
 ```text
 -o, --output <DIR>     Where to write recovered files (default: ./recovered)
 -t, --type <EXT|CAT>   Restrict to a file type or category; repeatable (default: all)
+    --exclude <EXT|CAT> Exclude a type or category (applied after --type)
     --start <SIZE>     Start scanning at this offset (accepts K/M/G/T suffixes)
     --end <SIZE>       Stop scanning at this offset (exclusive)
     --min-size <SIZE>  Skip carved files smaller than this
