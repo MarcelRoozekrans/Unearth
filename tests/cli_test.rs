@@ -665,6 +665,7 @@ fn identify_detects_type_by_content() {
     let json = String::from_utf8_lossy(&out.stdout);
     assert!(json.contains("\"identified\":true"), "{json}");
     assert!(json.contains("\"type\":\"jpg\""), "{json}");
+    assert!(json.contains("\"category\":\"image\""), "{json}");
     assert!(json.contains("\"validated\":true"), "{json}");
 
     // Unknown content is reported as such.

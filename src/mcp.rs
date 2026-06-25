@@ -901,6 +901,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     ("identified", Json::Bool(true)),
                     ("type", s(d.ext)),
                     ("name", s(d.name)),
+                    ("category", s(signatures::category_of(d.ext).as_str())),
                     ("validated", Json::Bool(d.validated)),
                 ]),
                 None => obj(vec![("path", s(path)), ("identified", Json::Bool(false))]),
