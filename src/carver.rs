@@ -515,6 +515,7 @@ fn file_length(
         Extent::Shp => Ok(shp_length(source, file_start, limit)?),
         Extent::Blend => Ok(blend_length(source, file_start, limit)?),
         Extent::Nes => Ok(nes_length(source, file_start, limit)?),
+        Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
     }
 }
 
@@ -985,11 +986,44 @@ fn mp3_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         | ((id3[8] as u64) << 7)
         | (id3[9] as u64);
     let footer = if id3[5] & 0x10 != 0 { 10 } else { 0 };
-    let mut pos = 10u64.saturating_add(tag_size).saturating_add(footer);
-    if pos >= avail {
+    let audio_start = 10u64.saturating_add(tag_size).saturating_add(footer);
+    if audio_start >= avail {
         return Ok(None);
     }
 
+    let (pos, frames) = walk_mp3_frames(source, file_start, audio_start, avail)?;
+    // The tag is a strong anchor, so a few frames suffice to confirm it.
+    if frames < 3 || pos > avail {
+        return Ok(None);
+    }
+    Ok(Some(pos))
+}
+
+/// MP3 length when anchored directly on an MPEG frame sync (no ID3v2 tag), for
+/// the many MP3s that carry only an ID3v1 trailer or no tag at all. The frame
+/// sync is just 11 bits, so a longer run of consecutive valid frames is required
+/// than for the tag-anchored case, to avoid a false carve in arbitrary data.
+fn mp3_raw_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let avail = limit.saturating_sub(file_start);
+    let (pos, frames) = walk_mp3_frames(source, file_start, 0, avail)?;
+    const MIN_FRAMES: u64 = 8;
+    if frames < MIN_FRAMES || pos > avail {
+        return Ok(None);
+    }
+    Ok(Some(pos))
+}
+
+/// Walk MPEG audio frames starting at `audio_start` (relative to `file_start`),
+/// using [`frame_length`] for each frame, until a non-frame byte or the bounds.
+/// A trailing ID3v1 (`TAG`) tag is included. Returns the end offset (relative to
+/// `file_start`) and the number of frames walked.
+fn walk_mp3_frames(
+    source: &Source,
+    file_start: u64,
+    audio_start: u64,
+    avail: u64,
+) -> Result<(u64, u64)> {
+    let mut pos = audio_start;
     let mut frames = 0u64;
     loop {
         let mut hdr = [0u8; 4];
@@ -1014,13 +1048,7 @@ fn mp3_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
             None => break,
         }
     }
-    if frames < 3 {
-        return Ok(None);
-    }
-    if pos > avail {
-        return Ok(None);
-    }
-    Ok(Some(pos))
+    Ok((pos, frames))
 }
 
 /// Windows Event Log (EVTX) length. A 4096-byte `ElfFile` header records the
