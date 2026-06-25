@@ -24,6 +24,10 @@ fn list_types_succeeds() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("jpg"));
     assert!(stdout.contains("sqlite"));
+    // Grouped by category.
+    assert!(stdout.contains("by category"));
+    assert!(stdout.contains("IMAGE"));
+    assert!(stdout.contains("ARCHIVE"));
 }
 
 #[test]

@@ -401,13 +401,47 @@ fn info(args: InfoArgs) -> Result<()> {
 }
 
 fn list_types() {
-    println!("Recoverable file types:\n");
-    println!("  {:<6}  DESCRIPTION", "EXT");
-    println!("  {:<6}  -----------", "---");
-    for sig in SIGNATURES {
-        println!("  {:<6}  {}", sig.ext, sig.name);
+    use filerecovery::signatures::{category_of, Category};
+
+    // (category, display heading) in presentation order.
+    let groups = [
+        (Category::Image, "IMAGE"),
+        (Category::Audio, "AUDIO"),
+        (Category::Video, "VIDEO"),
+        (Category::Document, "DOCUMENT"),
+        (Category::Archive, "ARCHIVE"),
+        (Category::Executable, "EXECUTABLE"),
+        (Category::Font, "FONT"),
+        (Category::System, "SYSTEM"),
+        (Category::Other, "OTHER"),
+    ];
+
+    // Count distinct extensions across all signatures.
+    let mut all_exts: Vec<&str> = SIGNATURES.iter().map(|s| s.ext).collect();
+    all_exts.sort_unstable();
+    all_exts.dedup();
+    println!("Recoverable file types ({}), by category:", all_exts.len());
+
+    for (cat, heading) in groups {
+        // Distinct extensions in this category, in signature order, with the
+        // first signature's description.
+        let mut rows: Vec<(&str, &str)> = Vec::new();
+        for sig in SIGNATURES {
+            if category_of(sig.ext) == cat && !rows.iter().any(|(e, _)| *e == sig.ext) {
+                rows.push((sig.ext, sig.name));
+            }
+        }
+        if rows.is_empty() {
+            continue;
+        }
+        println!("\n{heading}");
+        for (ext, name) in rows {
+            println!("  {ext:<6}  {name}");
+        }
     }
-    println!("\nUse: filerecovery scan <SOURCE> --type <EXT> [--type <EXT> ...]");
+
+    println!("\nSelect one type with --type <EXT>, or a whole category with --type <CATEGORY>");
+    println!("(categories: image, audio, video, document, archive, executable, font, system).");
 }
 
 /// The free (unallocated) byte ranges across every detected volume, or `None`
