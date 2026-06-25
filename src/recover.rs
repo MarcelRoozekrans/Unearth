@@ -7,15 +7,17 @@
 //! ([`crate::apfs`]) and Btrfs volumes ([`crate::btrfs`]) are recognised for
 //! reporting (their copy-on-write design leaves no stale metadata to scavenge)
 //! but not recovered from metadata — carving (`scan`) is the fallback there.
-//! Encrypted containers ([`crate::encrypted`]: LUKS, BitLocker) are recognised
-//! so the user is told to unlock them first; nothing can be read until then.
+//! UDF volumes ([`crate::udf`]: optical/USB media) are likewise recognised and
+//! reported but carved rather than recovered from metadata. Encrypted containers
+//! ([`crate::encrypted`]: LUKS, BitLocker) are recognised so the user is told to
+//! unlock them first; nothing can be read until then.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
 use crate::source::Source;
-use crate::{apfs, btrfs, encrypted, exfat, ext4, fat, hfsplus, ntfs};
+use crate::{apfs, btrfs, encrypted, exfat, ext4, fat, hfsplus, ntfs, udf};
 
 /// Options controlling a recovery run.
 #[derive(Clone, Copy, Default)]
@@ -94,6 +96,7 @@ pub enum Volume {
     Apfs(apfs::Volume),
     Btrfs(btrfs::Volume),
     Encrypted(encrypted::Volume),
+    Udf(udf::Volume),
 }
 
 impl Volume {
@@ -108,6 +111,7 @@ impl Volume {
             Volume::Apfs(v) => v.offset,
             Volume::Btrfs(v) => v.offset,
             Volume::Encrypted(v) => v.offset,
+            Volume::Udf(v) => v.offset,
         }
     }
 
@@ -122,6 +126,7 @@ impl Volume {
             Volume::Apfs(v) => v.size(),
             Volume::Btrfs(v) => v.size(),
             Volume::Encrypted(v) => v.size(),
+            Volume::Udf(v) => v.size(),
         }
     }
 
@@ -136,6 +141,7 @@ impl Volume {
             Volume::Apfs(v) => v.fs_label().to_string(),
             Volume::Btrfs(v) => v.fs_label().to_string(),
             Volume::Encrypted(v) => v.fs_label().to_string(),
+            Volume::Udf(v) => v.fs_label().to_string(),
         }
     }
 
@@ -198,6 +204,7 @@ impl Volume {
             Volume::Apfs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Btrfs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Encrypted(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Udf(v) => v.recover_deleted(src, out_dir, opts),
         }
     }
 }
@@ -242,7 +249,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ext2/3/4, HFS+, APFS, Btrfs, or encrypted (LUKS/BitLocker) volume found");
+        bail!("no FAT, exFAT, NTFS, ext2/3/4, HFS+, APFS, Btrfs, UDF, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
@@ -328,6 +335,12 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
         if let Ok(v) = fat::Volume::parse(src, offset) {
             return Ok(Some(Volume::Fat(v)));
         }
+    }
+    // UDF carries no boot-sector signature; its marker is the Volume Recognition
+    // Sequence at sector 16, so it is checked last (and only reported, not
+    // recovered).
+    if let Some(v) = udf::detect(src, offset) {
+        return Ok(Some(Volume::Udf(v)));
     }
     Ok(None)
 }

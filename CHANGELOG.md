@@ -34,6 +34,10 @@ formats.
 - **Encrypted-volume recognition** — LUKS (LUKS1/LUKS2) and BitLocker are named
   by `info`/`list_volumes` so the user knows to unlock them first; they hold only
   ciphertext and are not recovered.
+- **UDF recognition** — UDF volumes (optical media, and many large USB drives and
+  camcorder cards) are detected via their Volume Recognition Sequence and named by
+  `info`/`list_volumes`. Their descriptor metadata is not parsed, so UDF is not
+  recovered from metadata — carving (`scan`) is the fallback, as for APFS/Btrfs.
 - **Lost/corrupt partition recovery** — `info --scan` finds volumes that have no
   partition-table entry via a whole-source signature scan, and `undelete --scan`
   / `recover --scan` recover from every volume found, in one command.
