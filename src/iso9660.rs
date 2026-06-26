@@ -10,8 +10,8 @@
 //! is present, so the long, Unicode (UCS-2) filenames that Windows-authored
 //! discs use are recovered intact. On non-Joliet discs, **Rock Ridge** `NM`
 //! entries (the POSIX-name extension used by Linux/macOS-authored media) are
-//! decoded too, so those long names are also recovered; only Rock Ridge
-//! continuation (`CE`) areas are not yet followed.
+//! decoded too, including names that spill into Rock Ridge continuation (`CE`)
+//! areas, so even very long POSIX names are recovered in full.
 //!
 //! Detection reads the **Volume Descriptor Set** at sector 16 (byte offset
 //! 32768): a series of 2048-byte descriptors each `{ type: u8, id: "CD001",
@@ -43,6 +43,8 @@ const MAX_DEPTH: usize = 64;
 const MAX_ENTRIES: u64 = 5_000_000;
 /// Largest single directory extent we will read into memory.
 const MAX_DIR_BYTES: u64 = 32 * 1024 * 1024;
+/// Most `CE` continuation areas to follow for one name (a loop guard).
+const MAX_CE_FOLLOW: usize = 8;
 
 /// A recognised ISO 9660 volume.
 pub struct Volume {
@@ -223,7 +225,10 @@ impl Volume {
                 let is_dir = rec[25] & 0x02 != 0;
                 // Prefer a Rock Ridge POSIX name (Linux/Unix discs) over the
                 // short ISO identifier; Joliet (Windows) already has long names.
-                let name = match (self.joliet, rock_ridge_name(rec, name_len)) {
+                let name = match (
+                    self.joliet,
+                    self.rock_ridge_name(src, rec, name_len, vol_end),
+                ) {
                     (false, Some(rr)) => sanitize_component(&rr),
                     _ => decode_name(name_bytes, is_dir, self.joliet),
                 };
@@ -292,41 +297,133 @@ impl Volume {
             Err(_) => stats.record_skipped(rel, len),
         }
     }
+
+    /// Extract a Rock Ridge POSIX name from a directory record's System Use area,
+    /// following `CE` continuation areas (read via `src`) when the `NM` name
+    /// overflows the record. Returns `None` when there is no Rock Ridge name (so
+    /// the caller falls back to the ISO 9660 identifier).
+    fn rock_ridge_name(
+        &self,
+        src: &Source,
+        rec: &[u8],
+        name_len: usize,
+        vol_end: u64,
+    ) -> Option<String> {
+        // The System Use area begins after the file identifier, padded so it
+        // starts on an even offset (a pad byte is present when the name length
+        // is even).
+        let start = 33 + name_len + usize::from(name_len % 2 == 0);
+        if start >= rec.len() {
+            return None;
+        }
+        let mut name = String::new();
+        let mut complete = false;
+        let mut area: Vec<u8> = rec[start..].to_vec();
+        // Parse the in-record area, then follow each `CE` continuation in turn,
+        // bounded so a self-referential chain can't loop forever.
+        for _ in 0..=MAX_CE_FOLLOW {
+            let next = scan_susp_area(&area, &mut name, &mut complete);
+            match next {
+                Some((lba, off, len)) if !complete => {
+                    let Some(buf) = self.read_continuation(src, lba, off, len, vol_end) else {
+                        break;
+                    };
+                    area = buf;
+                }
+                _ => break,
+            }
+        }
+        if name.is_empty() {
+            None
+        } else {
+            Some(name)
+        }
+    }
+
+    /// Read a SUSP continuation area: `len` bytes at byte `offset` within logical
+    /// block `lba`. `None` if it falls outside the volume or is implausibly large.
+    fn read_continuation(
+        &self,
+        src: &Source,
+        lba: u64,
+        offset: usize,
+        len: usize,
+        vol_end: u64,
+    ) -> Option<Vec<u8>> {
+        if len == 0 || len as u64 > MAX_DIR_BYTES {
+            return None;
+        }
+        let base = self.offset.checked_add(lba.checked_mul(self.block_size)?)?;
+        let start = base.checked_add(offset as u64)?;
+        if start < self.offset || start.checked_add(len as u64)? > vol_end {
+            return None;
+        }
+        let mut buf = vec![0u8; len];
+        let n = src.read_at(start, &mut buf).ok()?;
+        buf.truncate(n);
+        Some(buf)
+    }
 }
 
-/// Extract a Rock Ridge POSIX name from a directory record's System Use area, if
-/// present. Concatenates the `NM` (alternate name) SUSP entries; returns `None`
-/// when there is no Rock Ridge name (so the caller falls back to the ISO 9660
-/// identifier). Continuation areas (`CE`) are not followed.
-fn rock_ridge_name(rec: &[u8], name_len: usize) -> Option<String> {
-    // The System Use area begins after the file identifier, padded so it starts
-    // on an even offset (a pad byte is present when the name length is even).
-    let start = 33 + name_len + usize::from(name_len % 2 == 0);
-    if start >= rec.len() {
-        return None;
-    }
-    let area = &rec[start..];
-    let mut name = String::new();
+/// Scan one SUSP System Use area: append each `NM` (alternate name) fragment to
+/// `name`, and return the location of a `CE` continuation area to follow next
+/// (logical block, byte offset, length) if one is present. Sets `complete` once
+/// an `NM` entry without the CONTINUE flag ends the name, so the caller stops
+/// following continuations. An `ST` entry terminates the area early.
+fn scan_susp_area(
+    area: &[u8],
+    name: &mut String,
+    complete: &mut bool,
+) -> Option<(u64, usize, usize)> {
     let mut pos = 0usize;
+    let mut ce = None;
     while pos + 4 <= area.len() {
         let su_len = area[pos + 2] as usize;
         if su_len < 4 || pos + su_len > area.len() {
             break;
         }
-        if &area[pos..pos + 2] == b"NM" && su_len >= 5 {
-            let flags = area[pos + 4];
-            // Skip the "current" (.) and "parent" (..) name entries.
-            if flags & 0x06 == 0 {
-                name.push_str(&String::from_utf8_lossy(&area[pos + 5..pos + su_len]));
+        match &area[pos..pos + 2] {
+            b"NM" if su_len >= 5 => {
+                let flags = area[pos + 4];
+                // Skip the "current" (.) and "parent" (..) name entries.
+                if flags & 0x06 == 0 {
+                    name.push_str(&String::from_utf8_lossy(&area[pos + 5..pos + su_len]));
+                    // Bit 0 (CONTINUE) set means the name spills into a later
+                    // `NM` entry, possibly in a continuation area.
+                    if flags & 0x01 == 0 {
+                        *complete = true;
+                    }
+                }
             }
+            b"CE" if su_len >= 28 => {
+                // BLOCK LOCATION, OFFSET, and LENGTH are each 8-byte both-endian
+                // (ISO 9660 7.3.3) fields; read the little-endian half of each.
+                let lba = u32::from_le_bytes([
+                    area[pos + 4],
+                    area[pos + 5],
+                    area[pos + 6],
+                    area[pos + 7],
+                ]) as u64;
+                let off = u32::from_le_bytes([
+                    area[pos + 12],
+                    area[pos + 13],
+                    area[pos + 14],
+                    area[pos + 15],
+                ]) as usize;
+                let len = u32::from_le_bytes([
+                    area[pos + 20],
+                    area[pos + 21],
+                    area[pos + 22],
+                    area[pos + 23],
+                ]) as usize;
+                ce = Some((lba, off, len));
+            }
+            b"ST" => break,
+            _ => {}
         }
         pos += su_len;
     }
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+    ce
 }
 
 /// Decode a directory-record file identifier: UCS-2 big-endian for Joliet, else
@@ -684,6 +781,85 @@ mod tests {
         // The Rock Ridge name wins over the short NOTES.TXT.
         assert_eq!(
             std::fs::read(out.join("My Notes (draft).txt")).unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn rock_ridge_names_follow_ce_continuation() {
+        const BS: usize = 2048;
+        // sector 16 = PVD, 18 = root dir, 20 = file data, 21 = CE continuation.
+        let total = 22 * BS;
+        let mut v = vec![0u8; total];
+        let payload = b"continued name payload";
+        v[20 * BS..20 * BS + payload.len()].copy_from_slice(payload);
+
+        let part1 = b"My very "; // in the record's NM (CONTINUE set)
+        let part2 = b"long file name.txt"; // in the CE continuation area's NM
+
+        // Root (sector 18): ".", "..", then a file whose Rock Ridge name spills
+        // out of the record into a CE continuation area.
+        let mut p = 18 * BS;
+        p += put_record(&mut v, p, 18, BS as u32, true, &[0x00]);
+        p += put_record(&mut v, p, 18, BS as u32, true, &[0x01]);
+
+        // Build the file record by hand: short name + NM(CONTINUE, part1) + CE.
+        let name: &[u8] = b"LONG.TXT;1";
+        let su = 33 + name.len() + (name.len() % 2 == 0) as usize;
+        let nm_len = 5 + part1.len();
+        let body = su + nm_len + 28; // + a 28-byte CE entry
+        let rec_len = body + (body % 2);
+        let at = p;
+        v[at] = rec_len as u8;
+        v[at + 2..at + 6].copy_from_slice(&20u32.to_le_bytes());
+        v[at + 10..at + 14].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        v[at + 32] = name.len() as u8;
+        v[at + 33..at + 33 + name.len()].copy_from_slice(name);
+        // NM (CONTINUE) entry holding the first half of the name.
+        let e = at + su;
+        v[e] = b'N';
+        v[e + 1] = b'M';
+        v[e + 2] = nm_len as u8;
+        v[e + 3] = 1;
+        v[e + 4] = 0x01; // CONTINUE: the name spills into the next NM
+        v[e + 5..e + 5 + part1.len()].copy_from_slice(part1);
+        // CE entry pointing at sector 21, offset 0, covering the trailing NM.
+        let c = e + nm_len;
+        let cont_len = 5 + part2.len();
+        v[c] = b'C';
+        v[c + 1] = b'E';
+        v[c + 2] = 28;
+        v[c + 3] = 1;
+        v[c + 4..c + 8].copy_from_slice(&21u32.to_le_bytes()); // BLOCK LOCATION (LE half)
+        v[c + 12..c + 16].copy_from_slice(&0u32.to_le_bytes()); // OFFSET (LE half)
+        v[c + 20..c + 24].copy_from_slice(&(cont_len as u32).to_le_bytes()); // LENGTH (LE half)
+
+        // Continuation area (sector 21, offset 0): the trailing NM (no CONTINUE).
+        let k = 21 * BS;
+        v[k] = b'N';
+        v[k + 1] = b'M';
+        v[k + 2] = cont_len as u8;
+        v[k + 3] = 1;
+        v[k + 4] = 0x00;
+        v[k + 5..k + 5 + part2.len()].copy_from_slice(part2);
+
+        // PVD (sector 16), no Joliet SVD.
+        let off = put_descriptor(&mut v, 0, PRIMARY);
+        v[off + 80..off + 84].copy_from_slice(&22u32.to_le_bytes());
+        v[off + 128..off + 130].copy_from_slice(&(BS as u16).to_le_bytes());
+        put_record(&mut v, off + 156, 18, BS as u32, true, &[0x00]);
+
+        let (tmp, src) = source_of(&v);
+        let vol = detect(&src, 0).unwrap();
+        let out = tmp.path().join("out");
+        let stats = vol
+            .recover_deleted(&src, &out, &RecoverOptions::default())
+            .unwrap();
+
+        assert_eq!(stats.recovered, 1);
+        // The full name is reassembled from the record's NM and the CE area's NM.
+        assert_eq!(
+            std::fs::read(out.join("My very long file name.txt")).unwrap(),
             payload
         );
     }
