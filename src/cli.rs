@@ -235,6 +235,12 @@ pub struct RecoverArgs {
     #[arg(long, value_name = "DATE", value_parser = filerecovery::times::parse_date)]
     pub modified_before: Option<std::time::SystemTime>,
 
+    /// Only recover files whose name matches this glob (the undelete pass),
+    /// case-insensitive `*`/`?`. Repeatable or comma-separated, e.g.
+    /// `--name '*.jpg,*.png'`.
+    #[arg(long = "name", value_name = "GLOB", value_delimiter = ',')]
+    pub names: Vec<String>,
+
     /// Only carve files starting on a multiple of this many bytes (e.g. 512 or
     /// 4K). Cuts false positives, since real files start on cluster boundaries.
     #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 1)]
@@ -342,6 +348,11 @@ pub struct UndeleteArgs {
     /// Only recover files modified at/before this UTC date.
     #[arg(long, value_name = "DATE", value_parser = filerecovery::times::parse_date)]
     pub modified_before: Option<std::time::SystemTime>,
+
+    /// Only recover files whose name matches this glob (case-insensitive `*`/`?`).
+    /// Repeatable or comma-separated, e.g. `--name '*.jpg,*.png'`.
+    #[arg(long = "name", value_name = "GLOB", value_delimiter = ',')]
+    pub names: Vec<String>,
 
     /// List what would be recovered without writing any files.
     #[arg(long)]

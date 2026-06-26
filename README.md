@@ -360,6 +360,7 @@ partition table). Override the location with `--offset <BYTES>` if needed.
     --max-size <SIZE>  Skip deleted files larger than this
     --modified-after <DATE>   Only files modified on/after this UTC date
     --modified-before <DATE>  Only files modified on/before this UTC date
+    --name <GLOB>      Only files whose name matches this glob (*/?), repeatable
     --dry-run          List what would be recovered without writing any files
     --report <FILE>    Write a report of what was found (.json => JSON, else CSV)
     --summary <FILE>   Write a run summary (.json => JSON, else text)
@@ -412,10 +413,11 @@ you get the named files plus the extras carving finds, without duplicate copies.
 Accepts `--type`, `--min-size`, `--max-size` (both size bounds apply to the
 undelete *and* carving passes), `--modified-after`/`--modified-before` (filter
 the undelete pass by each file's modification date — accepts `YYYY-MM-DD` or
-`YYYY-MM-DDTHH:MM:SS`, UTC), `--align` (carve only sector/cluster-aligned
-files), `--organize` (group `carved/` by type), `--offset` (volume offset for
-the undelete pass), and `--dry-run` (preview both passes — counts, sizes, and
-the `--report` manifest — without writing anything).
+`YYYY-MM-DDTHH:MM:SS`, UTC), `--name` (recover only files whose name matches a
+glob, e.g. `--name '*.jpg,*.png'` — undelete pass), `--align` (carve only
+sector/cluster-aligned files), `--organize` (group `carved/` by type),
+`--offset` (volume offset for the undelete pass), and `--dry-run` (preview both
+passes — counts, sizes, and the `--report` manifest — without writing anything).
 
 Add `--unallocated` to carve **only the volume's free space**, skipping clusters
 still allocated to live files — so `carved/` holds deleted content with far less

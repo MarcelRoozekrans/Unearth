@@ -79,6 +79,12 @@ formats.
 - **`recover --dry-run`** previews both passes (filesystem undelete and carving)
   without writing any files, so dry-run is now available on `scan`, `undelete`,
   and `recover` alike.
+- **Name/glob filtering** — `--name <GLOB>` (on `undelete` and `recover`, and the
+  MCP `undelete` tool) recovers only files whose name matches a case-insensitive
+  glob (`*` and `?`); repeatable or comma-separated (`--name '*.jpg,*.png'`), and
+  a file is kept if it matches any pattern. Applies to every undelete backend
+  (FAT, exFAT, NTFS, ext, HFS+) and to ISO 9660 file extraction. Completes the
+  recovery filter family alongside `--min-size`/`--max-size` and the time bounds.
 - **Time-range filtering** — `--modified-after` and `--modified-before` (on
   `undelete` and `recover`, and the MCP `undelete` tool) restrict the undelete
   pass to files whose modification time falls in a window, e.g. `--modified-after

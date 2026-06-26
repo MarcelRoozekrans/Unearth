@@ -173,6 +173,7 @@ fn bench_undelete(c: &mut Criterion) {
                     max_size: None,
                     modified_after: None,
                     modified_before: None,
+                    names: Vec::new(),
                     dry_run: false,
                 };
                 let volumes = recover::detect(&source).unwrap();

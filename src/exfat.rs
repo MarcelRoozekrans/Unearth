@@ -266,6 +266,9 @@ impl Volume {
             if !opts.time_ok(df.mtime) {
                 continue;
             }
+            if !opts.name_ok(crate::recover::file_name_of(&df.path)) {
+                continue;
+            }
             if !self.valid_extent(&df) {
                 stats.record_skipped(df.path.clone(), df.data_length);
                 continue;

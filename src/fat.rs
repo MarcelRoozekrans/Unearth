@@ -380,6 +380,9 @@ impl Volume {
             if !opts.time_ok(df.mtime) {
                 continue;
             }
+            if !opts.name_ok(crate::recover::file_name_of(&df.path)) {
+                continue;
+            }
             // Validate before trusting the entry's cluster/size fields.
             if df.size == 0 || df.start_cluster < 2 || df.start_cluster > self.max_valid_cluster() {
                 stats.record_skipped(df.path.clone(), df.size as u64);

@@ -61,6 +61,7 @@ fn dry_run_reports_without_writing() {
         max_size: None,
         modified_after: None,
         modified_before: None,
+        names: Vec::new(),
         dry_run: true,
     };
     let stats = vols[0].recover_deleted(&src, &out, &opts).unwrap();

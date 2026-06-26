@@ -24,7 +24,7 @@ use crate::source::Source;
 use crate::{apfs, btrfs, encrypted, exfat, ext4, fat, hfsplus, iso9660, ntfs, udf};
 
 /// Options controlling a recovery run.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct RecoverOptions {
     /// Ignore deleted files smaller than this many bytes.
     pub min_size: u64,
@@ -34,11 +34,21 @@ pub struct RecoverOptions {
     pub modified_after: Option<SystemTime>,
     /// Only recover files modified at or before this time (`None` = no bound).
     pub modified_before: Option<SystemTime>,
+    /// Only recover files whose name matches one of these glob patterns
+    /// (case-insensitive, `*` and `?`). Empty means no name filter.
+    pub names: Vec<String>,
     /// Report what would be recovered without writing any files.
     pub dry_run: bool,
 }
 
 impl RecoverOptions {
+    /// Whether a file named `name` matches the configured name filters. With no
+    /// patterns set, every name passes; otherwise the name must match at least
+    /// one glob.
+    pub fn name_ok(&self, name: &str) -> bool {
+        self.names.is_empty() || self.names.iter().any(|p| glob_match(p, name))
+    }
+
     /// Whether a file modified at `mtime` falls within the configured time
     /// window. A file whose timestamp is unknown (`None`) is kept, so a filter
     /// never silently drops files a filesystem can't date (e.g. a wiped inode).
@@ -59,6 +69,43 @@ impl RecoverOptions {
     pub fn size_ok(&self, size: u64) -> bool {
         size >= self.min_size && self.max_size.map_or(true, |max| size <= max)
     }
+}
+
+/// The final path component of `p` as a string (empty if it has none). Used to
+/// match a recovered file's name against the `--name` filters.
+pub fn file_name_of(p: &Path) -> &str {
+    p.file_name().and_then(|s| s.to_str()).unwrap_or("")
+}
+
+/// Case-insensitive glob match supporting `*` (any run, including empty) and `?`
+/// (exactly one character). Used for the `--name` recovery filter.
+fn glob_match(pattern: &str, name: &str) -> bool {
+    let pat: Vec<char> = pattern.to_lowercase().chars().collect();
+    let txt: Vec<char> = name.to_lowercase().chars().collect();
+    // Iterative backtracking: `star` remembers the last `*` position so we can
+    // retry matching it against one more character on a mismatch.
+    let (mut p, mut t) = (0usize, 0usize);
+    let (mut star, mut mark) = (None, 0usize);
+    while t < txt.len() {
+        if p < pat.len() && (pat[p] == '?' || pat[p] == txt[t]) {
+            p += 1;
+            t += 1;
+        } else if p < pat.len() && pat[p] == '*' {
+            star = Some(p);
+            mark = t;
+            p += 1;
+        } else if let Some(sp) = star {
+            p = sp + 1;
+            mark += 1;
+            t = mark;
+        } else {
+            return false;
+        }
+    }
+    while p < pat.len() && pat[p] == '*' {
+        p += 1;
+    }
+    p == pat.len()
 }
 
 /// One file the recovery considered, for reporting.
@@ -483,5 +530,36 @@ mod tests {
         assert!(windowed.size_ok(100), "the floor is inclusive");
         assert!(windowed.size_ok(1000), "the cap is inclusive");
         assert!(!windowed.size_ok(1001), "above the cap is rejected");
+    }
+
+    #[test]
+    fn glob_match_handles_stars_and_question_marks() {
+        use super::glob_match;
+        assert!(glob_match("*.jpg", "photo.jpg"));
+        assert!(glob_match("*.JPG", "photo.jpg"), "case-insensitive");
+        assert!(glob_match("IMG_???.png", "img_042.png"));
+        assert!(glob_match("*", "anything"));
+        assert!(glob_match("a*b*c", "axxbyyc"));
+        assert!(glob_match("report.pdf", "report.pdf"));
+        assert!(!glob_match("*.jpg", "photo.png"));
+        assert!(!glob_match("IMG_???.png", "img_42.png"), "? is exactly one");
+        assert!(!glob_match("a*b", "axxc"));
+    }
+
+    #[test]
+    fn name_ok_matches_any_pattern_or_passes_when_empty() {
+        let none = RecoverOptions::default();
+        assert!(
+            none.name_ok("whatever.bin"),
+            "no patterns: everything passes"
+        );
+
+        let filtered = RecoverOptions {
+            names: vec!["*.jpg".to_string(), "*.png".to_string()],
+            ..Default::default()
+        };
+        assert!(filtered.name_ok("a.jpg"));
+        assert!(filtered.name_ok("b.PNG"));
+        assert!(!filtered.name_ok("c.gif"));
     }
 }

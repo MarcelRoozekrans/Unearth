@@ -265,7 +265,7 @@ impl Volume {
         opts: &RecoverOptions,
         stats: &mut RecoverStats,
     ) {
-        if !opts.size_ok(len) {
+        if !opts.size_ok(len) || !opts.name_ok(crate::recover::file_name_of(&rel)) {
             return;
         }
         // Validate the data extent before trusting it.
