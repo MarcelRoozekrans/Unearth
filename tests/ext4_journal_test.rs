@@ -177,6 +177,7 @@ fn recovers_via_journal_when_live_inode_zeroed() {
                 modified_after: None,
                 modified_before: None,
                 names: Vec::new(),
+                exclude_names: Vec::new(),
                 dry_run: true,
             },
         )

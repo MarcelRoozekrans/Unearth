@@ -44,3 +44,30 @@ fn name_glob_includes_and_excludes() {
         1
     );
 }
+
+fn recovered_excluding(src: &Source, out: &std::path::Path, exclude: &[&str]) -> u64 {
+    let opts = RecoverOptions {
+        exclude_names: exclude.iter().map(|s| s.to_string()).collect(),
+        ..Default::default()
+    };
+    recover::detect(src).unwrap()[0]
+        .recover_deleted(src, out, &opts)
+        .unwrap()
+        .recovered
+}
+
+#[test]
+fn exclude_name_drops_matching_files() {
+    let (tmp, src) = source_of("notes.txt");
+
+    // Exclude a non-matching glob: still recovered.
+    assert_eq!(
+        recovered_excluding(&src, &tmp.path().join("a"), &["*.jpg"]),
+        1
+    );
+    // Exclude a matching glob: dropped.
+    assert_eq!(
+        recovered_excluding(&src, &tmp.path().join("b"), &["*.txt"]),
+        0
+    );
+}

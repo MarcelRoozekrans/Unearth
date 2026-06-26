@@ -37,16 +37,21 @@ pub struct RecoverOptions {
     /// Only recover files whose name matches one of these glob patterns
     /// (case-insensitive, `*` and `?`). Empty means no name filter.
     pub names: Vec<String>,
+    /// Skip files whose name matches one of these glob patterns (applied after
+    /// `names`). Empty means no exclusion.
+    pub exclude_names: Vec<String>,
     /// Report what would be recovered without writing any files.
     pub dry_run: bool,
 }
 
 impl RecoverOptions {
-    /// Whether a file named `name` matches the configured name filters. With no
-    /// patterns set, every name passes; otherwise the name must match at least
-    /// one glob.
+    /// Whether a file named `name` passes the name filters: it must match an
+    /// include pattern (or there are none) and must not match any exclude
+    /// pattern.
     pub fn name_ok(&self, name: &str) -> bool {
-        self.names.is_empty() || self.names.iter().any(|p| glob_match(p, name))
+        let included = self.names.is_empty() || self.names.iter().any(|p| glob_match(p, name));
+        let excluded = self.exclude_names.iter().any(|p| glob_match(p, name));
+        included && !excluded
     }
 
     /// Whether a file modified at `mtime` falls within the configured time
@@ -561,5 +566,30 @@ mod tests {
         assert!(filtered.name_ok("a.jpg"));
         assert!(filtered.name_ok("b.PNG"));
         assert!(!filtered.name_ok("c.gif"));
+    }
+
+    #[test]
+    fn name_ok_applies_excludes() {
+        // Exclude-only: everything passes except matches.
+        let ex = RecoverOptions {
+            exclude_names: vec!["*.tmp".to_string(), "Thumbs.db".to_string()],
+            ..Default::default()
+        };
+        assert!(ex.name_ok("photo.jpg"));
+        assert!(!ex.name_ok("cache.tmp"));
+        assert!(!ex.name_ok("thumbs.db"), "case-insensitive exclude");
+
+        // Excludes are applied after includes (exclude wins on overlap).
+        let both = RecoverOptions {
+            names: vec!["*.txt".to_string()],
+            exclude_names: vec!["draft*".to_string()],
+            ..Default::default()
+        };
+        assert!(both.name_ok("notes.txt"));
+        assert!(
+            !both.name_ok("draft.txt"),
+            "excluded even though it matches include"
+        );
+        assert!(!both.name_ok("photo.jpg"), "not an include match");
     }
 }
