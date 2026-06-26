@@ -287,6 +287,31 @@ fn info(args: InfoArgs) -> Result<()> {
             json_escape(&args.source.display().to_string())
         ));
         out.push_str(&format!("  \"source_bytes\": {},\n", source.size));
+        let table = filerecovery::partition::read(&source);
+        out.push_str(&format!(
+            "  \"partition_scheme\": \"{}\",\n",
+            partition_scheme_str(table.scheme)
+        ));
+        out.push_str("  \"partitions\": [");
+        for (i, p) in table.partitions.iter().enumerate() {
+            let name = match &p.name {
+                Some(n) => format!("\"{}\"", json_escape(n)),
+                None => "null".to_string(),
+            };
+            out.push_str(&format!(
+                "{}\n    {{\"type\": \"{}\", \"name\": {}, \"start\": {}, \"size\": {}}}",
+                if i == 0 { "" } else { "," },
+                json_escape(&p.kind),
+                name,
+                p.start,
+                p.size,
+            ));
+        }
+        out.push_str(if table.partitions.is_empty() {
+            "],\n"
+        } else {
+            "\n  ],\n"
+        });
         if vols.is_empty() {
             out.push_str("  \"volumes\": []\n");
         } else {
@@ -352,6 +377,29 @@ fn info(args: InfoArgs) -> Result<()> {
         args.source.display(),
         human_bytes(source.size)
     );
+
+    let table = filerecovery::partition::read(&source);
+    if !table.partitions.is_empty() {
+        println!(
+            "\nPartition table: {}",
+            partition_scheme_str(table.scheme).to_uppercase()
+        );
+        for (i, p) in table.partitions.iter().enumerate() {
+            let name = p
+                .name
+                .as_deref()
+                .map(|n| format!(" \"{n}\""))
+                .unwrap_or_default();
+            println!(
+                "  {:<3} {:<22} {:>12} {}{}",
+                i,
+                p.kind,
+                p.start,
+                human_bytes(p.size),
+                name
+            );
+        }
+    }
 
     let volumes = match detected {
         Ok(v) => v,
@@ -504,6 +552,16 @@ fn list_types() {
 
     println!("\nSelect one type with --type <EXT>, or a whole category with --type <CATEGORY>");
     println!("(categories: image, audio, video, document, archive, executable, font, system).");
+}
+
+/// Lowercase name of a partitioning scheme for output.
+fn partition_scheme_str(scheme: filerecovery::partition::Scheme) -> &'static str {
+    use filerecovery::partition::Scheme;
+    match scheme {
+        Scheme::Gpt => "gpt",
+        Scheme::Mbr => "mbr",
+        Scheme::None => "none",
+    }
 }
 
 /// Pick the detected volume at index `n` (as listed by `info`), erroring with a

@@ -261,6 +261,13 @@ filerecovery info disk.img --json      # machine-readable layout for scripting
 filerecovery info disk.img --scan      # find lost partitions (whole-disk signature scan)
 ```
 
+The **partition table** is shown first when present: the scheme (GPT or MBR) and
+each entry's type (a friendly name for known GPT type GUIDs / MBR type bytes, or
+the raw GUID/`0xNN` otherwise), its GPT name, and its byte range. This surfaces
+the on-disk layout even for partitions whose filesystem isn't recovered (an EFI
+System Partition, a swap partition, an empty slot). `--json` adds
+`partition_scheme` and a `partitions` array.
+
 Each volume's **label** (its user-set name) is shown when set — for FAT,
 exFAT, NTFS, ext, and Btrfs (the text view prints it on a `label:` line under
 the volume; `--json` includes a `label` field).
