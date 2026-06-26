@@ -270,6 +270,13 @@ the on-disk layout even for partitions whose filesystem isn't recovered (an EFI
 System Partition, a swap partition, an empty slot). `--json` adds
 `partition_scheme` and a `partitions` array.
 
+For GPT disks, if the **primary** header (LBA 1) is missing or corrupt — e.g.
+the first sectors were overwritten — the layout is recovered from the **backup
+GPT** header and entry array that the spec keeps at the end of the disk. The
+text view notes this (`recovered from backup header; primary GPT is missing or
+corrupt`) and `--json` / the MCP `list_volumes` tool add a `gpt_from_backup`
+flag.
+
 Each volume's **label** (its user-set name) is shown when set — for FAT,
 exFAT, NTFS, ext, and Btrfs (the text view prints it on a `label:` line under
 the volume; `--json` includes a `label` field).

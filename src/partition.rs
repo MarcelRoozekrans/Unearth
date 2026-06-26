@@ -5,6 +5,10 @@
 //! (GPT or MBR) and each entry's type, name, and byte range — so a user can see
 //! the on-disk layout even for partitions whose filesystem isn't recovered
 //! (e.g. an EFI System Partition, a swap partition, or an empty slot).
+//!
+//! For GPT, if the primary header (LBA 1) is missing or corrupt the layout is
+//! read from the backup header and entry array at the end of the disk, with
+//! [`Table::from_backup`] set so callers can flag it.
 
 use crate::source::Source;
 
@@ -34,6 +38,10 @@ pub struct Partition {
 pub struct Table {
     pub scheme: Scheme,
     pub partitions: Vec<Partition>,
+    /// True when a GPT was read from the **backup** header at the end of the
+    /// disk because the primary header (LBA 1) was missing or corrupt. Always
+    /// `false` for MBR or when the primary GPT was used.
+    pub from_backup: bool,
 }
 
 /// Read the partition table of `src`: GPT if a protective header is present,
@@ -48,48 +56,74 @@ pub fn read(src: &Source) -> Table {
     Table {
         scheme: Scheme::None,
         partitions: Vec::new(),
+        from_backup: false,
     }
 }
 
+/// Read a GPT, preferring the primary header at LBA 1 but falling back to the
+/// backup header at the last LBA when the primary is missing or corrupt (e.g.
+/// the first sectors were overwritten). Tries 512- and 4096-byte sectors.
 fn read_gpt(src: &Source) -> Option<Table> {
     for sector_size in [512u64, 4096] {
-        let mut hdr = [0u8; 92];
-        if src.read_at(sector_size, &mut hdr).ok()? < 92 || &hdr[0..8] != b"EFI PART" {
-            continue;
-        }
-        let entry_lba = u64::from_le_bytes(hdr[72..80].try_into().unwrap());
-        let num_entries = (u32::from_le_bytes(hdr[80..84].try_into().unwrap()) as u64).min(1024);
-        let entry_size = u32::from_le_bytes(hdr[84..88].try_into().unwrap()) as u64;
-        if !(128..=4096).contains(&entry_size) {
-            continue;
-        }
-        let array_start = entry_lba.checked_mul(sector_size)?;
-        let mut partitions = Vec::new();
-        let mut entry = vec![0u8; entry_size as usize];
-        for i in 0..num_entries {
-            let off = array_start + i * entry_size;
-            if src.read_at(off, &mut entry).ok()? < entry_size as usize {
-                break;
-            }
-            if entry[0..16].iter().all(|&b| b == 0) {
-                continue; // unused slot
-            }
-            let first = u64::from_le_bytes(entry[32..40].try_into().unwrap());
-            let last = u64::from_le_bytes(entry[40..48].try_into().unwrap());
-            let size = last.saturating_sub(first).saturating_add(1) * sector_size;
-            partitions.push(Partition {
-                kind: gpt_type_name(&entry[0..16]),
-                name: gpt_name(&entry[56..entry_size.min(128) as usize]),
-                start: first * sector_size,
-                size,
+        // Primary GPT header sits at LBA 1.
+        if let Some(partitions) = parse_gpt_at(src, sector_size, sector_size) {
+            return Some(Table {
+                scheme: Scheme::Gpt,
+                partitions,
+                from_backup: false,
             });
         }
-        return Some(Table {
-            scheme: Scheme::Gpt,
-            partitions,
-        });
+        // Backup GPT header sits at the last LBA of the disk.
+        if let Some(backup_off) = src.size.checked_sub(sector_size) {
+            if let Some(partitions) = parse_gpt_at(src, sector_size, backup_off) {
+                return Some(Table {
+                    scheme: Scheme::Gpt,
+                    partitions,
+                    from_backup: true,
+                });
+            }
+        }
     }
     None
+}
+
+/// Parse a GPT header located at byte offset `hdr_off` and read its partition
+/// entries (the header's own `PartitionEntryLBA` field locates the array, so
+/// this works for both the primary and the backup header). `None` if there is
+/// no valid `EFI PART` header there.
+fn parse_gpt_at(src: &Source, sector_size: u64, hdr_off: u64) -> Option<Vec<Partition>> {
+    let mut hdr = [0u8; 92];
+    if src.read_at(hdr_off, &mut hdr).ok()? < 92 || &hdr[0..8] != b"EFI PART" {
+        return None;
+    }
+    let entry_lba = u64::from_le_bytes(hdr[72..80].try_into().unwrap());
+    let num_entries = (u32::from_le_bytes(hdr[80..84].try_into().unwrap()) as u64).min(1024);
+    let entry_size = u32::from_le_bytes(hdr[84..88].try_into().unwrap()) as u64;
+    if !(128..=4096).contains(&entry_size) {
+        return None;
+    }
+    let array_start = entry_lba.checked_mul(sector_size)?;
+    let mut partitions = Vec::new();
+    let mut entry = vec![0u8; entry_size as usize];
+    for i in 0..num_entries {
+        let off = array_start + i * entry_size;
+        if src.read_at(off, &mut entry).ok()? < entry_size as usize {
+            break;
+        }
+        if entry[0..16].iter().all(|&b| b == 0) {
+            continue; // unused slot
+        }
+        let first = u64::from_le_bytes(entry[32..40].try_into().unwrap());
+        let last = u64::from_le_bytes(entry[40..48].try_into().unwrap());
+        let size = last.saturating_sub(first).saturating_add(1) * sector_size;
+        partitions.push(Partition {
+            kind: gpt_type_name(&entry[0..16]),
+            name: gpt_name(&entry[56..entry_size.min(128) as usize]),
+            start: first * sector_size,
+            size,
+        });
+    }
+    Some(partitions)
 }
 
 fn read_mbr(src: &Source) -> Option<Table> {
@@ -119,6 +153,7 @@ fn read_mbr(src: &Source) -> Option<Table> {
     Some(Table {
         scheme: Scheme::Mbr,
         partitions,
+        from_backup: false,
     })
 }
 
@@ -265,9 +300,42 @@ mod tests {
         let (_t, src) = source_of(&disk);
         let table = read(&src);
         assert_eq!(table.scheme, Scheme::Gpt);
+        assert!(!table.from_backup, "primary header was used");
         assert_eq!(table.partitions.len(), 1);
         assert_eq!(table.partitions[0].kind, "EFI System");
         assert_eq!(table.partitions[0].name.as_deref(), Some("EFI"));
+        assert_eq!(table.partitions[0].start, 34 * 512);
+    }
+
+    #[test]
+    fn falls_back_to_backup_gpt_header() {
+        const SS: usize = 512;
+        let sectors = 64usize;
+        let mut disk = vec![0u8; sectors * SS];
+        // The primary GPT header (LBA 1) is wiped: no "EFI PART" there. The
+        // backup header lives at the last LBA and points to its own entry array.
+        let b = (sectors - 1) * SS;
+        disk[b..b + 8].copy_from_slice(b"EFI PART");
+        disk[b + 72..b + 80].copy_from_slice(&((sectors as u64) - 3).to_le_bytes()); // array LBA
+        disk[b + 80..b + 84].copy_from_slice(&1u32.to_le_bytes()); // 1 entry
+        disk[b + 84..b + 88].copy_from_slice(&128u32.to_le_bytes()); // entry size
+
+        // Backup entry array (LBA 61): one EFI System entry, LBAs 34..=2081.
+        let e = (sectors - 3) * SS;
+        let efi = [
+            0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11, 0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E,
+            0xC9, 0x3B,
+        ];
+        disk[e..e + 16].copy_from_slice(&efi);
+        disk[e + 32..e + 40].copy_from_slice(&34u64.to_le_bytes());
+        disk[e + 40..e + 48].copy_from_slice(&2081u64.to_le_bytes());
+
+        let (_t, src) = source_of(&disk);
+        let table = read(&src);
+        assert_eq!(table.scheme, Scheme::Gpt);
+        assert!(table.from_backup, "primary missing, backup header used");
+        assert_eq!(table.partitions.len(), 1);
+        assert_eq!(table.partitions[0].kind, "EFI System");
         assert_eq!(table.partitions[0].start, 34 * 512);
     }
 

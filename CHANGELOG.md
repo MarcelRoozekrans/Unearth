@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **GPT backup-header fallback** — when a disk's primary GPT header (LBA 1) is
+  missing or corrupt (e.g. its first sectors were overwritten), `info` /
+  `list_volumes` now recover the partition layout from the **backup** GPT header
+  and entry array kept at the end of the disk, instead of showing no table. The
+  text view flags this (`recovered from backup header; …`) and `--json` / the
+  MCP `list_volumes` tool add a `gpt_from_backup` boolean.
 - **`triage` flags corrupt/truncated files** — a recovered file whose extension
   names a type with a known magic signature, but whose content matches no
   signature at all (a destroyed or truncated header, or a mislabelled blob).
