@@ -252,6 +252,15 @@ fn list_volumes_and_undelete_tools() {
     assert!(free.is_some(), "ext should report numeric free_bytes");
     let size = vols[0].get("size").unwrap().as_u64().unwrap();
     assert!(free.unwrap() <= size, "free cannot exceed volume size");
+    // A bare volume (no partition table) reports scheme "none" and no partitions.
+    assert_eq!(
+        volumes.get("partition_scheme").unwrap().as_str(),
+        Some("none")
+    );
+    assert_eq!(
+        volumes.get("partitions").unwrap().as_array().unwrap().len(),
+        0
+    );
 
     let undelete = tool_result(&resps[1]);
     assert_eq!(undelete.get("recovered").unwrap().as_u64(), Some(1));
@@ -323,4 +332,34 @@ fn list_volumes_scan_finds_a_lost_partition() {
         Some("ext2/3/4")
     );
     assert_eq!(vols[0].get("offset").unwrap().as_u64(), Some(MIB as u64));
+}
+
+#[test]
+fn list_volumes_reports_the_partition_table() {
+    // An MBR with one Linux partition entry (no real filesystem inside).
+    let mut disk = vec![0u8; 8192];
+    disk[510] = 0x55;
+    disk[511] = 0xAA;
+    let e = 446;
+    disk[e + 4] = 0x83; // Linux
+    disk[e + 8..e + 12].copy_from_slice(&2048u32.to_le_bytes());
+    disk[e + 12..e + 16].copy_from_slice(&100u32.to_le_bytes());
+
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("mbr.img");
+    std::fs::write(&path, &disk).unwrap();
+
+    let lv = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"list_volumes","arguments":{{"source":"{}"}}}}}}"#,
+        path.display()
+    );
+    let result = tool_result(&session(&[&lv])[0]);
+    assert_eq!(
+        result.get("partition_scheme").unwrap().as_str(),
+        Some("mbr")
+    );
+    let parts = result.get("partitions").unwrap().as_array().unwrap();
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0].get("type").unwrap().as_str(), Some("Linux"));
+    assert_eq!(parts[0].get("start").unwrap().as_u64(), Some(2048 * 512));
 }
