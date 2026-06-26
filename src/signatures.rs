@@ -1451,6 +1451,15 @@ pub fn category_of(ext: &str) -> Category {
     }
 }
 
+/// Whether the signature table carves this extension directly — i.e. the type
+/// has a magic number we recognise at the start of a file. This deliberately
+/// excludes container subtypes that are only resolved from content: `docx` /
+/// `xlsx` / `epub` (a ZIP) and `doc` / `xls` / `msg` (an OLE2 container) are
+/// listed in the table as `zip` / `ole`, so they return `false` here.
+pub fn has_signature(ext: &str) -> bool {
+    SIGNATURES.iter().any(|s| s.ext == ext)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

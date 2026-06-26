@@ -847,6 +847,9 @@ fn triage_summarizes_a_directory() {
     assert!(json.contains("\"total_files\":3"), "{json}");
     assert!(json.contains("\"duplicate_sets\":1"), "{json}");
     assert!(json.contains("\"jpg\""), "{json}");
+    // The mismatch/corrupt arrays are always present; these files have no valid
+    // JPEG/PNG magic, so they show up under "corrupt".
+    assert!(json.contains("\"corrupt\""), "{json}");
 }
 
 #[test]

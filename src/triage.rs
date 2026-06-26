@@ -30,6 +30,16 @@ pub struct Mismatch {
     pub detected: String,
 }
 
+/// A file whose extension names a type with a known magic signature, but whose
+/// content matches no signature at all — a truncated or corrupted header (or a
+/// mislabel of an unidentifiable blob).
+pub struct Corrupt {
+    /// Path relative to the triaged directory.
+    pub path: String,
+    /// The file's extension (lower-cased), e.g. `jpg`.
+    pub claimed: String,
+}
+
 /// The result of triaging a directory.
 #[derive(Default)]
 pub struct Summary {
@@ -47,6 +57,9 @@ pub struct Summary {
     pub duplicate_bytes: u64,
     /// Files whose content type doesn't match their extension.
     pub mismatches: Vec<Mismatch>,
+    /// Files whose extension names a known type but whose content matches no
+    /// signature — likely truncated or corrupted.
+    pub corrupt: Vec<Corrupt>,
 }
 
 impl Summary {
@@ -96,13 +109,23 @@ pub fn summarize(dir: &Path, top_n: usize) -> Result<Summary> {
             .to_string_lossy()
             .into_owned();
 
-        // Flag a file whose content is a different (known) type than its name.
-        if let Some(detected) = content_mismatch(&ext, &head) {
-            summary.mismatches.push(Mismatch {
-                path: rel.clone(),
-                claimed: ext.clone(),
-                detected,
-            });
+        // Compare the file's content with the type its extension claims: flag a
+        // type mismatch (content is a different known type) or a corrupt file
+        // (extension names a signatured type but the content matches nothing).
+        // Empty files are reported separately, so skip the content check there.
+        if !head.is_empty() {
+            match classify_content(&ext, &head) {
+                Content::Mismatch(detected) => summary.mismatches.push(Mismatch {
+                    path: rel.clone(),
+                    claimed: ext.clone(),
+                    detected,
+                }),
+                Content::Corrupt => summary.corrupt.push(Corrupt {
+                    path: rel.clone(),
+                    claimed: ext.clone(),
+                }),
+                Content::Ok => {}
+            }
         }
 
         let stat = summary.by_type.entry(ext).or_default();
@@ -167,19 +190,39 @@ fn hash_file(path: &Path) -> Result<(u64, [u8; 32], Vec<u8>)> {
     Ok((size, hasher.finalize(), head))
 }
 
-/// Detect a content/extension mismatch: when a file's extension names a known
-/// type but its bytes identify as a *different* known type. Returns the detected
-/// type. Extensions we don't recognise (or content we can't identify) are not
-/// flagged, so generic blobs and unknown formats never produce noise. Common
-/// aliases (`jpeg`→`jpg`, `mov`→`mp4`, …) are normalised first.
-fn content_mismatch(claimed_ext: &str, head: &[u8]) -> Option<String> {
-    use crate::signatures::Category;
+/// How a file's content compares with the type its extension claims.
+enum Content {
+    /// Not a verifiable type, or the content matches the extension — no issue.
+    Ok,
+    /// Content identifies as a *different* known type (the detected extension).
+    Mismatch(String),
+    /// The extension names a type with a known magic signature, but the content
+    /// matches no signature — a truncated/corrupted header (or a mislabel).
+    Corrupt,
+}
+
+/// Classify a file by comparing its leading bytes with the type its extension
+/// claims. Common aliases (`jpeg`→`jpg`, `mov`→`mp4`, …) are normalised first.
+/// Extensions we don't recognise are never flagged, so generic blobs and
+/// unknown formats produce no noise. A *mismatch* (different known type) is
+/// reported for any recognised category; a *corrupt* verdict is reserved for
+/// extensions with a direct magic signature, so unidentifiable-but-plausible
+/// container subtypes (`docx`, `msg`, …) aren't called corrupt.
+fn classify_content(claimed_ext: &str, head: &[u8]) -> Content {
+    use crate::signatures::{category_of, has_signature, Category};
     let canon = canonical_ext(claimed_ext);
-    if crate::signatures::category_of(canon) == Category::Other {
-        return None; // not a type we recognise from the extension
+    let known = category_of(canon) != Category::Other;
+    let signatured = has_signature(canon);
+    if !known && !signatured {
+        return Content::Ok; // not a type we can verify from content
     }
-    let detected = crate::identify::identify(head)?;
-    (detected.ext != canon).then(|| detected.ext.to_string())
+    match crate::identify::identify(head) {
+        Some(d) if d.ext == canon => Content::Ok,
+        Some(d) if known => Content::Mismatch(d.ext.to_string()),
+        Some(_) => Content::Ok,
+        None if signatured => Content::Corrupt,
+        None => Content::Ok,
+    }
 }
 
 /// Normalise common extension aliases to the canonical signature extension, so
@@ -269,5 +312,33 @@ mod tests {
         assert_eq!(m.path, "disguised.png");
         assert_eq!(m.claimed, "png");
         assert_eq!(m.detected, "jpg");
+        // None of these is corrupt: every file is either a clean match, an
+        // unidentifiable .txt, or an unknown .bin extension.
+        assert!(sum.corrupt.is_empty(), "no corrupt files");
+    }
+
+    #[test]
+    fn flags_corrupt_or_truncated_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("good.jpg"), jpeg()).unwrap(); // valid JPEG
+                                                               // A .jpg whose content has no JPEG (or any) magic — truncated/corrupt.
+        std::fs::write(
+            dir.join("broken.jpg"),
+            b"Hello, this is plain text not a JPEG.",
+        )
+        .unwrap();
+        // A signatured-type extension is required to call something corrupt:
+        // .txt and .bin have no magic, so an unidentifiable body is left alone.
+        std::fs::write(dir.join("notes.txt"), b"just some notes").unwrap();
+        std::fs::write(dir.join("blob.bin"), b"\x01\x02\x03\x04").unwrap();
+
+        let sum = summarize(dir, 10).unwrap();
+        assert_eq!(sum.corrupt.len(), 1, "only broken.jpg is corrupt");
+        let c = &sum.corrupt[0];
+        assert_eq!(c.path, "broken.jpg");
+        assert_eq!(c.claimed, "jpg");
+        // The good JPEG is neither corrupt nor a mismatch.
+        assert!(sum.mismatches.is_empty(), "no mismatches");
     }
 }

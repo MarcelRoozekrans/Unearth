@@ -999,6 +999,27 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                 .iter()
                 .map(|(p, sz)| obj(vec![("path", s(p.as_str())), ("size", n(*sz))]))
                 .collect();
+            let mismatches = sum
+                .mismatches
+                .iter()
+                .map(|m| {
+                    obj(vec![
+                        ("path", s(m.path.as_str())),
+                        ("claimed", s(m.claimed.as_str())),
+                        ("detected", s(m.detected.as_str())),
+                    ])
+                })
+                .collect();
+            let corrupt = sum
+                .corrupt
+                .iter()
+                .map(|c| {
+                    obj(vec![
+                        ("path", s(c.path.as_str())),
+                        ("claimed", s(c.claimed.as_str())),
+                    ])
+                })
+                .collect();
             Ok(obj(vec![
                 ("dir", s(dir)),
                 ("total_files", n(sum.total_files)),
@@ -1009,6 +1030,8 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                 ("by_category", by_category),
                 ("by_type", by_type),
                 ("largest", Json::Arr(largest)),
+                ("mismatches", Json::Arr(mismatches)),
+                ("corrupt", Json::Arr(corrupt)),
             ]))
         }
 

@@ -14,6 +14,15 @@ formats.
 
 ### Added
 
+- **`triage` flags corrupt/truncated files** — a recovered file whose extension
+  names a type with a known magic signature, but whose content matches no
+  signature at all (a destroyed or truncated header, or a mislabelled blob).
+  This is reserved for types with a direct magic number, so unidentifiable-but-
+  plausible container subtypes (`docx`, `msg`, …) and empty files never produce
+  noise — it complements the existing mismatch check (which flags content that
+  *is* a different known type). Reported in the text output, as a `corrupt`
+  array in `--json`, and by the MCP `triage` tool (which now also reports
+  `mismatches`).
 - **ReFS volumes are recognised** — Microsoft's Resilient File System (Windows
   Server, Storage Spaces, Dev Drive) is detected from the `ReFS`/`FSRS`
   signatures in its volume boot record and reported by `info`/`list_volumes`

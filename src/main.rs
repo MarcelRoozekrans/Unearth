@@ -177,6 +177,16 @@ fn triage(args: TriageArgs) -> Result<()> {
                 ])
             })
             .collect();
+        let corrupt = sum
+            .corrupt
+            .iter()
+            .map(|c| {
+                obj(vec![
+                    ("path", s(c.path.as_str())),
+                    ("claimed", s(c.claimed.as_str())),
+                ])
+            })
+            .collect();
         let out = obj(vec![
             ("dir", s(args.dir.display().to_string())),
             ("total_files", Json::Num(sum.total_files as f64)),
@@ -188,6 +198,7 @@ fn triage(args: TriageArgs) -> Result<()> {
             ("by_type", by_type),
             ("largest", Json::Arr(largest)),
             ("mismatches", Json::Arr(mismatches)),
+            ("corrupt", Json::Arr(corrupt)),
         ]);
         println!("{out}");
         return Ok(());
@@ -232,6 +243,12 @@ fn triage(args: TriageArgs) -> Result<()> {
         println!("\nType mismatches (content \u{2260} extension):");
         for m in &sum.mismatches {
             println!("  {}: .{} but content is {}", m.path, m.claimed, m.detected);
+        }
+    }
+    if !sum.corrupt.is_empty() {
+        println!("\nCorrupt or truncated (content doesn't match a known extension):");
+        for c in &sum.corrupt {
+            println!("  {}: .{} header not found", c.path, c.claimed);
         }
     }
     Ok(())
