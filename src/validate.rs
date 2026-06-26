@@ -56,9 +56,53 @@ pub fn validate(sig: &Signature, data: &[u8]) -> Validity {
         "cab" => cab(data),
         "wasm" => wasm(data),
         "dex" => dex(data),
+        "psd" => psd(data),
+        "ogg" => ogg(data),
+        "flv" => flv(data),
         // No structural check for the remaining types; their length strategy
         // (footer search, atom walk, etc.) already rejects most spurious hits.
         _ => Validity::Unknown,
+    }
+}
+
+/// Photoshop: the `8BPS` magic is followed by a version of 1 (PSD) or 2 (PSB)
+/// and six reserved bytes that must be zero.
+fn psd(d: &[u8]) -> Validity {
+    if d.len() < 12 {
+        return Validity::Unknown;
+    }
+    let ver = u16::from_be_bytes([d[4], d[5]]);
+    if (ver == 1 || ver == 2) && d[6..12].iter().all(|&b| b == 0) {
+        Validity::Valid
+    } else {
+        Validity::Invalid
+    }
+}
+
+/// Ogg: the `OggS` capture pattern is followed by a stream-structure version of
+/// zero (the only version defined).
+fn ogg(d: &[u8]) -> Validity {
+    if d.len() < 5 {
+        return Validity::Unknown;
+    }
+    if d[4] == 0 {
+        Validity::Valid
+    } else {
+        Validity::Invalid
+    }
+}
+
+/// FLV: after the `FLV\x01` magic, the type-flags byte uses only the audio (bit
+/// 0) and video (bit 2) bits, and the data offset is the fixed 9-byte header.
+fn flv(d: &[u8]) -> Validity {
+    if d.len() < 9 {
+        return Validity::Unknown;
+    }
+    let data_offset = u32::from_be_bytes([d[5], d[6], d[7], d[8]]);
+    if d[4] & 0xFA == 0 && data_offset == 9 {
+        Validity::Valid
+    } else {
+        Validity::Invalid
     }
 }
 
@@ -491,5 +535,43 @@ mod tests {
 
         assert_eq!(validate(sig("dex"), b"dex\n035\0"), Validity::Valid);
         assert_eq!(validate(sig("dex"), b"dex\nXXX\0"), Validity::Invalid);
+    }
+
+    #[test]
+    fn psd_version_and_reserved_check() {
+        let mut v = vec![b'8', b'B', b'P', b'S'];
+        v.extend_from_slice(&1u16.to_be_bytes()); // version 1 (PSD)
+        v.extend_from_slice(&[0u8; 6]); // reserved
+        assert_eq!(validate(sig("psd"), &v), Validity::Valid);
+        // A non-zero reserved field is a coincidental match.
+        let mut bad = v.clone();
+        bad[6] = 1;
+        assert_eq!(validate(sig("psd"), &bad), Validity::Invalid);
+        // An unknown version is rejected.
+        let mut bad_ver = v.clone();
+        bad_ver[4..6].copy_from_slice(&9u16.to_be_bytes());
+        assert_eq!(validate(sig("psd"), &bad_ver), Validity::Invalid);
+    }
+
+    #[test]
+    fn ogg_version_check() {
+        assert_eq!(validate(sig("ogg"), b"OggS\0"), Validity::Valid);
+        assert_eq!(validate(sig("ogg"), b"OggS\x01"), Validity::Invalid);
+    }
+
+    #[test]
+    fn flv_header_check() {
+        // FLV\x01, flags = audio+video (0x05), data offset = 9.
+        let mut v = vec![0x46, 0x4C, 0x56, 0x01, 0x05];
+        v.extend_from_slice(&9u32.to_be_bytes());
+        assert_eq!(validate(sig("flv"), &v), Validity::Valid);
+        // A reserved flag bit set is bogus.
+        let mut bad_flags = v.clone();
+        bad_flags[4] = 0x02;
+        assert_eq!(validate(sig("flv"), &bad_flags), Validity::Invalid);
+        // A data offset other than 9 is bogus.
+        let mut bad_off = v.clone();
+        bad_off[5..9].copy_from_slice(&13u32.to_be_bytes());
+        assert_eq!(validate(sig("flv"), &bad_off), Validity::Invalid);
     }
 }
