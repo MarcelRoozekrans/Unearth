@@ -11,7 +11,9 @@
 //! discs use are recovered intact. On non-Joliet discs, **Rock Ridge** `NM`
 //! entries (the POSIX-name extension used by Linux/macOS-authored media) are
 //! decoded too, including names that spill into Rock Ridge continuation (`CE`)
-//! areas, so even very long POSIX names are recovered in full.
+//! areas, so even very long POSIX names are recovered in full. Files whose data
+//! is split across several **multi-extent** directory records (how ISO 9660
+//! stores files larger than ~4 GiB) are reassembled into one output file.
 //!
 //! Detection reads the **Volume Descriptor Set** at sector 16 (byte offset
 //! 32768): a series of 2048-byte descriptors each `{ type: u8, id: "CD001",
@@ -195,6 +197,11 @@ impl Volume {
             };
 
             let mut pos = 0usize;
+            // Extents of a multi-extent file in progress: such a file's data is
+            // split across several consecutive directory records that share one
+            // name, all but the last flagged "more extents to follow" (file-flag
+            // bit 7). `None` between files.
+            let mut pending: Option<(PathBuf, Vec<(u64, u64)>)> = None;
             while pos < dir.len() {
                 let rec_len = dir[pos] as usize;
                 if rec_len == 0 {
@@ -222,7 +229,30 @@ impl Volume {
                 }
                 let child_lba = u32::from_le_bytes([rec[2], rec[3], rec[4], rec[5]]) as u64;
                 let child_len = u32::from_le_bytes([rec[10], rec[11], rec[12], rec[13]]) as u64;
-                let is_dir = rec[25] & 0x02 != 0;
+                let flags = rec[25];
+                let is_dir = flags & 0x02 != 0;
+                let more_extents = flags & 0x80 != 0;
+
+                // A continuation record of a multi-extent file already in
+                // progress: append its extent (the name comes from the first
+                // record) and flush once the final record clears the flag.
+                if let Some((_, extents)) = pending.as_mut() {
+                    if !is_dir {
+                        extents.push((child_lba, child_len));
+                        if !more_extents {
+                            let (frel, fexts) = pending.take().unwrap();
+                            self.recover_file(
+                                src, out_dir, &fexts, frel, vol_end, opts, &mut stats,
+                            );
+                        }
+                        continue;
+                    }
+                    // Malformed: a directory record interrupts the sequence.
+                    // Flush what we have, then handle this record normally.
+                    let (frel, fexts) = pending.take().unwrap();
+                    self.recover_file(src, out_dir, &fexts, frel, vol_end, opts, &mut stats);
+                }
+
                 // Prefer a Rock Ridge POSIX name (Linux/Unix discs) over the
                 // short ISO identifier; Joliet (Windows) already has long names.
                 let name = match (
@@ -240,9 +270,25 @@ impl Volume {
                     }
                     continue;
                 }
+                if more_extents {
+                    // First record of a multi-extent file: start accumulating
+                    // its extents; later records append until one clears the flag.
+                    pending = Some((child_rel, vec![(child_lba, child_len)]));
+                    continue;
+                }
                 self.recover_file(
-                    src, out_dir, child_lba, child_len, child_rel, vol_end, opts, &mut stats,
+                    src,
+                    out_dir,
+                    &[(child_lba, child_len)],
+                    child_rel,
+                    vol_end,
+                    opts,
+                    &mut stats,
                 );
+            }
+            // Flush a multi-extent file whose final record never arrived.
+            if let Some((frel, fexts)) = pending.take() {
+                self.recover_file(src, out_dir, &fexts, frel, vol_end, opts, &mut stats);
             }
         }
         Ok(stats)
@@ -264,37 +310,47 @@ impl Volume {
         Some(buf)
     }
 
-    /// Extract one file, recording it in `stats` (or counting it for a dry run).
+    /// Extract one file into `out_dir`, recording it in `stats` (or counting it
+    /// for a dry run). `extents` is `(lba, byte length)` pairs; a normal file has
+    /// one, a multi-extent file has several that are concatenated in order.
     #[allow(clippy::too_many_arguments)]
     fn recover_file(
         &self,
         src: &Source,
         out_dir: &Path,
-        lba: u64,
-        len: u64,
+        extents: &[(u64, u64)],
         rel: PathBuf,
         vol_end: u64,
         opts: &RecoverOptions,
         stats: &mut RecoverStats,
     ) {
-        if !opts.size_ok(len) || !opts.name_ok(crate::recover::file_name_of(&rel)) {
+        let total = extents
+            .iter()
+            .fold(0u64, |acc, &(_, len)| acc.saturating_add(len));
+        if !opts.size_ok(total) || !opts.name_ok(crate::recover::file_name_of(&rel)) {
             return;
         }
-        // Validate the data extent before trusting it.
-        let start = match self.offset.checked_add(lba.saturating_mul(self.block_size)) {
-            Some(s) if s >= self.offset && s.saturating_add(len) <= vol_end => s,
-            _ => {
-                stats.record_skipped(rel, len);
-                return;
+        // Translate each extent to a byte range and validate it lies inside the
+        // volume before trusting any of it.
+        let mut byte_extents = Vec::with_capacity(extents.len());
+        for &(lba, len) in extents {
+            match self.offset.checked_add(lba.saturating_mul(self.block_size)) {
+                Some(s) if s >= self.offset && s.saturating_add(len) <= vol_end => {
+                    byte_extents.push((s, len));
+                }
+                _ => {
+                    stats.record_skipped(rel, total);
+                    return;
+                }
             }
-        };
+        }
         if opts.dry_run {
-            stats.record_recovered(rel, len, None);
+            stats.record_recovered(rel, total, None);
             return;
         }
-        match write_file(src, out_dir, &rel, start, len) {
-            Ok(digest) => stats.record_recovered(rel, len, Some(digest)),
-            Err(_) => stats.record_skipped(rel, len),
+        match write_file(src, out_dir, &rel, &byte_extents) {
+            Ok(digest) => stats.record_recovered(rel, total, Some(digest)),
+            Err(_) => stats.record_skipped(rel, total),
         }
     }
 
@@ -451,9 +507,15 @@ fn decode_name(bytes: &[u8], is_dir: bool, joliet: bool) -> String {
     sanitize_component(&s)
 }
 
-/// Stream `len` bytes at `start` into `out_dir/rel`, returning the SHA-256 of the
-/// written bytes.
-fn write_file(src: &Source, out_dir: &Path, rel: &Path, start: u64, len: u64) -> Result<[u8; 32]> {
+/// Stream a sequence of byte `extents` (`(start, len)`) into `out_dir/rel` as one
+/// file, concatenated in order, returning the SHA-256 of the written bytes. A
+/// normal file has a single extent; a multi-extent file has several.
+fn write_file(
+    src: &Source,
+    out_dir: &Path,
+    rel: &Path,
+    extents: &[(u64, u64)],
+) -> Result<[u8; 32]> {
     let target = unique_path(out_dir, rel);
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
@@ -462,19 +524,20 @@ fn write_file(src: &Source, out_dir: &Path, rel: &Path, start: u64, len: u64) ->
         fs::File::create(&target).with_context(|| format!("creating {}", target.display()))?;
     let mut out = HashingWriter::new(file);
 
-    let mut remaining = len;
-    let mut pos = start;
-    let buf_len = (len as usize).clamp(1, 1024 * 1024);
-    let mut buf = vec![0u8; buf_len];
-    while remaining > 0 {
-        let want = (remaining as usize).min(buf.len());
-        let n = src.read_at(pos, &mut buf[..want])?;
-        if n == 0 {
-            break;
+    let mut buf = vec![0u8; 1024 * 1024];
+    for &(start, len) in extents {
+        let mut remaining = len;
+        let mut pos = start;
+        while remaining > 0 {
+            let want = (remaining as usize).min(buf.len());
+            let n = src.read_at(pos, &mut buf[..want])?;
+            if n == 0 {
+                break;
+            }
+            out.write_all(&buf[..n])?;
+            remaining -= n as u64;
+            pos += n as u64;
         }
-        out.write_all(&buf[..n])?;
-        remaining -= n as u64;
-        pos += n as u64;
     }
     out.flush().ok();
     let (_, digest) = out.into_parts();
@@ -862,5 +925,46 @@ mod tests {
             std::fs::read(out.join("My very long file name.txt")).unwrap(),
             payload
         );
+    }
+
+    #[test]
+    fn multi_extent_files_are_concatenated() {
+        const BS: usize = 2048;
+        // sector 16 = PVD, 18 = root dir, 20 = data extent A, 21 = data extent B.
+        let total = 22 * BS;
+        let mut v = vec![0u8; total];
+        let part_a = b"first half of a big file";
+        let part_b = b"-second half of a big file";
+        v[20 * BS..20 * BS + part_a.len()].copy_from_slice(part_a);
+        v[21 * BS..21 * BS + part_b.len()].copy_from_slice(part_b);
+
+        // Root (sector 18): ".", "..", then one file in two records — the first
+        // flagged multi-extent (more data follows), the second the final extent.
+        let mut p = 18 * BS;
+        p += put_record(&mut v, p, 18, BS as u32, true, &[0x00]);
+        p += put_record(&mut v, p, 18, BS as u32, true, &[0x01]);
+        let a_at = p;
+        p += put_record(&mut v, p, 20, part_a.len() as u32, false, b"BIG.DAT;1");
+        v[a_at + 25] |= 0x80; // multi-extent: data continues in the next record
+        let _ = put_record(&mut v, p, 21, part_b.len() as u32, false, b"BIG.DAT;1");
+
+        // PVD (sector 16), no Joliet SVD.
+        let off = put_descriptor(&mut v, 0, PRIMARY);
+        v[off + 80..off + 84].copy_from_slice(&22u32.to_le_bytes());
+        v[off + 128..off + 130].copy_from_slice(&(BS as u16).to_le_bytes());
+        put_record(&mut v, off + 156, 18, BS as u32, true, &[0x00]);
+
+        let (tmp, src) = source_of(&v);
+        let vol = detect(&src, 0).unwrap();
+        let out = tmp.path().join("out");
+        let stats = vol
+            .recover_deleted(&src, &out, &RecoverOptions::default())
+            .unwrap();
+
+        // One file, not two fragments; both extents concatenated in order.
+        assert_eq!(stats.recovered, 1);
+        let mut expected = part_a.to_vec();
+        expected.extend_from_slice(part_b);
+        assert_eq!(std::fs::read(out.join("BIG.DAT")).unwrap(), expected);
     }
 }

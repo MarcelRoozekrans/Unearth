@@ -721,7 +721,9 @@ Common to both strategies:
   recovered from both **Joliet** (Windows-authored discs — UCS-2) and **Rock
   Ridge** (`NM` entries on Linux/macOS-authored discs) — including long names
   that spill into Rock Ridge continuation (`CE`) areas — so files come back with
-  their full filenames either way. A hybrid UDF disc is reported as UDF.
+  their full filenames either way. Files split across **multi-extent** records
+  (how ISO 9660 stores files larger than ~4 GiB) are reassembled into one file.
+  A hybrid UDF disc is reported as UDF.
 - **Encrypted volumes** — **LUKS** (LUKS1/LUKS2) and **BitLocker** — are
   *recognised* and reported by `info`/`list_volumes`, but they hold only
   ciphertext until unlocked, so nothing can be recovered (and carving the raw
