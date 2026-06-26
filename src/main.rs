@@ -505,6 +505,18 @@ fn list_types() {
     println!("(categories: image, audio, video, document, archive, executable, font, system).");
 }
 
+/// Pick the detected volume at index `n` (as listed by `info`), erroring with a
+/// clear message if the index is out of range.
+fn select_volume(source: &Source, n: usize) -> Result<recover::Volume> {
+    let volumes = recover::detect(source)?;
+    let count = volumes.len();
+    volumes.into_iter().nth(n).ok_or_else(|| {
+        anyhow::anyhow!(
+            "--volume {n} is out of range: {count} volume(s) detected (indexes 0..{count})"
+        )
+    })
+}
+
 /// The free (unallocated) byte ranges across every detected volume, or `None`
 /// when no volume is found or any one cannot report its free-space map (in
 /// which case the caller carves the whole source).
@@ -742,11 +754,12 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
     let volumes = if args.scan {
         eprintln!("Scanning the whole source for volumes (this may take a while)...");
         recover::scan_lost_volumes(&source, args.scan_step, |_| {})?
+    } else if let Some(off) = args.offset {
+        vec![recover::parse_at(&source, off)?]
+    } else if let Some(n) = args.volume {
+        vec![select_volume(&source, n)?]
     } else {
-        match args.offset {
-            Some(off) => vec![recover::parse_at(&source, off)?],
-            None => recover::detect(&source)?,
-        }
+        recover::detect(&source)?
     };
     eprintln!("Found {} volume(s).", volumes.len());
 
@@ -865,11 +878,12 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
     let volumes = if args.scan {
         eprintln!("Scanning the whole source for volumes (this may take a while)...");
         recover::scan_lost_volumes(&source, args.scan_step, |_| {})?
+    } else if let Some(off) = args.offset {
+        vec![recover::parse_at(&source, off)?]
+    } else if let Some(n) = args.volume {
+        vec![select_volume(&source, n)?]
     } else {
-        match args.offset {
-            Some(off) => vec![recover::parse_at(&source, off)?],
-            None => recover::detect(&source).unwrap_or_default(),
-        }
+        recover::detect(&source).unwrap_or_default()
     };
     if volumes.is_empty() {
         eprintln!("No supported filesystem detected; carving only.");

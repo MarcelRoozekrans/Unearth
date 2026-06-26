@@ -191,6 +191,11 @@ pub struct RecoverArgs {
     #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     pub offset: Option<u64>,
 
+    /// Recover from only the volume with this index, as listed by `info`
+    /// (0-based). A friendlier alternative to `--offset`.
+    #[arg(long, value_name = "N", conflicts_with_all = ["offset", "scan"])]
+    pub volume: Option<usize>,
+
     /// Run the undelete pass over every volume found by a whole-source signature
     /// scan, not just the partition table — for a disk whose table is lost or
     /// corrupt. Cannot be combined with --offset.
@@ -321,6 +326,11 @@ pub struct UndeleteArgs {
     /// auto-detected (bare volume, or a GPT or MBR partition table).
     #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     pub offset: Option<u64>,
+
+    /// Recover from only the volume with this index, as listed by `info`
+    /// (0-based). A friendlier alternative to `--offset`.
+    #[arg(long, value_name = "N", conflicts_with_all = ["offset", "scan"])]
+    pub volume: Option<usize>,
 
     /// Recover from every volume found by a whole-source signature scan, not
     /// just the partition table — for a disk whose table is lost or corrupt.
