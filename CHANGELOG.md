@@ -144,6 +144,12 @@ formats.
 
 ### Fixed
 
+- **Fewer carving false positives** — structural validators were added for five
+  more types: PDF (version string), TIFF/BigTIFF (byte order, version, and a
+  plausible first-IFD offset), Microsoft Cabinet (zeroed reserved fields), and
+  WebAssembly and Android DEX (version checks). A coincidental magic match in
+  unrelated data now fails these checks and is dropped, on top of the existing
+  JPEG/PNG/GIF/BMP/SQLite/ELF/EMF/MIDI validators.
 - **JPEG carving no longer truncates at an embedded thumbnail.** Camera and phone
   JPEGs embed a full thumbnail (its own `FF D8 … FF D9`) in the EXIF metadata; the
   carver previously stopped at the thumbnail's End-of-Image marker, producing a

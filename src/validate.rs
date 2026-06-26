@@ -51,9 +51,115 @@ pub fn validate(sig: &Signature, data: &[u8]) -> Validity {
         "elf" => elf(data),
         "emf" => emf(data),
         "mid" => midi(data),
+        "pdf" => pdf(data),
+        "tif" => tiff(data),
+        "cab" => cab(data),
+        "wasm" => wasm(data),
+        "dex" => dex(data),
         // No structural check for the remaining types; their length strategy
         // (footer search, atom walk, etc.) already rejects most spurious hits.
         _ => Validity::Unknown,
+    }
+}
+
+/// PDF: the `%PDF` magic is followed by a `-N.M` version (e.g. `%PDF-1.7`).
+fn pdf(d: &[u8]) -> Validity {
+    if d.len() < 8 {
+        return Validity::Unknown;
+    }
+    if d[4] == b'-' && d[5].is_ascii_digit() && d[6] == b'.' && d[7].is_ascii_digit() {
+        Validity::Valid
+    } else {
+        Validity::Invalid
+    }
+}
+
+/// TIFF: the byte order and version (42 classic, 43 BigTIFF) come from the
+/// magic; the first-IFD offset must point past the header.
+fn tiff(d: &[u8]) -> Validity {
+    if d.len() < 8 {
+        return Validity::Unknown;
+    }
+    let le = d[0] == b'I';
+    let u16a = |a: usize| {
+        let b = [d[a], d[a + 1]];
+        if le {
+            u16::from_le_bytes(b)
+        } else {
+            u16::from_be_bytes(b)
+        }
+    };
+    match u16a(2) {
+        42 => {
+            let b = [d[4], d[5], d[6], d[7]];
+            let ifd = if le {
+                u32::from_le_bytes(b)
+            } else {
+                u32::from_be_bytes(b)
+            };
+            if ifd >= 8 {
+                Validity::Valid
+            } else {
+                Validity::Invalid
+            }
+        }
+        43 => {
+            if d.len() < 16 {
+                return Validity::Unknown;
+            }
+            let b: [u8; 8] = d[8..16].try_into().unwrap();
+            let ifd = if le {
+                u64::from_le_bytes(b)
+            } else {
+                u64::from_be_bytes(b)
+            };
+            // Offset size is 8 bytes, the next u16 is 0, and the IFD follows the
+            // 16-byte BigTIFF header.
+            if u16a(4) == 8 && u16a(6) == 0 && ifd >= 16 {
+                Validity::Valid
+            } else {
+                Validity::Invalid
+            }
+        }
+        _ => Validity::Invalid,
+    }
+}
+
+/// Microsoft Cabinet: the three reserved header fields must be zero and the
+/// major version must be 1.
+fn cab(d: &[u8]) -> Validity {
+    if d.len() < 26 {
+        return Validity::Unknown;
+    }
+    let res = |o: usize| u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]);
+    if res(4) == 0 && res(12) == 0 && res(20) == 0 && d[25] == 1 {
+        Validity::Valid
+    } else {
+        Validity::Invalid
+    }
+}
+
+/// WebAssembly: the `\0asm` magic is followed by a little-endian version of 1.
+fn wasm(d: &[u8]) -> Validity {
+    if d.len() < 8 {
+        return Validity::Unknown;
+    }
+    if u32::from_le_bytes([d[4], d[5], d[6], d[7]]) == 1 {
+        Validity::Valid
+    } else {
+        Validity::Invalid
+    }
+}
+
+/// Android DEX: the `dex\n` magic is followed by a 3-digit version and a NUL.
+fn dex(d: &[u8]) -> Validity {
+    if d.len() < 8 {
+        return Validity::Unknown;
+    }
+    if d[4].is_ascii_digit() && d[5].is_ascii_digit() && d[6].is_ascii_digit() && d[7] == 0 {
+        Validity::Valid
+    } else {
+        Validity::Invalid
     }
 }
 
@@ -329,10 +435,61 @@ mod tests {
 
     #[test]
     fn unknown_types_accepted() {
-        assert_eq!(validate(sig("pdf"), b"%PDF-1.7 garbage"), Validity::Unknown);
+        // A type with no structural validator is always accepted (Unknown).
+        assert_eq!(validate(sig("rtf"), b"{\\rtf1 garbage"), Validity::Unknown);
         assert_eq!(
             validate(sig("zip"), &[0x50, 0x4B, 0x03, 0x04]),
             Validity::Unknown
         );
+    }
+
+    #[test]
+    fn pdf_version_check() {
+        assert_eq!(validate(sig("pdf"), b"%PDF-1.7\n"), Validity::Valid);
+        assert_eq!(validate(sig("pdf"), b"%PDF-2.0\n"), Validity::Valid);
+        // "%PDF" with no version is a coincidental match.
+        assert_eq!(validate(sig("pdf"), b"%PDFxxxx"), Validity::Invalid);
+        assert_eq!(validate(sig("pdf"), b"%PDF"), Validity::Unknown);
+    }
+
+    #[test]
+    fn tiff_ifd_offset_check() {
+        // Classic little-endian TIFF: version 42, first IFD at offset 8.
+        let mut le = vec![0x49, 0x49, 0x2A, 0x00];
+        le.extend_from_slice(&8u32.to_le_bytes());
+        assert_eq!(validate(sig("tif"), &le), Validity::Valid);
+        // An IFD offset inside the header is impossible.
+        let mut bad = vec![0x49, 0x49, 0x2A, 0x00];
+        bad.extend_from_slice(&1u32.to_le_bytes());
+        assert_eq!(validate(sig("tif"), &bad), Validity::Invalid);
+        // Big-endian classic TIFF.
+        let mut be = vec![0x4D, 0x4D, 0x00, 0x2A];
+        be.extend_from_slice(&8u32.to_be_bytes());
+        assert_eq!(validate(sig("tif"), &be), Validity::Valid);
+    }
+
+    #[test]
+    fn cab_reserved_fields_check() {
+        let mut v = vec![0u8; 26];
+        v[0..4].copy_from_slice(b"MSCF");
+        v[25] = 1; // versionMajor
+        assert_eq!(validate(sig("cab"), &v), Validity::Valid);
+        // A non-zero reserved field is a coincidental match.
+        let mut bad = v.clone();
+        bad[4] = 0xFF;
+        assert_eq!(validate(sig("cab"), &bad), Validity::Invalid);
+    }
+
+    #[test]
+    fn wasm_and_dex_version_checks() {
+        let mut wasm = vec![0x00, 0x61, 0x73, 0x6D];
+        wasm.extend_from_slice(&1u32.to_le_bytes());
+        assert_eq!(validate(sig("wasm"), &wasm), Validity::Valid);
+        let mut bad_wasm = vec![0x00, 0x61, 0x73, 0x6D];
+        bad_wasm.extend_from_slice(&7u32.to_le_bytes());
+        assert_eq!(validate(sig("wasm"), &bad_wasm), Validity::Invalid);
+
+        assert_eq!(validate(sig("dex"), b"dex\n035\0"), Validity::Valid);
+        assert_eq!(validate(sig("dex"), b"dex\nXXX\0"), Validity::Invalid);
     }
 }
