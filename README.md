@@ -362,6 +362,14 @@ that's really an executable. Common aliases (`jpeg`→`jpg`, `mov`→`mp4`, …)
 normalised first, and only recognised types are compared, so generic blobs and
 unknown formats don't produce noise. (`--json` adds a `mismatches` array.)
 
+It also flags **corrupt or truncated files** — a file whose extension names a
+type with a known magic signature, but whose content matches no signature at
+all (a destroyed/truncated header, or a mislabelled blob). To stay noise-free
+this is reserved for types with a direct magic number, so unidentifiable-but-
+plausible container subtypes (`docx`, `msg`, …) and empty files are never
+called corrupt. (`--json` adds a `corrupt` array; the MCP `triage` tool reports
+both `mismatches` and `corrupt`.)
+
 ### Undelete from a FAT/exFAT/NTFS/ext/HFS+ card/image (keeps original names)
 
 ```sh
