@@ -19,6 +19,17 @@ pub struct TypeStat {
     pub bytes: u64,
 }
 
+/// A file whose detected content type doesn't match its extension — a sign of a
+/// renamed/disguised file (or a recovery mislabel).
+pub struct Mismatch {
+    /// Path relative to the triaged directory.
+    pub path: String,
+    /// The file's extension (lower-cased), e.g. `jpg`.
+    pub claimed: String,
+    /// The type detected from the content, e.g. `exe`.
+    pub detected: String,
+}
+
 /// The result of triaging a directory.
 #[derive(Default)]
 pub struct Summary {
@@ -34,6 +45,8 @@ pub struct Summary {
     pub duplicate_sets: u64,
     /// Bytes that are redundant copies (sum over groups of size × (count − 1)).
     pub duplicate_bytes: u64,
+    /// Files whose content type doesn't match their extension.
+    pub mismatches: Vec<Mismatch>,
 }
 
 impl Summary {
@@ -64,7 +77,7 @@ pub fn summarize(dir: &Path, top_n: usize) -> Result<Summary> {
     let mut sized: Vec<(String, u64)> = Vec::new();
 
     for path in &files {
-        let (size, digest) = hash_file(path)?;
+        let (size, digest, head) = hash_file(path)?;
         summary.total_files += 1;
         summary.total_bytes = summary.total_bytes.saturating_add(size);
         if size == 0 {
@@ -76,6 +89,22 @@ pub fn summarize(dir: &Path, top_n: usize) -> Result<Summary> {
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase())
             .unwrap_or_default();
+
+        let rel = path
+            .strip_prefix(dir)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned();
+
+        // Flag a file whose content is a different (known) type than its name.
+        if let Some(detected) = content_mismatch(&ext, &head) {
+            summary.mismatches.push(Mismatch {
+                path: rel.clone(),
+                claimed: ext.clone(),
+                detected,
+            });
+        }
+
         let stat = summary.by_type.entry(ext).or_default();
         stat.count += 1;
         stat.bytes = stat.bytes.saturating_add(size);
@@ -83,11 +112,6 @@ pub fn summarize(dir: &Path, top_n: usize) -> Result<Summary> {
         let entry = by_digest.entry(digest).or_insert((0, size));
         entry.0 += 1;
 
-        let rel = path
-            .strip_prefix(dir)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .into_owned();
         sized.push((rel, size));
     }
 
@@ -120,22 +144,54 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Stream a file through SHA-256, returning its size and digest.
-fn hash_file(path: &Path) -> Result<(u64, [u8; 32])> {
+/// Stream a file through SHA-256, returning its size, digest, and a copy of the
+/// leading bytes (the first chunk, up to 64 KiB) for content identification.
+fn hash_file(path: &Path) -> Result<(u64, [u8; 32], Vec<u8>)> {
     use std::io::Read;
     let mut f = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
     let mut size = 0u64;
+    let mut head = Vec::new();
     loop {
         let n = f.read(&mut buf)?;
         if n == 0 {
             break;
         }
+        if head.is_empty() {
+            head.extend_from_slice(&buf[..n]); // the first chunk is enough
+        }
         size += n as u64;
         hasher.update(&buf[..n]);
     }
-    Ok((size, hasher.finalize()))
+    Ok((size, hasher.finalize(), head))
+}
+
+/// Detect a content/extension mismatch: when a file's extension names a known
+/// type but its bytes identify as a *different* known type. Returns the detected
+/// type. Extensions we don't recognise (or content we can't identify) are not
+/// flagged, so generic blobs and unknown formats never produce noise. Common
+/// aliases (`jpeg`→`jpg`, `mov`→`mp4`, …) are normalised first.
+fn content_mismatch(claimed_ext: &str, head: &[u8]) -> Option<String> {
+    use crate::signatures::Category;
+    let canon = canonical_ext(claimed_ext);
+    if crate::signatures::category_of(canon) == Category::Other {
+        return None; // not a type we recognise from the extension
+    }
+    let detected = crate::identify::identify(head)?;
+    (detected.ext != canon).then(|| detected.ext.to_string())
+}
+
+/// Normalise common extension aliases to the canonical signature extension, so
+/// `photo.jpeg` or `clip.mov` aren't flagged against `jpg` / `mp4`.
+fn canonical_ext(ext: &str) -> &str {
+    match ext {
+        "jpeg" | "jpe" | "jfif" => "jpg",
+        "tiff" => "tif",
+        "mov" | "m4v" | "m4a" | "m4b" | "qt" => "mp4",
+        "aif" => "aiff",
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -188,5 +244,30 @@ mod tests {
         assert_eq!(sum.total_files, 0);
         assert_eq!(sum.duplicate_sets, 0);
         assert!(sum.largest.is_empty());
+    }
+
+    /// A minimal valid JPEG (SOI + APP0 marker + EOI) that `identify` confirms.
+    fn jpeg() -> Vec<u8> {
+        vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0xFF, 0xD9]
+    }
+
+    #[test]
+    fn flags_content_extension_mismatches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("real.jpg"), jpeg()).unwrap(); // matches
+        std::fs::write(dir.join("photo.jpeg"), jpeg()).unwrap(); // alias, matches
+        std::fs::write(dir.join("disguised.png"), jpeg()).unwrap(); // JPEG named .png
+        std::fs::write(dir.join("notes.txt"), b"just text").unwrap(); // unknown content
+        std::fs::write(dir.join("blob.bin"), jpeg()).unwrap(); // unknown extension
+
+        let sum = summarize(dir, 10).unwrap();
+        // Only the JPEG-named-.png is a mismatch: .jpg/.jpeg match, .txt content
+        // isn't identifiable, and .bin isn't a known extension.
+        assert_eq!(sum.mismatches.len(), 1, "exactly one mismatch");
+        let m = &sum.mismatches[0];
+        assert_eq!(m.path, "disguised.png");
+        assert_eq!(m.claimed, "png");
+        assert_eq!(m.detected, "jpg");
     }
 }
