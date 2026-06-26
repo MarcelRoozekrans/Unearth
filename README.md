@@ -309,7 +309,7 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 `--scan` reads the **whole source** and probes for filesystem signatures at
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
-(FAT, exFAT, NTFS, ext, HFS+, APFS, Btrfs, and LUKS/BitLocker):
+(FAT, exFAT, NTFS, ReFS, ext, HFS+, APFS, Btrfs, and LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -709,6 +709,12 @@ Common to both strategies:
   physical addresses through the chunk map. But — like APFS — its copy-on-write
   design leaves no stale metadata to scavenge, so it is not recovered from
   metadata. Use `scan` (carving).
+- **ReFS** (Microsoft's Resilient File System — Windows Server, Storage Spaces,
+  and Dev Drive) is *recognised* and its size is reported by `info`/`list_volumes`
+  (from the `ReFS`/`FSRS` signatures and geometry in the volume boot record). But
+  — like APFS and Btrfs — its copy-on-write design leaves no stale metadata to
+  scavenge (and the format is undocumented), so it is not recovered from metadata.
+  Use `scan` (carving).
 - **UDF** (optical discs — DVD/Blu-ray — and many large USB drives and camcorder
   cards) is *recognised* and reported by `info`/`list_volumes` (via its Volume
   Recognition Sequence at sector 16), but its descriptor metadata is not parsed,

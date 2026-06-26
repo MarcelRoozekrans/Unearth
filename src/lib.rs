@@ -64,6 +64,7 @@ pub mod mcp;
 pub mod ntfs;
 pub mod partition;
 pub mod recover;
+pub mod refs;
 pub mod signatures;
 pub mod source;
 pub mod times;
