@@ -85,11 +85,12 @@ pub struct TriageArgs {
 
 #[derive(Parser)]
 pub struct IdentifyArgs {
-    /// File to identify.
-    #[arg(value_name = "FILE")]
-    pub file: PathBuf,
+    /// File(s) to identify. Multiple paths may be given (e.g. `identify *`).
+    #[arg(value_name = "FILE", required = true, num_args = 1..)]
+    pub files: Vec<PathBuf>,
 
-    /// Emit the result as JSON on stdout instead of a line of text.
+    /// Emit the result as JSON on stdout instead of a line of text. With several
+    /// files this is a JSON array; with one file, a single object.
     #[arg(long)]
     pub json: bool,
 }
