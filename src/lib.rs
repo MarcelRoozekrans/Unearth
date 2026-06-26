@@ -62,6 +62,7 @@ pub mod json;
 pub mod manifest;
 pub mod mcp;
 pub mod ntfs;
+pub mod partition;
 pub mod recover;
 pub mod signatures;
 pub mod source;

@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **`info` shows the partition table** — the scheme (GPT or MBR) and each entry's
+  type (friendly names for known GPT type GUIDs and MBR type bytes, otherwise the
+  raw GUID / `0xNN`), GPT name, and byte range. This reveals the on-disk layout
+  even for partitions whose filesystem isn't recovered (EFI System, swap, empty
+  slots). `--json` adds `partition_scheme` and a `partitions` array.
 - **`info` reports each volume's free (unallocated) space** — read from the
   allocation map for FAT, exFAT, ext2/3/4, NTFS, and HFS+/HFSX — so you can gauge
   how much deleted data might be recoverable before running a carve. The text
