@@ -719,9 +719,9 @@ Common to both strategies:
   names and folder paths** by `undelete`/`recover`, walking the directory tree —
   far better than carving, which loses names and structure. Long names are
   recovered from both **Joliet** (Windows-authored discs — UCS-2) and **Rock
-  Ridge** (`NM` entries on Linux/macOS-authored discs), so files come back with
-  their full filenames either way; only Rock Ridge continuation (`CE`) areas are
-  not yet followed. A hybrid UDF disc is reported as UDF.
+  Ridge** (`NM` entries on Linux/macOS-authored discs) — including long names
+  that spill into Rock Ridge continuation (`CE`) areas — so files come back with
+  their full filenames either way. A hybrid UDF disc is reported as UDF.
 - **Encrypted volumes** — **LUKS** (LUKS1/LUKS2) and **BitLocker** — are
   *recognised* and reported by `info`/`list_volumes`, but they hold only
   ciphertext until unlocked, so nothing can be recovered (and carving the raw

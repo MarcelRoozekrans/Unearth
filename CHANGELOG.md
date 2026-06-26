@@ -60,9 +60,10 @@ formats.
   `recover` **extract their files with original names and folder paths** by
   walking the directory tree — far better than carving, which loses names and
   structure. Long names are decoded from both **Joliet** (Windows discs —
-  UCS-2/Unicode) and **Rock Ridge** (`NM` entries on Linux/macOS discs), so
-  files come back with full filenames either way; only Rock Ridge continuation
-  (`CE`) areas are not yet followed. A hybrid UDF disc is reported as UDF.
+  UCS-2/Unicode) and **Rock Ridge** (`NM` entries on Linux/macOS discs) —
+  including names that overflow the directory record into Rock Ridge
+  continuation (`CE`) areas — so files come back with their full filenames
+  either way. A hybrid UDF disc is reported as UDF.
 - **Lost/corrupt partition recovery** — `info --scan` finds volumes that have no
   partition-table entry via a whole-source signature scan, and `undelete --scan`
   / `recover --scan` recover from every volume found, in one command.
