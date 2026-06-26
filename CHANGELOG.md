@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **`triage` flags content/extension mismatches** — files whose bytes identify
+  as a different known type than their extension claims (e.g. a `.jpg` that is
+  really an executable — a renamed/disguised file, or a recovery mislabel).
+  Common aliases (`jpeg`→`jpg`, `mov`→`mp4`, …) are normalised first and only
+  recognised types are compared, so generic blobs and unknown formats don't
+  produce noise. Reported in the text output and as a `mismatches` array in
+  `--json`.
 - **`identify` accepts multiple files** — `identify FILE...` (e.g. `identify *`)
   labels each file's type from its contents, one line per file; with `--json` it
   emits an array (a single file still prints one object, unchanged).

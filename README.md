@@ -356,6 +356,12 @@ filerecovery triage recovered
 filerecovery triage recovered --json   # machine-readable
 ```
 
+`triage` also flags **content/extension mismatches** — files whose bytes
+identify as a different (known) type than their extension claims, e.g. a `.jpg`
+that's really an executable. Common aliases (`jpeg`→`jpg`, `mov`→`mp4`, …) are
+normalised first, and only recognised types are compared, so generic blobs and
+unknown formats don't produce noise. (`--json` adds a `mismatches` array.)
+
 ### Undelete from a FAT/exFAT/NTFS/ext/HFS+ card/image (keeps original names)
 
 ```sh

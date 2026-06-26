@@ -166,6 +166,17 @@ fn triage(args: TriageArgs) -> Result<()> {
                 })
                 .collect(),
         );
+        let mismatches = sum
+            .mismatches
+            .iter()
+            .map(|m| {
+                obj(vec![
+                    ("path", s(m.path.as_str())),
+                    ("claimed", s(m.claimed.as_str())),
+                    ("detected", s(m.detected.as_str())),
+                ])
+            })
+            .collect();
         let out = obj(vec![
             ("dir", s(args.dir.display().to_string())),
             ("total_files", Json::Num(sum.total_files as f64)),
@@ -176,6 +187,7 @@ fn triage(args: TriageArgs) -> Result<()> {
             ("by_category", by_category),
             ("by_type", by_type),
             ("largest", Json::Arr(largest)),
+            ("mismatches", Json::Arr(mismatches)),
         ]);
         println!("{out}");
         return Ok(());
@@ -214,6 +226,12 @@ fn triage(args: TriageArgs) -> Result<()> {
         println!("\nLargest:");
         for (path, size) in &sum.largest {
             println!("  {:>10}  {}", human_bytes(*size), path);
+        }
+    }
+    if !sum.mismatches.is_empty() {
+        println!("\nType mismatches (content \u{2260} extension):");
+        for m in &sum.mismatches {
+            println!("  {}: .{} but content is {}", m.path, m.claimed, m.detected);
         }
     }
     Ok(())
