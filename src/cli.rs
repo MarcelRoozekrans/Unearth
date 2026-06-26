@@ -246,6 +246,11 @@ pub struct RecoverArgs {
     #[arg(long = "name", value_name = "GLOB", value_delimiter = ',')]
     pub names: Vec<String>,
 
+    /// Skip files whose name matches this glob (applied after `--name`), e.g.
+    /// `--exclude-name '*.tmp,Thumbs.db'`. Repeatable or comma-separated.
+    #[arg(long = "exclude-name", value_name = "GLOB", value_delimiter = ',')]
+    pub exclude_names: Vec<String>,
+
     /// Only carve files starting on a multiple of this many bytes (e.g. 512 or
     /// 4K). Cuts false positives, since real files start on cluster boundaries.
     #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value_t = 1)]
@@ -363,6 +368,11 @@ pub struct UndeleteArgs {
     /// Repeatable or comma-separated, e.g. `--name '*.jpg,*.png'`.
     #[arg(long = "name", value_name = "GLOB", value_delimiter = ',')]
     pub names: Vec<String>,
+
+    /// Skip files whose name matches this glob (applied after `--name`), e.g.
+    /// `--exclude-name '*.tmp,Thumbs.db'`. Repeatable or comma-separated.
+    #[arg(long = "exclude-name", value_name = "GLOB", value_delimiter = ',')]
+    pub exclude_names: Vec<String>,
 
     /// List what would be recovered without writing any files.
     #[arg(long)]

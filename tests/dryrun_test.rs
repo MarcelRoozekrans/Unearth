@@ -84,6 +84,7 @@ fn dry_run_reports_without_writing() {
         modified_after: None,
         modified_before: None,
         names: Vec::new(),
+        exclude_names: Vec::new(),
         dry_run: true,
     };
     let stats = vol.recover_deleted(&source, &out_dir, &opts).unwrap();
