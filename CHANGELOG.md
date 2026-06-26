@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **ReFS volumes are recognised** — Microsoft's Resilient File System (Windows
+  Server, Storage Spaces, Dev Drive) is detected from the `ReFS`/`FSRS`
+  signatures in its volume boot record and reported by `info`/`list_volumes`
+  with its size (from the boot record's sector geometry). Like APFS and Btrfs it
+  is copy-on-write (and undocumented), so there is no metadata undelete — fall
+  back to `scan` (carving) to recover data. Detection runs both in the normal
+  layout and in the whole-source `--scan` partition search.
 - **`triage` flags content/extension mismatches** — files whose bytes identify
   as a different known type than their extension claims (e.g. a `.jpg` that is
   really an executable — a renamed/disguised file, or a recovery mislabel).
