@@ -8,8 +8,10 @@
 //! which loses both. Extraction walks the directory tree from the Primary Volume
 //! Descriptor, or from the **Joliet** Supplementary Volume Descriptor when one
 //! is present, so the long, Unicode (UCS-2) filenames that Windows-authored
-//! discs use are recovered intact. (Rock Ridge long names are not yet decoded,
-//! falling back to the short ISO 9660 identifier.)
+//! discs use are recovered intact. On non-Joliet discs, **Rock Ridge** `NM`
+//! entries (the POSIX-name extension used by Linux/macOS-authored media) are
+//! decoded too, so those long names are also recovered; only Rock Ridge
+//! continuation (`CE`) areas are not yet followed.
 //!
 //! Detection reads the **Volume Descriptor Set** at sector 16 (byte offset
 //! 32768): a series of 2048-byte descriptors each `{ type: u8, id: "CD001",
@@ -219,7 +221,12 @@ impl Volume {
                 let child_lba = u32::from_le_bytes([rec[2], rec[3], rec[4], rec[5]]) as u64;
                 let child_len = u32::from_le_bytes([rec[10], rec[11], rec[12], rec[13]]) as u64;
                 let is_dir = rec[25] & 0x02 != 0;
-                let name = decode_name(name_bytes, is_dir, self.joliet);
+                // Prefer a Rock Ridge POSIX name (Linux/Unix discs) over the
+                // short ISO identifier; Joliet (Windows) already has long names.
+                let name = match (self.joliet, rock_ridge_name(rec, name_len)) {
+                    (false, Some(rr)) => sanitize_component(&rr),
+                    _ => decode_name(name_bytes, is_dir, self.joliet),
+                };
                 let child_rel = rel.join(&name);
 
                 if is_dir {
@@ -284,6 +291,41 @@ impl Volume {
             Ok(digest) => stats.record_recovered(rel, len, Some(digest)),
             Err(_) => stats.record_skipped(rel, len),
         }
+    }
+}
+
+/// Extract a Rock Ridge POSIX name from a directory record's System Use area, if
+/// present. Concatenates the `NM` (alternate name) SUSP entries; returns `None`
+/// when there is no Rock Ridge name (so the caller falls back to the ISO 9660
+/// identifier). Continuation areas (`CE`) are not followed.
+fn rock_ridge_name(rec: &[u8], name_len: usize) -> Option<String> {
+    // The System Use area begins after the file identifier, padded so it starts
+    // on an even offset (a pad byte is present when the name length is even).
+    let start = 33 + name_len + usize::from(name_len % 2 == 0);
+    if start >= rec.len() {
+        return None;
+    }
+    let area = &rec[start..];
+    let mut name = String::new();
+    let mut pos = 0usize;
+    while pos + 4 <= area.len() {
+        let su_len = area[pos + 2] as usize;
+        if su_len < 4 || pos + su_len > area.len() {
+            break;
+        }
+        if &area[pos..pos + 2] == b"NM" && su_len >= 5 {
+            let flags = area[pos + 4];
+            // Skip the "current" (.) and "parent" (..) name entries.
+            if flags & 0x06 == 0 {
+                name.push_str(&String::from_utf8_lossy(&area[pos + 5..pos + su_len]));
+            }
+        }
+        pos += su_len;
+    }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
     }
 }
 
@@ -424,6 +466,35 @@ mod tests {
         buf[at + 25] = if is_dir { 0x02 } else { 0 };
         buf[at + 32] = name.len() as u8;
         buf[at + 33..at + 33 + name.len()].copy_from_slice(name);
+        rec_len
+    }
+
+    /// Write a directory record with a Rock Ridge `NM` entry in its System Use
+    /// area, returning its length.
+    fn put_record_rr(
+        buf: &mut [u8],
+        at: usize,
+        lba: u32,
+        len: u32,
+        name: &[u8],
+        rr_name: &[u8],
+    ) -> usize {
+        let su = 33 + name.len() + (name.len() % 2 == 0) as usize; // system-use start
+        let nm = 5 + rr_name.len(); // NM entry length
+        let rec_len = su + nm + ((su + nm) % 2); // pad whole record to even
+        buf[at] = rec_len as u8;
+        buf[at + 2..at + 6].copy_from_slice(&lba.to_le_bytes());
+        buf[at + 10..at + 14].copy_from_slice(&len.to_le_bytes());
+        buf[at + 32] = name.len() as u8;
+        buf[at + 33..at + 33 + name.len()].copy_from_slice(name);
+        // NM entry: "NM", length, version, flags, name.
+        let e = at + su;
+        buf[e] = b'N';
+        buf[e + 1] = b'M';
+        buf[e + 2] = nm as u8;
+        buf[e + 3] = 1;
+        buf[e + 4] = 0; // flags
+        buf[e + 5..e + 5 + rr_name.len()].copy_from_slice(rr_name);
         rec_len
     }
 
@@ -571,5 +642,49 @@ mod tests {
         assert_eq!(stats.recovered, 1);
         // The Joliet long name is used, not the short MYPHOT~1.JPG.
         assert_eq!(std::fs::read(out.join("My Photo.jpg")).unwrap(), payload);
+    }
+
+    #[test]
+    fn rock_ridge_names_are_used_on_non_joliet_discs() {
+        const BS: usize = 2048;
+        // sector 16 = PVD, 18 = root dir, 20 = file data.
+        let total = 22 * BS;
+        let mut v = vec![0u8; total];
+        let payload = b"rock ridge payload";
+        v[20 * BS..20 * BS + payload.len()].copy_from_slice(payload);
+
+        // Root (sector 18): ".", "..", then a file with a short name plus a
+        // Rock Ridge NM entry carrying the real POSIX name.
+        let mut p = 18 * BS;
+        p += put_record(&mut v, p, 18, BS as u32, true, &[0x00]);
+        p += put_record(&mut v, p, 18, BS as u32, true, &[0x01]);
+        let _ = put_record_rr(
+            &mut v,
+            p,
+            20,
+            payload.len() as u32,
+            b"NOTES.TXT;1",
+            b"My Notes (draft).txt",
+        );
+
+        // PVD (sector 16), no Joliet SVD.
+        let off = put_descriptor(&mut v, 0, PRIMARY);
+        v[off + 80..off + 84].copy_from_slice(&22u32.to_le_bytes());
+        v[off + 128..off + 130].copy_from_slice(&(BS as u16).to_le_bytes());
+        put_record(&mut v, off + 156, 18, BS as u32, true, &[0x00]);
+
+        let (tmp, src) = source_of(&v);
+        let vol = detect(&src, 0).unwrap();
+        let out = tmp.path().join("out");
+        let stats = vol
+            .recover_deleted(&src, &out, &RecoverOptions::default())
+            .unwrap();
+
+        assert_eq!(stats.recovered, 1);
+        // The Rock Ridge name wins over the short NOTES.TXT.
+        assert_eq!(
+            std::fs::read(out.join("My Notes (draft).txt")).unwrap(),
+            payload
+        );
     }
 }
