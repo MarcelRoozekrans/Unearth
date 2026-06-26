@@ -339,7 +339,11 @@ signatures and structural checks carving uses):
 ```sh
 filerecovery identify recovered/00000007_0x00000000003c1a00.jpg
 filerecovery identify mystery.dat --json
+filerecovery identify recovered/*        # label many files at once
 ```
+
+Several files can be given at once — one line each (or, with `--json`, a JSON
+array; a single file still prints one object).
 
 ### Summarize a recovery directory
 

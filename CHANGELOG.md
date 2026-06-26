@@ -14,6 +14,9 @@ formats.
 
 ### Added
 
+- **`identify` accepts multiple files** — `identify FILE...` (e.g. `identify *`)
+  labels each file's type from its contents, one line per file; with `--json` it
+  emits an array (a single file still prints one object, unchanged).
 - **`info` shows the partition table** — the scheme (GPT or MBR) and each entry's
   type (friendly names for known GPT type GUIDs and MBR type bytes, otherwise the
   raw GUID / `0xNN`), GPT name, and byte range. This reveals the on-disk layout

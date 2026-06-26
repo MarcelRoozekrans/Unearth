@@ -796,6 +796,35 @@ fn identify_detects_type_by_content() {
 }
 
 #[test]
+fn identify_handles_multiple_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let jpg = tmp.path().join("a.bin");
+    std::fs::write(&jpg, common::jpeg(&[0x41u8; 50])).unwrap();
+    let unknown = tmp.path().join("b.bin");
+    std::fs::write(&unknown, b"plain text, no signature").unwrap();
+
+    // Text: one line per file, each prefixed with its path.
+    let out = run(&["identify", jpg.to_str().unwrap(), unknown.to_str().unwrap()]);
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("a.bin"), "{text}");
+    assert!(text.contains("jpg"), "{text}");
+    assert!(text.contains("b.bin: unknown"), "{text}");
+
+    // JSON: an array with one object per file.
+    let out = run(&[
+        "identify",
+        "--json",
+        jpg.to_str().unwrap(),
+        unknown.to_str().unwrap(),
+    ]);
+    let json = String::from_utf8_lossy(&out.stdout);
+    assert!(json.trim_start().starts_with('['), "array output: {json}");
+    assert!(json.contains("\"type\":\"jpg\""), "{json}");
+    assert!(json.contains("\"identified\":false"), "{json}");
+}
+
+#[test]
 fn triage_summarizes_a_directory() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("rec");

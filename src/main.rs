@@ -220,26 +220,32 @@ fn triage(args: TriageArgs) -> Result<()> {
 }
 
 fn identify(args: IdentifyArgs) -> Result<()> {
-    use std::io::Read;
-    let mut head = vec![0u8; 64 * 1024];
-    let mut f = std::fs::File::open(&args.file)
-        .map_err(|e| anyhow::anyhow!("opening {}: {e}", args.file.display()))?;
-    let mut read = 0usize;
-    while read < head.len() {
-        let nb = f.read(&mut head[read..])?;
-        if nb == 0 {
-            break;
-        }
-        read += nb;
-    }
-    head.truncate(read);
-    let detected = filerecovery::identify::identify(&head);
+    use filerecovery::json::{obj, s, Json};
 
-    if args.json {
-        use filerecovery::json::{obj, s, Json};
-        let out = match &detected {
+    // Read up to 64 KiB from the start of a file (what the signature table and
+    // its validators need).
+    fn read_head(path: &std::path::Path) -> Result<Vec<u8>> {
+        use std::io::Read;
+        let mut head = vec![0u8; 64 * 1024];
+        let mut f = std::fs::File::open(path)
+            .map_err(|e| anyhow::anyhow!("opening {}: {e}", path.display()))?;
+        let mut read = 0usize;
+        while read < head.len() {
+            let nb = f.read(&mut head[read..])?;
+            if nb == 0 {
+                break;
+            }
+            read += nb;
+        }
+        head.truncate(read);
+        Ok(head)
+    }
+
+    let one_json = |path: &std::path::Path| -> Result<Json> {
+        let head = read_head(path)?;
+        Ok(match filerecovery::identify::identify(&head) {
             Some(d) => obj(vec![
-                ("file", s(args.file.display().to_string())),
+                ("file", s(path.display().to_string())),
                 ("identified", Json::Bool(true)),
                 ("type", s(d.ext)),
                 ("name", s(d.name)),
@@ -247,30 +253,42 @@ fn identify(args: IdentifyArgs) -> Result<()> {
                 ("validated", Json::Bool(d.validated)),
             ]),
             None => obj(vec![
-                ("file", s(args.file.display().to_string())),
+                ("file", s(path.display().to_string())),
                 ("identified", Json::Bool(false)),
             ]),
-        };
-        println!("{out}");
+        })
+    };
+
+    if args.json {
+        // One file: a single object (back-compatible). Several: a JSON array.
+        if let [path] = args.files.as_slice() {
+            println!("{}", one_json(path)?);
+        } else {
+            let arr: Result<Vec<Json>> = args.files.iter().map(|p| one_json(p)).collect();
+            println!("{}", Json::Arr(arr?));
+        }
         return Ok(());
     }
 
-    match detected {
-        Some(d) => {
-            let note = if d.validated {
-                "structurally validated"
-            } else {
-                "by magic"
-            };
-            let category = signatures::category_of(d.ext).as_str();
-            println!(
-                "{}: {} ({}, {category}, {note})",
-                args.file.display(),
-                d.name,
-                d.ext
-            );
+    for path in &args.files {
+        let head = read_head(path)?;
+        match filerecovery::identify::identify(&head) {
+            Some(d) => {
+                let note = if d.validated {
+                    "structurally validated"
+                } else {
+                    "by magic"
+                };
+                let category = signatures::category_of(d.ext).as_str();
+                println!(
+                    "{}: {} ({}, {category}, {note})",
+                    path.display(),
+                    d.name,
+                    d.ext
+                );
+            }
+            None => println!("{}: unknown", path.display()),
         }
-        None => println!("{}: unknown", args.file.display()),
     }
     Ok(())
 }
