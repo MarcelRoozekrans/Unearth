@@ -63,7 +63,9 @@ formats.
   UCS-2/Unicode) and **Rock Ridge** (`NM` entries on Linux/macOS discs) —
   including names that overflow the directory record into Rock Ridge
   continuation (`CE`) areas — so files come back with their full filenames
-  either way. A hybrid UDF disc is reported as UDF.
+  either way. Files stored across several **multi-extent** records (how ISO 9660
+  holds files larger than ~4 GiB) are reassembled into one output file rather
+  than emitted as separate fragments. A hybrid UDF disc is reported as UDF.
 - **Lost/corrupt partition recovery** — `info --scan` finds volumes that have no
   partition-table entry via a whole-source signature scan, and `undelete --scan`
   / `recover --scan` recover from every volume found, in one command.
