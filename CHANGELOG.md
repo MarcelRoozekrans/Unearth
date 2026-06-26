@@ -80,6 +80,9 @@ formats.
 - **`recover --dry-run`** previews both passes (filesystem undelete and carving)
   without writing any files, so dry-run is now available on `scan`, `undelete`,
   and `recover` alike.
+- **`--volume <N>`** — `undelete` and `recover` can target a single detected
+  volume by its `info` index (0-based), a friendlier alternative to copying the
+  raw `--offset`. Out-of-range indexes are reported clearly.
 - **Name/glob filtering** — `--name <GLOB>` (on `undelete` and `recover`, and the
   MCP `undelete` tool) recovers only files whose name matches a case-insensitive
   glob (`*` and `?`); repeatable or comma-separated (`--name '*.jpg,*.png'`), and

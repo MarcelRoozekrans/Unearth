@@ -290,7 +290,9 @@ Detected 1 volume(s):
       free:  20.00 KiB (62.5% unallocated)
 ```
 
-The `OFFSET` column is handy if you ever need to pass `--offset` to `undelete`.
+The `#` index column can be passed straight to `undelete`/`recover` as
+`--volume <N>` to recover from just that volume; the `OFFSET` column is there if
+you prefer to target it by byte offset with `--offset`.
 
 #### Find lost or corrupt partitions (`--scan`)
 
@@ -356,6 +358,7 @@ partition table). Override the location with `--offset <BYTES>` if needed.
 ```text
 -o, --output <DIR>     Where to write recovered files (default: ./recovered)
     --offset <BYTES>   Byte offset of the volume (default: auto-detect)
+    --volume <N>       Recover from only this volume index (from `info`)
     --min-size <SIZE>  Skip deleted files smaller than this
     --max-size <SIZE>  Skip deleted files larger than this
     --modified-after <DATE>   Only files modified on/after this UTC date
@@ -416,7 +419,8 @@ the undelete pass by each file's modification date — accepts `YYYY-MM-DD` or
 `YYYY-MM-DDTHH:MM:SS`, UTC), `--name` (recover only files whose name matches a
 glob, e.g. `--name '*.jpg,*.png'` — undelete pass), `--align` (carve only
 sector/cluster-aligned files), `--organize` (group `carved/` by type),
-`--offset` (volume offset for the undelete pass), and `--dry-run` (preview both
+`--offset`/`--volume` (target one volume for the undelete pass — by byte offset
+or by `info` index), and `--dry-run` (preview both
 passes — counts, sizes, and the `--report` manifest — without writing anything).
 
 Add `--unallocated` to carve **only the volume's free space**, skipping clusters
