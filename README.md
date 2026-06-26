@@ -626,7 +626,8 @@ step-by-step walkthrough (signature → extent → validator → test).
 3. **Validate.** Before a file is written, its header is checked against the
    format's fixed structure (e.g. a JPEG's first marker, a PNG's `IHDR` chunk,
    a BMP's DIB-header size, SQLite's header constants, a PDF version string, a
-   TIFF IFD offset, a CAB's reserved fields, a WASM/DEX version). A magic that
+   TIFF IFD offset, a CAB's reserved fields, a WASM/DEX version, a PSD
+   version/reserved fields, an Ogg/FLV header). A magic that
    occurred by
    coincidence in unrelated data almost always fails this check and is dropped,
    cutting false positives. The check is conservative — a type with no validator,

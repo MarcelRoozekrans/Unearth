@@ -146,10 +146,11 @@ formats.
 
 ### Fixed
 
-- **Fewer carving false positives** — structural validators were added for five
+- **Fewer carving false positives** — structural validators were added for eight
   more types: PDF (version string), TIFF/BigTIFF (byte order, version, and a
-  plausible first-IFD offset), Microsoft Cabinet (zeroed reserved fields), and
-  WebAssembly and Android DEX (version checks). A coincidental magic match in
+  plausible first-IFD offset), Microsoft Cabinet (zeroed reserved fields),
+  WebAssembly and Android DEX (version checks), Photoshop (version + reserved
+  fields), and Ogg and FLV (header constants). A coincidental magic match in
   unrelated data now fails these checks and is dropped, on top of the existing
   JPEG/PNG/GIF/BMP/SQLite/ELF/EMF/MIDI validators.
 - **JPEG carving no longer truncates at an embedded thumbnail.** Camera and phone
