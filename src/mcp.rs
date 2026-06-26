@@ -176,6 +176,8 @@ fn tool_definitions() -> Json {
     tool(
         "list_volumes",
         "Detect the partitions/filesystems in a source (disk image or device). \
+         The result includes the partition table (partition_scheme plus a \
+         partitions array of type/name/start/size) and the detected filesystems. \
          Each volume reports its free (unallocated) space as free_bytes (null when \
          the filesystem's allocation map is not parsed). \
          Set deleted=true to also count recoverable deleted files per volume. \
@@ -597,8 +599,30 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     ])
                 })
                 .collect();
+            // The partition table (GPT/MBR), independent of which filesystems
+            // are recovered, so the agent sees the full on-disk layout.
+            let table = crate::partition::read(&source);
+            let scheme = match table.scheme {
+                crate::partition::Scheme::Gpt => "gpt",
+                crate::partition::Scheme::Mbr => "mbr",
+                crate::partition::Scheme::None => "none",
+            };
+            let parts: Vec<Json> = table
+                .partitions
+                .iter()
+                .map(|p| {
+                    obj(vec![
+                        ("type", s(p.kind.clone())),
+                        ("name", p.name.clone().map_or(Json::Null, s)),
+                        ("start", n(p.start)),
+                        ("size", n(p.size)),
+                    ])
+                })
+                .collect();
             Ok(obj(vec![
                 ("source_bytes", n(source.size)),
+                ("partition_scheme", s(scheme)),
+                ("partitions", Json::Arr(parts)),
                 ("volumes", Json::Arr(list)),
             ]))
         }
