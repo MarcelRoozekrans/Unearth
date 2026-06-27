@@ -8,7 +8,10 @@
 //!
 //! For GPT, if the primary header (LBA 1) is missing or corrupt the layout is
 //! read from the backup header and entry array at the end of the disk, with
-//! [`Table::from_backup`] set so callers can flag it.
+//! [`Table::from_backup`] set so callers can flag it. For MBR, the logical
+//! partitions inside an extended partition are enumerated by walking the
+//! Extended Boot Record chain, so disks with more than four partitions report
+//! all of them.
 
 use crate::source::Source;
 
@@ -146,6 +149,11 @@ fn read_mbr(src: &Source) -> Option<Table> {
             start: start_lba * 512,
             size: sectors * 512,
         });
+        // An extended partition holds a linked list of logical partitions in
+        // Extended Boot Records; walk that chain so they show up too.
+        if is_extended_mbr(kind) {
+            walk_ebr_chain(src, start_lba, &mut partitions);
+        }
     }
     if partitions.is_empty() {
         return None;
@@ -155,6 +163,55 @@ fn read_mbr(src: &Source) -> Option<Table> {
         partitions,
         from_backup: false,
     })
+}
+
+/// MBR partition type codes for an extended (container) partition.
+fn is_extended_mbr(kind: u8) -> bool {
+    matches!(kind, 0x05 | 0x0F | 0x85)
+}
+
+/// Walk the Extended Boot Record chain of an extended partition that begins at
+/// `ext_base_lba`, appending each logical partition to `out`. Each EBR holds the
+/// logical partition (offset relative to the EBR) and a pointer to the next EBR
+/// (offset relative to the extended-partition base). Bounded against a
+/// malformed or cyclic chain.
+fn walk_ebr_chain(src: &Source, ext_base_lba: u64, out: &mut Vec<Partition>) {
+    const MAX_LOGICAL: usize = 256;
+    let mut ebr_lba = ext_base_lba;
+    let mut visited = std::collections::HashSet::new();
+    for _ in 0..MAX_LOGICAL {
+        if !visited.insert(ebr_lba) {
+            break; // a self-referential chain would otherwise loop forever
+        }
+        let Some(off) = ebr_lba.checked_mul(512) else {
+            break;
+        };
+        let mut sec = [0u8; 512];
+        if src.read_at(off, &mut sec).unwrap_or(0) < 512 || sec[510] != 0x55 || sec[511] != 0xAA {
+            break;
+        }
+        // Entry 0: the logical partition, its start relative to this EBR.
+        let kind = sec[446 + 4];
+        let rel = u32::from_le_bytes(sec[446 + 8..446 + 12].try_into().unwrap()) as u64;
+        let sectors = u32::from_le_bytes(sec[446 + 12..446 + 16].try_into().unwrap()) as u64;
+        if kind != 0 && sectors != 0 {
+            out.push(Partition {
+                kind: mbr_type_name(kind),
+                name: None,
+                start: ebr_lba.saturating_add(rel) * 512,
+                size: sectors * 512,
+            });
+        }
+        // Entry 1: pointer to the next EBR, its start relative to the extended
+        // base. An empty or non-extended pointer ends the chain.
+        let next_kind = sec[446 + 16 + 4];
+        let next_rel =
+            u32::from_le_bytes(sec[446 + 16 + 8..446 + 16 + 12].try_into().unwrap()) as u64;
+        if !is_extended_mbr(next_kind) || next_rel == 0 {
+            break;
+        }
+        ebr_lba = ext_base_lba.saturating_add(next_rel);
+    }
 }
 
 /// Format a 16-byte GPT GUID in canonical `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`
@@ -267,6 +324,58 @@ mod tests {
         assert_eq!(table.partitions[0].start, 2048 * 512);
         assert_eq!(table.partitions[0].size, 100 * 512);
         assert_eq!(table.partitions[1].kind, "NTFS / exFAT");
+    }
+
+    #[test]
+    fn walks_mbr_extended_logical_partitions() {
+        const SS: usize = 512;
+        let mut disk = vec![0u8; 64 * SS];
+        disk[510] = 0x55;
+        disk[511] = 0xAA;
+        // Primary 0: Linux (0x83) at LBA 1, 4 sectors.
+        let e = 446;
+        disk[e + 4] = 0x83;
+        disk[e + 8..e + 12].copy_from_slice(&1u32.to_le_bytes());
+        disk[e + 12..e + 16].copy_from_slice(&4u32.to_le_bytes());
+        // Primary 1: Extended (0x05) container at LBA 20, 40 sectors.
+        let e = 446 + 16;
+        disk[e + 4] = 0x05;
+        disk[e + 8..e + 12].copy_from_slice(&20u32.to_le_bytes());
+        disk[e + 12..e + 16].copy_from_slice(&40u32.to_le_bytes());
+
+        // EBR 1 at LBA 20: logical Linux at +2 (LBA 22), next EBR at base+10.
+        let b = 20 * SS;
+        disk[b + 510] = 0x55;
+        disk[b + 511] = 0xAA;
+        let e = b + 446;
+        disk[e + 4] = 0x83;
+        disk[e + 8..e + 12].copy_from_slice(&2u32.to_le_bytes());
+        disk[e + 12..e + 16].copy_from_slice(&4u32.to_le_bytes());
+        let e = b + 446 + 16;
+        disk[e + 4] = 0x05;
+        disk[e + 8..e + 12].copy_from_slice(&10u32.to_le_bytes());
+        disk[e + 12..e + 16].copy_from_slice(&20u32.to_le_bytes());
+
+        // EBR 2 at LBA 30: logical NTFS at +2 (LBA 32); chain ends (entry 1 = 0).
+        let b = 30 * SS;
+        disk[b + 510] = 0x55;
+        disk[b + 511] = 0xAA;
+        let e = b + 446;
+        disk[e + 4] = 0x07;
+        disk[e + 8..e + 12].copy_from_slice(&2u32.to_le_bytes());
+        disk[e + 12..e + 16].copy_from_slice(&4u32.to_le_bytes());
+
+        let (_t, src) = source_of(&disk);
+        let table = read(&src);
+        assert_eq!(table.scheme, Scheme::Mbr);
+        // primary Linux, the extended container, then the two logicals.
+        assert_eq!(table.partitions.len(), 4);
+        assert_eq!(table.partitions[0].kind, "Linux");
+        assert_eq!(table.partitions[1].kind, "Extended");
+        assert_eq!(table.partitions[2].kind, "Linux");
+        assert_eq!(table.partitions[2].start, 22 * 512); // EBR1 LBA + relative 2
+        assert_eq!(table.partitions[3].kind, "NTFS / exFAT");
+        assert_eq!(table.partitions[3].start, 32 * 512); // EBR2 LBA + relative 2
     }
 
     #[test]
