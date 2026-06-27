@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **SquashFS image carving** — the read-only compressed filesystem used by Snap
+  packages, AppImages, live media, and router/IoT firmware is carved from its
+  `hsqs` superblock, whose `bytes_used` field gives the exact image size. The
+  major version (4) and block-size/`block_log` consistency are checked, so a
+  coincidental `hsqs` does not produce a bogus file. `identify` and `triage`
+  recognise `.squashfs` by content too.
 - **`cpio` archive carving** — the "new ASCII" (`newc`, and `070702` CRC) format
   used by Linux initramfs images and RPM payloads is carved by walking the entry
   chain (each 110-byte ASCII header's hex `namesize`/`filesize` fields give the

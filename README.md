@@ -599,6 +599,7 @@ alongside the per-file manifest.
 | ar     | Unix ar archive (deb / static lib)              | member-chain walk           |
 | tar    | tar archive (POSIX / GNU ustar)                 | 512-byte member-chain walk  |
 | cpio   | cpio archive (newc; initramfs / RPM)            | entry-chain walk to TRAILER |
+| squashfs | SquashFS image (Snap / AppImage / firmware)   | bytes_used in superblock    |
 | sqlite | SQLite database                                 | page size × page count      |
 | wav    | WAV audio                                        | RIFF size field             |
 | mp3    | MP3 audio                                        | ID3v2 tag or frame-sync walk |
