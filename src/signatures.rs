@@ -64,6 +64,8 @@
 //! * [`Extent::Swf`] — uncompressed Flash movie (`FWS`): `FileLength` at offset 4.
 //! * [`Extent::Cfbf`] — OLE2 compound file: walk the FAT to the last used sector.
 //! * [`Extent::Pst`] — Outlook data file (PST/OST): `ibFileEof` in the header.
+//! * [`Extent::Tar`] — `tar` archive: walk the 512-byte member chain to the
+//!   zero-block terminator.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -288,6 +290,13 @@ pub enum Extent {
     /// 32-bit `ibFileEof` at a different offset and is not carved. The version
     /// and the `SM` client signature are checked to reject a coincidental magic.
     Pst,
+    /// POSIX/GNU `tar` archive (`ustar`). Each member is a 512-byte header block
+    /// (carrying the member's size as an octal field at offset 124) followed by
+    /// its data padded up to a multiple of 512; the archive ends with the two
+    /// all-zero blocks that mark end-of-archive. The chain is walked from one
+    /// `ustar` header to the next, validating each header's checksum, so the file
+    /// ends exactly at the zero terminator rather than at a coincidental `ustar`.
+    Tar,
 }
 
 /// A recoverable file type.
@@ -1190,6 +1199,17 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Pst,
         max_size: 50 * GB,
     },
+    Signature {
+        // POSIX/GNU tar: the "ustar" magic sits at offset 257 of the first
+        // 512-byte header; the member chain is walked to the zero terminator.
+        name: "tar archive",
+        ext: "tar",
+        magic: b"ustar",
+        magic_offset: 257,
+        secondary: None,
+        extent: Extent::Tar,
+        max_size: 8 * GB,
+    },
 ];
 
 /// Look up signatures relevant to a single source byte, keyed by the first
@@ -1443,7 +1463,7 @@ pub fn category_of(ext: &str) -> Category {
         // CFBF.
         "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "doc"
         | "xls" | "ppt" | "msg" | "pst" | "ole" => Category::Document,
-        "zip" | "7z" | "rar" | "cab" | "ar" | "zst" | "lz4" | "jar" => Category::Archive,
+        "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "zst" | "lz4" | "jar" => Category::Archive,
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" => Category::System,

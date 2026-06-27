@@ -554,6 +554,7 @@ fn file_length(
         Extent::Swf => Ok(swf_length(source, file_start, limit)?),
         Extent::Cfbf => Ok(cfbf_length(source, file_start, limit)?),
         Extent::Pst => Ok(pst_length(source, file_start, limit)?),
+        Extent::Tar => Ok(tar_length(source, file_start, limit)?),
     }
 }
 
@@ -3014,6 +3015,109 @@ fn ar_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>
         return Ok(None);
     }
     Ok(Some(pos))
+}
+
+/// `tar` archive length. Each member is a 512-byte header (its data size an octal
+/// field at offset 124) followed by data padded up to a multiple of 512; the
+/// archive ends with two all-zero blocks. Walk the member chain from one `ustar`
+/// header to the next — validating each header's checksum — and end at the zero
+/// terminator, so a coincidental `ustar` does not over- or under-read.
+fn tar_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const BLOCK: u64 = 512;
+    const MAX_MEMBERS: u64 = 1_000_000;
+    let avail = limit.saturating_sub(file_start);
+    let mut pos = 0u64;
+    let mut members = 0u64;
+    let mut block = [0u8; BLOCK as usize];
+    loop {
+        if pos.saturating_add(BLOCK) > avail {
+            break;
+        }
+        if source.read_at(file_start + pos, &mut block)? < BLOCK as usize {
+            break;
+        }
+        // Two consecutive zero blocks mark end-of-archive.
+        if block.iter().all(|&b| b == 0) {
+            // Include both terminator blocks when they fit (a valid tar EOF),
+            // else just the one we have.
+            let end = if pos.saturating_add(2 * BLOCK) <= avail {
+                pos + 2 * BLOCK
+            } else {
+                pos + BLOCK
+            };
+            return Ok(if members == 0 { None } else { Some(end) });
+        }
+        // A non-terminator block must be a valid ustar header.
+        if &block[257..262] != b"ustar" || !tar_checksum_ok(&block) {
+            break;
+        }
+        let size = match parse_tar_numeric(&block[124..136]) {
+            Some(s) => s,
+            None => break,
+        };
+        // Header block + the member data padded up to a multiple of 512.
+        let data_blocks = size.div_ceil(BLOCK);
+        let next = pos
+            .saturating_add(BLOCK)
+            .saturating_add(data_blocks.saturating_mul(BLOCK));
+        if next > avail || members >= MAX_MEMBERS {
+            break;
+        }
+        pos = next;
+        members += 1;
+    }
+    // No zero terminator (a truncated archive): return the bytes up to the last
+    // complete member so the recovered data is still a usable prefix.
+    if members == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(pos))
+    }
+}
+
+/// Verify a tar header's checksum: the unsigned sum of all 512 header bytes, with
+/// the 8-byte checksum field (offset 148) taken as ASCII spaces, equals the octal
+/// value stored in that field.
+fn tar_checksum_ok(block: &[u8; 512]) -> bool {
+    let Some(stored) = parse_tar_numeric(&block[148..156]) else {
+        return false;
+    };
+    let sum: u64 = block
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| {
+            if (148..156).contains(&i) {
+                0x20
+            } else {
+                b as u64
+            }
+        })
+        .sum();
+    sum == stored
+}
+
+/// Parse a tar numeric field: octal ASCII (space/NUL padded), or GNU base-256
+/// when the field's top bit is set. An all-padding field is `0`.
+fn parse_tar_numeric(field: &[u8]) -> Option<u64> {
+    if field.is_empty() {
+        return None;
+    }
+    // GNU base-256: high bit of the first byte set; the rest is a big-endian
+    // integer (the low 8 bytes are enough for any realistic size).
+    if field[0] & 0x80 != 0 {
+        let mut v: u64 = 0;
+        for &b in field.iter().skip(field.len().saturating_sub(8)) {
+            v = (v << 8) | b as u64;
+        }
+        return Some(v);
+    }
+    // Octal ASCII: drop NULs, trim spaces, read octal digits.
+    let digits: Vec<u8> = field.iter().copied().filter(|&b| b != 0).collect();
+    let text = std::str::from_utf8(&digits).ok()?.trim();
+    if text.is_empty() {
+        return Some(0);
+    }
+    u64::from_str_radix(text, 8).ok()
 }
 
 /// ESRI Shapefile (`.shp`/`.shx`) length. The 100-byte header stores the total
