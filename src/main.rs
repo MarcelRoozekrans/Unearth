@@ -345,6 +345,7 @@ fn info(args: InfoArgs) -> Result<()> {
             "  \"partition_scheme\": \"{}\",\n",
             partition_scheme_str(table.scheme)
         ));
+        out.push_str(&format!("  \"gpt_from_backup\": {},\n", table.from_backup));
         out.push_str("  \"partitions\": [");
         for (i, p) in table.partitions.iter().enumerate() {
             let name = match &p.name {
@@ -433,9 +434,15 @@ fn info(args: InfoArgs) -> Result<()> {
 
     let table = filerecovery::partition::read(&source);
     if !table.partitions.is_empty() {
+        let from_backup = if table.from_backup {
+            " (recovered from backup header; primary GPT is missing or corrupt)"
+        } else {
+            ""
+        };
         println!(
-            "\nPartition table: {}",
-            partition_scheme_str(table.scheme).to_uppercase()
+            "\nPartition table: {}{}",
+            partition_scheme_str(table.scheme).to_uppercase(),
+            from_backup
         );
         for (i, p) in table.partitions.iter().enumerate() {
             let name = p

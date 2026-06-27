@@ -622,6 +622,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
             Ok(obj(vec![
                 ("source_bytes", n(source.size)),
                 ("partition_scheme", s(scheme)),
+                ("gpt_from_backup", Json::Bool(table.from_backup)),
                 ("partitions", Json::Arr(parts)),
                 ("volumes", Json::Arr(list)),
             ]))
