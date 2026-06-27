@@ -60,6 +60,7 @@ pub mod image;
 pub mod iso9660;
 pub mod job;
 pub mod json;
+pub mod lvm;
 pub mod manifest;
 pub mod mcp;
 pub mod ntfs;

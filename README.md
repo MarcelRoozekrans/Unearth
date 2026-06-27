@@ -319,7 +319,8 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 `--scan` reads the **whole source** and probes for filesystem signatures at
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
-(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, HFS+, APFS, Btrfs, and LUKS/BitLocker):
+(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, HFS+, APFS, Btrfs, LVM2, and
+LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -747,6 +748,11 @@ Common to both strategies:
   superblock). But its log-structured, copy-on-write design leaves no stale
   metadata to scavenge, so it is not recovered from metadata. Use `scan`
   (carving).
+- **LVM2** (the Linux Logical Volume Manager) physical volumes are *recognised*
+  from their `LABELONE` / `LVM2 001` on-disk label, and the PV's size is reported
+  by `info`/`list_volumes`. The logical volumes inside are not mapped, so recover
+  with a whole-source `scan` (or `--scan`), which finds the filesystems inside the
+  LVs at their physical offsets.
 - **UDF** (optical discs — DVD/Blu-ray — and many large USB drives and camcorder
   cards) is *recognised* and reported by `info`/`list_volumes` (via its Volume
   Recognition Sequence at sector 16), but its descriptor metadata is not parsed,
