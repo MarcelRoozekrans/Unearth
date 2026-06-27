@@ -59,6 +59,7 @@ pub fn validate(sig: &Signature, data: &[u8]) -> Validity {
         "psd" => psd(data),
         "ogg" => ogg(data),
         "flv" => flv(data),
+        "tar" => tar(data),
         // No structural check for the remaining types; their length strategy
         // (footer search, atom walk, etc.) already rejects most spurious hits.
         _ => Validity::Unknown,
@@ -333,6 +334,50 @@ fn midi(d: &[u8]) -> Validity {
     Validity::Valid
 }
 
+/// tar: the first 512-byte header carries the `ustar` magic at offset 257 and a
+/// header checksum at offset 148 (octal) equal to the sum of all header bytes
+/// with the checksum field taken as ASCII spaces. The full 512-byte header is
+/// needed, so shorter input is `Unknown` (accepted) — the carver's length walk
+/// verifies the checksum of every header anyway.
+fn tar(d: &[u8]) -> Validity {
+    if d.len() < 512 {
+        return Validity::Unknown;
+    }
+    if &d[257..262] != b"ustar" {
+        return Validity::Invalid;
+    }
+    let stored = match tar_octal(&d[148..156]) {
+        Some(v) => v,
+        None => return Validity::Invalid,
+    };
+    let sum: u64 = d[..512]
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| {
+            if (148..156).contains(&i) {
+                0x20
+            } else {
+                b as u64
+            }
+        })
+        .sum();
+    if sum == stored {
+        Validity::Valid
+    } else {
+        Validity::Invalid
+    }
+}
+
+/// Parse a tar octal numeric field (space/NUL padded); an all-padding field is 0.
+fn tar_octal(field: &[u8]) -> Option<u64> {
+    let digits: Vec<u8> = field.iter().copied().filter(|&b| b != 0).collect();
+    let text = std::str::from_utf8(&digits).ok()?.trim();
+    if text.is_empty() {
+        return Some(0);
+    }
+    u64::from_str_radix(text, 8).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -573,5 +618,36 @@ mod tests {
         let mut bad_off = v.clone();
         bad_off[5..9].copy_from_slice(&13u32.to_be_bytes());
         assert_eq!(validate(sig("flv"), &bad_off), Validity::Invalid);
+    }
+
+    /// A 512-byte ustar header with a correct checksum.
+    fn tar_header() -> Vec<u8> {
+        let mut h = vec![0u8; 512];
+        h[..5].copy_from_slice(b"a.txt");
+        h[124..136].copy_from_slice(b"00000000005 "); // size 5 (octal)
+        h[156] = b'0';
+        h[257..263].copy_from_slice(b"ustar\0");
+        for b in &mut h[148..156] {
+            *b = b' ';
+        }
+        let sum: u32 = h.iter().map(|&b| b as u32).sum();
+        h[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+        h
+    }
+
+    #[test]
+    fn tar_checksum_check() {
+        let good = tar_header();
+        assert_eq!(validate(sig("tar"), &good), Validity::Valid);
+        // A corrupted checksum field is rejected.
+        let mut bad = good.clone();
+        bad[148..156].copy_from_slice(b"999999\0 ");
+        assert_eq!(validate(sig("tar"), &bad), Validity::Invalid);
+        // The ustar magic missing is rejected.
+        let mut no_magic = good.clone();
+        no_magic[257..262].copy_from_slice(b"XXXXX");
+        assert_eq!(validate(sig("tar"), &no_magic), Validity::Invalid);
+        // Too short to inspect the 512-byte header: accepted (Unknown).
+        assert_eq!(validate(sig("tar"), &good[..64]), Validity::Unknown);
     }
 }

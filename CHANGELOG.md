@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **`tar` archive carving** — POSIX/GNU `ustar` archives are carved by walking
+  the 512-byte member chain (each header's size field gives the next member) to
+  the two-zero-block end-of-archive marker, so the exact archive length is
+  recovered. Every header's checksum is verified during the walk, so a
+  coincidental `ustar` string does not produce a bogus file. `identify` and
+  `triage` recognise `.tar` by content too.
 - **F2FS volumes are recognised** — the Flash-Friendly File System (internal
   storage on most Android phones, and many SD cards / embedded devices) is
   detected from its `0xF2F52010` superblock and reported by `info` /
