@@ -71,3 +71,4 @@ pub mod times;
 pub mod triage;
 pub mod udf;
 pub mod validate;
+pub mod xfs;

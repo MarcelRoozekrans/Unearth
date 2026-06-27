@@ -281,8 +281,8 @@ corrupt`) and `--json` / the MCP `list_volumes` tool add a `gpt_from_backup`
 flag.
 
 Each volume's **label** (its user-set name) is shown when set — for FAT,
-exFAT, NTFS, ext, and Btrfs (the text view prints it on a `label:` line under
-the volume; `--json` includes a `label` field).
+exFAT, NTFS, ext, Btrfs, and XFS (the text view prints it on a `label:` line
+under the volume; `--json` includes a `label` field).
 
 Each volume's **free (unallocated) space** is also reported — read from the
 filesystem's allocation map for FAT, exFAT, ext2/3/4, NTFS, and HFS+/HFSX. The
@@ -319,7 +319,7 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 `--scan` reads the **whole source** and probes for filesystem signatures at
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
-(FAT, exFAT, NTFS, ReFS, ext, HFS+, APFS, Btrfs, and LUKS/BitLocker):
+(FAT, exFAT, NTFS, ReFS, ext, XFS, HFS+, APFS, Btrfs, and LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -733,6 +733,11 @@ Common to both strategies:
   — like APFS and Btrfs — its copy-on-write design leaves no stale metadata to
   scavenge (and the format is undocumented), so it is not recovered from metadata.
   Use `scan` (carving).
+- **XFS** (the high-performance journaling filesystem common on Linux servers and
+  NAS appliances — the RHEL/CentOS default) is *recognised* and its size and
+  **label** are reported by `info`/`list_volumes` (from the `XFSB` superblock).
+  But modern XFS zeroes an inode's data-extent list on unlink, leaving no stale
+  mapping to scavenge, so it is not recovered from metadata. Use `scan` (carving).
 - **UDF** (optical discs — DVD/Blu-ray — and many large USB drives and camcorder
   cards) is *recognised* and reported by `info`/`list_volumes` (via its Volume
   Recognition Sequence at sector 16), but its descriptor metadata is not parsed,
