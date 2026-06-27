@@ -598,6 +598,7 @@ alongside the per-file manifest.
 | cab    | Microsoft Cabinet archive                       | size field in header        |
 | ar     | Unix ar archive (deb / static lib)              | member-chain walk           |
 | tar    | tar archive (POSIX / GNU ustar)                 | 512-byte member-chain walk  |
+| cpio   | cpio archive (newc; initramfs / RPM)            | entry-chain walk to TRAILER |
 | sqlite | SQLite database                                 | page size × page count      |
 | wav    | WAV audio                                        | RIFF size field             |
 | mp3    | MP3 audio                                        | ID3v2 tag or frame-sync walk |

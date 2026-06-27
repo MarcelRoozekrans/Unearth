@@ -60,6 +60,7 @@ pub fn validate(sig: &Signature, data: &[u8]) -> Validity {
         "ogg" => ogg(data),
         "flv" => flv(data),
         "tar" => tar(data),
+        "cpio" => cpio(data),
         // No structural check for the remaining types; their length strategy
         // (footer search, atom walk, etc.) already rejects most spurious hits.
         _ => Validity::Unknown,
@@ -368,6 +369,24 @@ fn tar(d: &[u8]) -> Validity {
     }
 }
 
+/// cpio (newc): the 6-byte magic is `070701` or `070702`, and the header fields
+/// that follow are 8-hex-digit ASCII. Check every byte from the end of the magic
+/// to the end of the 110-byte header (or the data we have) is an ASCII hex digit.
+fn cpio(d: &[u8]) -> Validity {
+    if d.len() < 14 {
+        return Validity::Unknown;
+    }
+    if &d[0..5] != b"07070" || (d[5] != b'1' && d[5] != b'2') {
+        return Validity::Invalid;
+    }
+    let end = d.len().min(110);
+    if d[6..end].iter().all(|b| b.is_ascii_hexdigit()) {
+        Validity::Valid
+    } else {
+        Validity::Invalid
+    }
+}
+
 /// Parse a tar octal numeric field (space/NUL padded); an all-padding field is 0.
 fn tar_octal(field: &[u8]) -> Option<u64> {
     let digits: Vec<u8> = field.iter().copied().filter(|&b| b != 0).collect();
@@ -649,5 +668,25 @@ mod tests {
         assert_eq!(validate(sig("tar"), &no_magic), Validity::Invalid);
         // Too short to inspect the 512-byte header: accepted (Unknown).
         assert_eq!(validate(sig("tar"), &good[..64]), Validity::Unknown);
+    }
+
+    #[test]
+    fn cpio_hex_field_check() {
+        // newc magic + all-hex fields is valid.
+        let mut good = b"070701".to_vec();
+        good.extend(std::iter::repeat(b'0').take(104));
+        assert_eq!(validate(sig("cpio"), &good), Validity::Valid);
+        // The CRC variant magic is accepted too.
+        let mut crc = b"070702".to_vec();
+        crc.extend(std::iter::repeat(b'A').take(104));
+        assert_eq!(validate(sig("cpio"), &crc), Validity::Valid);
+        // A non-hex byte in the header is rejected.
+        let mut bad = good.clone();
+        bad[20] = b'Z';
+        assert_eq!(validate(sig("cpio"), &bad), Validity::Invalid);
+        // A wrong magic is rejected.
+        let mut wrong = good.clone();
+        wrong[5] = b'7'; // "070707" (old format, not newc)
+        assert_eq!(validate(sig("cpio"), &wrong), Validity::Invalid);
     }
 }

@@ -66,6 +66,8 @@
 //! * [`Extent::Pst`] — Outlook data file (PST/OST): `ibFileEof` in the header.
 //! * [`Extent::Tar`] — `tar` archive: walk the 512-byte member chain to the
 //!   zero-block terminator.
+//! * [`Extent::Cpio`] — `cpio` archive (newc): walk the entry chain to the
+//!   `TRAILER!!!` entry.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -297,6 +299,13 @@ pub enum Extent {
     /// `ustar` header to the next, validating each header's checksum, so the file
     /// ends exactly at the zero terminator rather than at a coincidental `ustar`.
     Tar,
+    /// `cpio` archive, "new ASCII" format (`070701`, and `070702` with CRC) —
+    /// the format used by Linux initramfs images and RPM payloads. Each entry is
+    /// a 110-byte ASCII header (every field 8 hex digits) carrying the name and
+    /// file sizes, then the NUL-terminated name and the file data, each padded to
+    /// a 4-byte boundary. The chain is walked entry by entry to the `TRAILER!!!`
+    /// entry that marks end-of-archive, giving an exact end.
+    Cpio,
 }
 
 /// A recoverable file type.
@@ -1210,6 +1219,26 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Tar,
         max_size: 8 * GB,
     },
+    Signature {
+        // cpio "new ASCII" format (initramfs, RPM payloads).
+        name: "cpio archive (newc)",
+        ext: "cpio",
+        magic: b"070701",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Cpio,
+        max_size: 8 * GB,
+    },
+    Signature {
+        // cpio "new ASCII" with CRC; same layout as 070701.
+        name: "cpio archive (newc, CRC)",
+        ext: "cpio",
+        magic: b"070702",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Cpio,
+        max_size: 8 * GB,
+    },
 ];
 
 /// Look up signatures relevant to a single source byte, keyed by the first
@@ -1463,7 +1492,9 @@ pub fn category_of(ext: &str) -> Category {
         // CFBF.
         "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "doc"
         | "xls" | "ppt" | "msg" | "pst" | "ole" => Category::Document,
-        "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "zst" | "lz4" | "jar" => Category::Archive,
+        "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "cpio" | "zst" | "lz4" | "jar" => {
+            Category::Archive
+        }
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" => Category::System,
