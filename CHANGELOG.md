@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **LVM2 physical volumes are recognised** — a Linux LVM physical volume (how a
+  partition holds the logical volumes that contain the real filesystems) is
+  detected from its `LABELONE` / `LVM2 001` on-disk label and reported by `info`
+  / `list_volumes` with the PV's size, instead of showing as unrecognised. The
+  logical volumes are not mapped, so recover with a whole-source `scan` /
+  `--scan`, which finds the filesystems inside the LVs at their physical offsets.
 - **SquashFS image carving** — the read-only compressed filesystem used by Snap
   packages, AppImages, live media, and router/IoT firmware is carved from its
   `hsqs` superblock, whose `bytes_used` field gives the exact image size. The
