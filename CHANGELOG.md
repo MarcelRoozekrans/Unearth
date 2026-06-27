@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **GPT partition GUIDs are reported** — `info` / `list_volumes` now report each
+  GPT partition's **unique GUID** (the PARTUUID that `/etc/fstab`, bootloaders,
+  and `/dev/disk/by-partuuid` reference) and the **disk GUID**, so a recovered
+  partition can be correlated with a system's configuration. The text view adds
+  `disk GUID:` and per-entry `uuid:` lines; `--json` adds `disk_guid` and a
+  per-partition `uuid` field, as does the MCP `list_volumes` tool.
 - **LVM2 physical volumes are recognised** — a Linux LVM physical volume (how a
   partition holds the logical volumes that contain the real filesystems) is
   detected from its `LABELONE` / `LVM2 001` on-disk label and reported by `info`

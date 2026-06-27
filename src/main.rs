@@ -346,17 +346,27 @@ fn info(args: InfoArgs) -> Result<()> {
             partition_scheme_str(table.scheme)
         ));
         out.push_str(&format!("  \"gpt_from_backup\": {},\n", table.from_backup));
+        let disk_guid = match &table.disk_guid {
+            Some(g) => format!("\"{}\"", json_escape(g)),
+            None => "null".to_string(),
+        };
+        out.push_str(&format!("  \"disk_guid\": {disk_guid},\n"));
         out.push_str("  \"partitions\": [");
         for (i, p) in table.partitions.iter().enumerate() {
             let name = match &p.name {
                 Some(n) => format!("\"{}\"", json_escape(n)),
                 None => "null".to_string(),
             };
+            let uuid = match &p.uuid {
+                Some(u) => format!("\"{}\"", json_escape(u)),
+                None => "null".to_string(),
+            };
             out.push_str(&format!(
-                "{}\n    {{\"type\": \"{}\", \"name\": {}, \"start\": {}, \"size\": {}}}",
+                "{}\n    {{\"type\": \"{}\", \"name\": {}, \"uuid\": {}, \"start\": {}, \"size\": {}}}",
                 if i == 0 { "" } else { "," },
                 json_escape(&p.kind),
                 name,
+                uuid,
                 p.start,
                 p.size,
             ));
@@ -444,6 +454,9 @@ fn info(args: InfoArgs) -> Result<()> {
             partition_scheme_str(table.scheme).to_uppercase(),
             from_backup
         );
+        if let Some(g) = &table.disk_guid {
+            println!("  disk GUID: {g}");
+        }
         for (i, p) in table.partitions.iter().enumerate() {
             let name = p
                 .name
@@ -458,6 +471,9 @@ fn info(args: InfoArgs) -> Result<()> {
                 human_bytes(p.size),
                 name
             );
+            if let Some(u) = &p.uuid {
+                println!("      uuid: {u}");
+            }
         }
     }
 
