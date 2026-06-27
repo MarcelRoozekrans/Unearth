@@ -555,6 +555,7 @@ fn file_length(
         Extent::Cfbf => Ok(cfbf_length(source, file_start, limit)?),
         Extent::Pst => Ok(pst_length(source, file_start, limit)?),
         Extent::Tar => Ok(tar_length(source, file_start, limit)?),
+        Extent::Cpio => Ok(cpio_length(source, file_start, limit)?),
     }
 }
 
@@ -3118,6 +3119,80 @@ fn parse_tar_numeric(field: &[u8]) -> Option<u64> {
         return Some(0);
     }
     u64::from_str_radix(text, 8).ok()
+}
+
+/// `cpio` archive (newc) length. Each entry is a 110-byte ASCII header (8-hex-
+/// digit fields, including `filesize` and `namesize`) followed by the
+/// NUL-terminated name and the file data, each padded so the next entry begins on
+/// a 4-byte boundary. Walk the entry chain to the `TRAILER!!!` entry; its (padded)
+/// end is the end of the archive.
+fn cpio_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const HDR: u64 = 110;
+    const MAX_ENTRIES: u64 = 5_000_000;
+    let avail = limit.saturating_sub(file_start);
+    let mut pos = 0u64;
+    let mut entries = 0u64;
+    let mut hdr = [0u8; HDR as usize];
+    loop {
+        if pos.saturating_add(HDR) > avail {
+            break;
+        }
+        if source.read_at(file_start + pos, &mut hdr)? < HDR as usize {
+            break;
+        }
+        // Header magic: "070701" (newc) or "070702" (newc + CRC).
+        if &hdr[0..5] != b"07070" || (hdr[5] != b'1' && hdr[5] != b'2') {
+            break;
+        }
+        // Fields are 8 hex digits each after the 6-byte magic: filesize is
+        // field 6 (offset 54), namesize field 11 (offset 94).
+        let (Some(filesize), Some(namesize)) =
+            (parse_cpio_hex(&hdr[54..62]), parse_cpio_hex(&hdr[94..102]))
+        else {
+            break;
+        };
+        // The name includes a trailing NUL; bound it so a corrupt field can't
+        // make us read absurd amounts.
+        if namesize == 0 || namesize > 8192 {
+            break;
+        }
+        let name_pos = pos.saturating_add(HDR);
+        if name_pos.saturating_add(namesize) > avail {
+            break;
+        }
+        let mut name = vec![0u8; namesize as usize];
+        if source.read_at(file_start + name_pos, &mut name)? < namesize as usize {
+            break;
+        }
+        // The name and data are each padded so the next field starts on a 4-byte
+        // boundary, measured from the start of the entry's header.
+        let after_name = round_up4(HDR.saturating_add(namesize));
+        // The "TRAILER!!!" entry (name, no data) marks end-of-archive.
+        let trimmed = name.strip_suffix(&[0]).unwrap_or(&name);
+        if trimmed == b"TRAILER!!!" {
+            let end = pos.saturating_add(after_name).min(avail);
+            return Ok(if entries == 0 { None } else { Some(end) });
+        }
+        let next = pos
+            .saturating_add(after_name)
+            .saturating_add(round_up4(filesize));
+        if next > avail || entries >= MAX_ENTRIES {
+            break;
+        }
+        pos = next;
+        entries += 1;
+    }
+    Ok(None)
+}
+
+/// Round up to a multiple of 4 (cpio newc pads names and data to 4 bytes).
+fn round_up4(n: u64) -> u64 {
+    (n.saturating_add(3) / 4) * 4
+}
+
+/// Parse an 8-character ASCII hex field from a cpio header.
+fn parse_cpio_hex(field: &[u8]) -> Option<u64> {
+    u64::from_str_radix(std::str::from_utf8(field).ok()?, 16).ok()
 }
 
 /// ESRI Shapefile (`.shp`/`.shx`) length. The 100-byte header stores the total

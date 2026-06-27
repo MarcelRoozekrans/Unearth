@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **`cpio` archive carving** — the "new ASCII" (`newc`, and `070702` CRC) format
+  used by Linux initramfs images and RPM payloads is carved by walking the entry
+  chain (each 110-byte ASCII header's hex `namesize`/`filesize` fields give the
+  next entry, names and data padded to 4 bytes) to the `TRAILER!!!` end marker,
+  recovering the exact archive length. Header fields are validated as ASCII hex,
+  so a coincidental `070701` does not produce a bogus file. `identify` and
+  `triage` recognise `.cpio` by content too.
 - **`tar` archive carving** — POSIX/GNU `ustar` archives are carved by walking
   the 512-byte member chain (each header's size field gives the next member) to
   the two-zero-block end-of-archive marker, so the exact archive length is
