@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **MBR logical partitions are enumerated** — `info` / `list_volumes` now walk
+  the Extended Boot Record chain inside an extended partition and report each
+  logical partition (its type and byte range), so an MBR disk with more than
+  four partitions shows all of them instead of just the four primary slots. The
+  walk is bounded against a malformed or cyclic chain.
 - **GPT backup-header fallback** — when a disk's primary GPT header (LBA 1) is
   missing or corrupt (e.g. its first sectors were overwritten), `info` /
   `list_volumes` now recover the partition layout from the **backup** GPT header

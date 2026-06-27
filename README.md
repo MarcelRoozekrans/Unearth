@@ -268,7 +268,10 @@ each entry's type (a friendly name for known GPT type GUIDs / MBR type bytes, or
 the raw GUID/`0xNN` otherwise), its GPT name, and its byte range. This surfaces
 the on-disk layout even for partitions whose filesystem isn't recovered (an EFI
 System Partition, a swap partition, an empty slot). `--json` adds
-`partition_scheme` and a `partitions` array.
+`partition_scheme` and a `partitions` array. For MBR disks, the **logical
+partitions** inside an extended partition are enumerated too (by walking the
+Extended Boot Record chain), so a disk with more than four partitions shows all
+of them, not just the four primaries.
 
 For GPT disks, if the **primary** header (LBA 1) is missing or corrupt — e.g.
 the first sectors were overwritten — the layout is recovered from the **backup
