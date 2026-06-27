@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **XFS volumes are recognised** — the high-performance journaling filesystem
+  common on Linux servers and NAS appliances (the RHEL/CentOS default) is
+  detected from its `XFSB` superblock and reported by `info` / `list_volumes`
+  with its size and filesystem **label**. Modern XFS zeroes an inode's
+  data-extent list on unlink, so there is no metadata undelete — fall back to
+  `scan` (carving). Detected in the normal layout and the whole-source `--scan`
+  partition search.
 - **MBR logical partitions are enumerated** — `info` / `list_volumes` now walk
   the Extended Boot Record chain inside an extended partition and report each
   logical partition (its type and byte range), so an MBR disk with more than
