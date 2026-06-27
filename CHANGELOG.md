@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **F2FS volumes are recognised** — the Flash-Friendly File System (internal
+  storage on most Android phones, and many SD cards / embedded devices) is
+  detected from its `0xF2F52010` superblock and reported by `info` /
+  `list_volumes` with its size and volume **label**. Being log-structured and
+  copy-on-write, it has no metadata undelete — fall back to `scan` (carving).
+  Detected in the normal layout and the whole-source `--scan` partition search.
 - **XFS volumes are recognised** — the high-performance journaling filesystem
   common on Linux servers and NAS appliances (the RHEL/CentOS default) is
   detected from its `XFSB` superblock and reported by `info` / `list_volumes`

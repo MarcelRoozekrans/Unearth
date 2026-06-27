@@ -5,10 +5,11 @@
 //! [`crate::ntfs`], [`crate::ext4`], or [`crate::hfsplus`]), so the `undelete`
 //! command can treat every supported filesystem the same way. APFS containers
 //! ([`crate::apfs`]), Btrfs volumes ([`crate::btrfs`]), ReFS volumes
-//! ([`crate::refs`]), and XFS volumes ([`crate::xfs`]) are recognised for
-//! reporting but not recovered from metadata — their copy-on-write or
-//! zero-on-delete design leaves no stale metadata to scavenge, so carving
-//! (`scan`) is the fallback there.
+//! ([`crate::refs`]), XFS volumes ([`crate::xfs`]), and F2FS volumes
+//! ([`crate::f2fs`]) are recognised for reporting but not recovered from
+//! metadata — their copy-on-write, log-structured, or zero-on-delete design
+//! leaves no stale metadata to scavenge, so carving (`scan`) is the fallback
+//! there.
 //! UDF volumes ([`crate::udf`]) are likewise recognised and reported but carved
 //! rather than recovered from metadata. ISO 9660 discs ([`crate::iso9660`]:
 //! optical media and `.iso` images) are read-only, so their files *are* extracted
@@ -23,7 +24,9 @@ use std::time::SystemTime;
 use anyhow::{bail, Result};
 
 use crate::source::Source;
-use crate::{apfs, btrfs, encrypted, exfat, ext4, fat, hfsplus, iso9660, ntfs, refs, udf, xfs};
+use crate::{
+    apfs, btrfs, encrypted, exfat, ext4, f2fs, fat, hfsplus, iso9660, ntfs, refs, udf, xfs,
+};
 
 /// Options controlling a recovery run.
 #[derive(Clone, Default)]
@@ -175,6 +178,7 @@ pub enum Volume {
     Btrfs(btrfs::Volume),
     Refs(refs::Volume),
     Xfs(xfs::Volume),
+    F2fs(f2fs::Volume),
     Encrypted(encrypted::Volume),
     Udf(udf::Volume),
     Iso(iso9660::Volume),
@@ -193,6 +197,7 @@ impl Volume {
             Volume::Btrfs(v) => v.offset,
             Volume::Refs(v) => v.offset,
             Volume::Xfs(v) => v.offset,
+            Volume::F2fs(v) => v.offset,
             Volume::Encrypted(v) => v.offset,
             Volume::Udf(v) => v.offset,
             Volume::Iso(v) => v.offset,
@@ -211,6 +216,7 @@ impl Volume {
             Volume::Btrfs(v) => v.size(),
             Volume::Refs(v) => v.size(),
             Volume::Xfs(v) => v.size(),
+            Volume::F2fs(v) => v.size(),
             Volume::Encrypted(v) => v.size(),
             Volume::Udf(v) => v.size(),
             Volume::Iso(v) => v.size(),
@@ -229,6 +235,7 @@ impl Volume {
             Volume::Btrfs(v) => v.fs_label().to_string(),
             Volume::Refs(v) => v.fs_label().to_string(),
             Volume::Xfs(v) => v.fs_label().to_string(),
+            Volume::F2fs(v) => v.fs_label().to_string(),
             Volume::Encrypted(v) => v.fs_label().to_string(),
             Volume::Udf(v) => v.fs_label().to_string(),
             Volume::Iso(v) => v.fs_label().to_string(),
@@ -255,6 +262,7 @@ impl Volume {
             Volume::Ext(v) => v.label(),
             Volume::Btrfs(v) => v.label(),
             Volume::Xfs(v) => v.label(),
+            Volume::F2fs(v) => v.label(),
             Volume::Iso(v) => v.label(),
             _ => "",
         };
@@ -297,6 +305,7 @@ impl Volume {
             Volume::Btrfs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Refs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Xfs(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::F2fs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Encrypted(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Udf(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Iso(v) => v.recover_deleted(src, out_dir, opts),
@@ -344,7 +353,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, HFS+, APFS, Btrfs, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
+        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, HFS+, APFS, Btrfs, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
@@ -434,6 +443,11 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     if xfs::is_xfs(src, offset) {
         if let Ok(v) = xfs::Volume::parse(src, offset) {
             return Ok(Some(Volume::Xfs(v)));
+        }
+    }
+    if f2fs::is_f2fs(src, offset) {
+        if let Ok(v) = f2fs::Volume::parse(src, offset) {
+            return Ok(Some(Volume::F2fs(v)));
         }
     }
     if fat::looks_like_fat_vbr(&boot) {
@@ -541,6 +555,11 @@ pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     if xfs::is_xfs(src, offset) {
         if let Ok(v) = xfs::Volume::parse(src, offset) {
             return Ok(Volume::Xfs(v));
+        }
+    }
+    if f2fs::is_f2fs(src, offset) {
+        if let Ok(v) = f2fs::Volume::parse(src, offset) {
+            return Ok(Volume::F2fs(v));
         }
     }
     let v = fat::Volume::parse(src, offset)?;
