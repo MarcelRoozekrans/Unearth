@@ -61,6 +61,7 @@ pub fn validate(sig: &Signature, data: &[u8]) -> Validity {
         "flv" => flv(data),
         "tar" => tar(data),
         "cpio" => cpio(data),
+        "squashfs" => squashfs(data),
         // No structural check for the remaining types; their length strategy
         // (footer search, atom walk, etc.) already rejects most spurious hits.
         _ => Validity::Unknown,
@@ -363,6 +364,22 @@ fn tar(d: &[u8]) -> Validity {
         })
         .sum();
     if sum == stored {
+        Validity::Valid
+    } else {
+        Validity::Invalid
+    }
+}
+
+/// SquashFS: the version-4 superblock has major version 4 (offset 28) and a
+/// block size (offset 12) that equals `1 << block_log` (offset 22).
+fn squashfs(d: &[u8]) -> Validity {
+    if d.len() < 30 {
+        return Validity::Unknown;
+    }
+    let block_size = u32::from_le_bytes([d[12], d[13], d[14], d[15]]);
+    let block_log = u16::from_le_bytes([d[22], d[23]]);
+    let s_major = u16::from_le_bytes([d[28], d[29]]);
+    if s_major == 4 && (12..=20).contains(&block_log) && block_size == 1u32 << block_log {
         Validity::Valid
     } else {
         Validity::Invalid
@@ -688,5 +705,23 @@ mod tests {
         let mut wrong = good.clone();
         wrong[5] = b'7'; // "070707" (old format, not newc)
         assert_eq!(validate(sig("cpio"), &wrong), Validity::Invalid);
+    }
+
+    #[test]
+    fn squashfs_superblock_check() {
+        let mut sb = vec![0u8; 48];
+        sb[0..4].copy_from_slice(b"hsqs");
+        sb[12..16].copy_from_slice(&(1u32 << 17).to_le_bytes()); // block_size
+        sb[22..24].copy_from_slice(&17u16.to_le_bytes()); // block_log
+        sb[28..30].copy_from_slice(&4u16.to_le_bytes()); // s_major = 4
+        assert_eq!(validate(sig("squashfs"), &sb), Validity::Valid);
+        // block_size inconsistent with block_log is rejected.
+        let mut bad = sb.clone();
+        bad[12..16].copy_from_slice(&4096u32.to_le_bytes());
+        assert_eq!(validate(sig("squashfs"), &bad), Validity::Invalid);
+        // A non-4 major version is rejected (different superblock layout).
+        let mut v3 = sb.clone();
+        v3[28..30].copy_from_slice(&3u16.to_le_bytes());
+        assert_eq!(validate(sig("squashfs"), &v3), Validity::Invalid);
     }
 }

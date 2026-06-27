@@ -68,6 +68,7 @@
 //!   zero-block terminator.
 //! * [`Extent::Cpio`] — `cpio` archive (newc): walk the entry chain to the
 //!   `TRAILER!!!` entry.
+//! * [`Extent::Squashfs`] — SquashFS image: `bytes_used` from the superblock.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -306,6 +307,13 @@ pub enum Extent {
     /// a 4-byte boundary. The chain is walked entry by entry to the `TRAILER!!!`
     /// entry that marks end-of-archive, giving an exact end.
     Cpio,
+    /// SquashFS image (`hsqs`) — the read-only compressed filesystem used by Snap
+    /// packages, AppImages, live media, and router/IoT firmware. The version-4
+    /// superblock records `bytes_used` (a little-endian u64 at offset 40), the
+    /// exact size of the image, so the file ends there. The major version (4) and
+    /// the block-size/`block_log` consistency are checked to reject a coincidental
+    /// magic.
+    Squashfs,
 }
 
 /// A recoverable file type.
@@ -1239,6 +1247,17 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Cpio,
         max_size: 8 * GB,
     },
+    Signature {
+        // SquashFS (Snap/AppImage/live media/firmware): "hsqs" magic, size from
+        // the superblock's bytes_used field.
+        name: "SquashFS image",
+        ext: "squashfs",
+        magic: b"hsqs",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Squashfs,
+        max_size: 16 * GB,
+    },
 ];
 
 /// Look up signatures relevant to a single source byte, keyed by the first
@@ -1497,7 +1516,7 @@ pub fn category_of(ext: &str) -> Category {
         }
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" => Category::Font,
-        "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" => Category::System,
+        "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" => Category::System,
         _ => Category::Other,
     }
 }

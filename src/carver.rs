@@ -556,6 +556,7 @@ fn file_length(
         Extent::Pst => Ok(pst_length(source, file_start, limit)?),
         Extent::Tar => Ok(tar_length(source, file_start, limit)?),
         Extent::Cpio => Ok(cpio_length(source, file_start, limit)?),
+        Extent::Squashfs => Ok(squashfs_length(source, file_start, limit)?),
     }
 }
 
@@ -3188,6 +3189,34 @@ fn cpio_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
 /// Round up to a multiple of 4 (cpio newc pads names and data to 4 bytes).
 fn round_up4(n: u64) -> u64 {
     (n.saturating_add(3) / 4) * 4
+}
+
+/// SquashFS image length. The version-4 superblock stores `bytes_used` (the exact
+/// image size) as a little-endian u64 at offset 40. The major version must be 4
+/// and the block size must be a power of two equal to `1 << block_log` (a
+/// consistency check that rejects a coincidental `hsqs`).
+fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut sb = [0u8; 48];
+    if source.read_at(file_start, &mut sb)? < 48 {
+        return Ok(None);
+    }
+    let block_size = u32::from_le_bytes(sb[12..16].try_into().unwrap());
+    let block_log = u16::from_le_bytes(sb[22..24].try_into().unwrap());
+    let s_major = u16::from_le_bytes(sb[28..30].try_into().unwrap());
+    let bytes_used = u64::from_le_bytes(sb[40..48].try_into().unwrap());
+    // Only the 4.0 superblock layout is parsed here.
+    if s_major != 4 {
+        return Ok(None);
+    }
+    // block_size is 4 KiB..1 MiB and must equal 1 << block_log.
+    if !(12..=20).contains(&block_log) || block_size != 1u32 << block_log {
+        return Ok(None);
+    }
+    // bytes_used must cover at least the superblock and fit in the region.
+    if bytes_used < 96 || file_start.saturating_add(bytes_used) > limit {
+        return Ok(None);
+    }
+    Ok(Some(bytes_used))
 }
 
 /// Parse an 8-character ASCII hex field from a cpio header.
