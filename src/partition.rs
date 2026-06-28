@@ -391,9 +391,25 @@ fn gpt_type_name(g: &[u8]) -> String {
         "E6D6D379-F507-44C2-A23C-238F2A3DF928" => "Linux LVM",
         "A19D880F-05FC-4D3B-A006-743F0F84911E" => "Linux RAID",
         "933AC7E1-2EB4-4F13-B844-0E14E2AEF915" => "Linux /home",
+        "3B8F8425-20E0-4F3B-907F-1A25A76F98E8" => "Linux /srv",
+        "BC13C2FF-59E6-4262-A352-B275FD6F7172" => "Linux extended boot",
+        "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709" => "Linux root (x86-64)",
+        "B921B045-1DF0-41C3-AF44-4C6F280D3FAE" => "Linux root (ARM64)",
+        "CA7D7CCB-63ED-4C53-861C-1742536059CC" => "Linux LUKS / dm-crypt",
+        "8DA63339-0007-60C0-C436-083AC8230908" => "Linux reserved",
+        "AF9B60A0-1431-4F62-BC68-3311714A69AD" => "Windows LDM data",
+        "5808C8AA-7E8F-42E0-85D2-E1E90434CFB3" => "Windows LDM metadata",
+        "FE3A2A5D-4F32-41A7-B725-ACCC3285A309" => "ChromeOS kernel",
+        "3CB8E202-3B7E-47DD-8A3C-7FF2A13CFCEC" => "ChromeOS root",
         "7C3457EF-0000-11AA-AA11-00306543ECAC" => "Apple APFS",
         "48465300-0000-11AA-AA11-00306543ECAC" => "Apple HFS+",
+        "55465300-0000-11AA-AA11-00306543ECAC" => "Apple UFS",
+        "52414944-0000-11AA-AA11-00306543ECAC" => "Apple RAID",
         "426F6F74-0000-11AA-AA11-00306543ECAC" => "Apple boot (recovery)",
+        "516E7CB4-6ECF-11D6-8FF8-00022D09712B" => "FreeBSD data",
+        "516E7CB5-6ECF-11D6-8FF8-00022D09712B" => "FreeBSD swap",
+        "516E7CB6-6ECF-11D6-8FF8-00022D09712B" => "FreeBSD UFS",
+        "83BD6B9D-7F41-11DC-BE0B-001560B84F0F" => "FreeBSD boot",
         _ => return guid,
     };
     name.to_string()
@@ -615,6 +631,19 @@ mod tests {
     fn bare_source_has_no_table() {
         let (_t, src) = source_of(&vec![0u8; 4096]);
         assert_eq!(read(&src).scheme, Scheme::None);
+    }
+
+    #[test]
+    fn gpt_type_name_maps_known_guids_and_falls_back() {
+        // Raw bytes (GPT mixed-endian) of 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709.
+        let linux_root = [
+            0xE3, 0xBC, 0x68, 0x4F, 0xCD, 0xE8, 0xB1, 0x4D, 0x96, 0xE7, 0xFB, 0xCA, 0xF9, 0x84,
+            0xB7, 0x09,
+        ];
+        assert_eq!(gpt_type_name(&linux_root), "Linux root (x86-64)");
+        // An unknown GUID falls back to the canonical string form.
+        let unknown = [0x11u8; 16];
+        assert_eq!(gpt_type_name(&unknown), guid_string(&unknown));
     }
 
     #[test]
