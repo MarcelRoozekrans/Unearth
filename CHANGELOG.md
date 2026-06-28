@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **HFS-wrapped HFS+ volumes are detected** — an HFS+ volume embedded inside an
+  old HFS `BD` wrapper (the layout on old Mac media and hybrid CDs) is now
+  followed to the embedded volume, so `info` / `undelete` / `scan` work on it
+  instead of seeing only the wrapper. Both 512-byte and larger allocation blocks
+  are handled.
 - **More GPT partition types are named** — `info` / `list_volumes` now give
   friendly names to many more GPT type GUIDs (Linux root for x86-64/ARM64,
   `/srv`, extended boot, LUKS/dm-crypt, reserved; Windows LDM data/metadata;

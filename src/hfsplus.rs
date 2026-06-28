@@ -107,22 +107,65 @@ type ExtentRecord = (u8, u32, u32, Vec<(u32, u32)>);
 /// extents)` pairs, sorted by key and flattened into [`OverflowExtents`].
 type PendingRuns = Vec<(u32, Vec<(u32, u32)>)>;
 
-/// Does the volume header at `vol_offset + 1024` carry an HFS+ or HFSX signature?
-pub fn is_hfsplus(src: &Source, vol_offset: u64) -> bool {
-    let mut sig = [0u8; 2];
+/// Old HFS master-directory-block signature (`"BD"`). When such a volume embeds
+/// an HFS+ volume (the "HFS wrapper" used on old Mac media and hybrid CDs), it is
+/// transparently followed to the embedded volume.
+const SIG_HFS: u16 = 0x4244;
+
+/// Resolve the actual HFS+ volume-header offset for `vol_offset`: `vol_offset`
+/// itself when an HFS+/HFSX signature sits there, or the **embedded** volume's
+/// offset when `vol_offset` holds an old HFS `BD` wrapper around an HFS+ volume.
+/// `None` when neither.
+fn hfsplus_offset(src: &Source, vol_offset: u64) -> Option<u64> {
+    let mut mdb = [0u8; 512];
     if src
-        .read_at(vol_offset + VOLUME_HEADER_OFFSET, &mut sig)
+        .read_at(vol_offset + VOLUME_HEADER_OFFSET, &mut mdb)
         .unwrap_or(0)
-        < 2
+        < 512
     {
-        return false;
+        return None;
     }
-    matches!(u16::from_be_bytes(sig), SIG_HFSPLUS | SIG_HFSX)
+    match u16::from_be_bytes([mdb[0], mdb[1]]) {
+        SIG_HFSPLUS | SIG_HFSX => Some(vol_offset),
+        SIG_HFS => {
+            // Old HFS master directory block. `drEmbedSigWord` (0x7C) is "H+"
+            // when it wraps an HFS+ volume; `drAlBlkSiz` (0x14) and `drAlBlSt`
+            // (0x1C) plus the embedded extent's start block (0x7E) locate it.
+            if u16::from_be_bytes([mdb[0x7C], mdb[0x7D]]) != SIG_HFSPLUS {
+                return None;
+            }
+            let al_blk_siz =
+                u32::from_be_bytes([mdb[0x14], mdb[0x15], mdb[0x16], mdb[0x17]]) as u64;
+            let al_bl_st = u16::from_be_bytes([mdb[0x1C], mdb[0x1D]]) as u64;
+            let embed_start = u16::from_be_bytes([mdb[0x7E], mdb[0x7F]]) as u64;
+            let embedded = vol_offset
+                .checked_add(al_bl_st.checked_mul(512)?)?
+                .checked_add(embed_start.checked_mul(al_blk_siz)?)?;
+            let mut sig = [0u8; 2];
+            if src
+                .read_at(embedded + VOLUME_HEADER_OFFSET, &mut sig)
+                .unwrap_or(0)
+                < 2
+            {
+                return None;
+            }
+            matches!(u16::from_be_bytes(sig), SIG_HFSPLUS | SIG_HFSX).then_some(embedded)
+        }
+        _ => None,
+    }
+}
+
+/// Does `vol_offset` carry an HFS+/HFSX volume — directly, or embedded in an old
+/// HFS wrapper?
+pub fn is_hfsplus(src: &Source, vol_offset: u64) -> bool {
+    hfsplus_offset(src, vol_offset).is_some()
 }
 
 impl Volume {
-    /// Parse the volume header at `offset`.
+    /// Parse the volume header at `offset` (following an HFS wrapper to the
+    /// embedded HFS+ volume when present).
     pub fn parse(src: &Source, offset: u64) -> Result<Volume> {
+        let offset = hfsplus_offset(src, offset).unwrap_or(offset);
         let mut vh = [0u8; 512];
         if src.read_at(offset + VOLUME_HEADER_OFFSET, &mut vh)? < 512 {
             bail!("HFS+ volume header truncated");
@@ -894,6 +937,45 @@ fn unique_path(out_dir: &Path, rel: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn source_of(bytes: &[u8]) -> (tempfile::TempDir, Source) {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("hfs.img");
+        std::fs::write(&p, bytes).unwrap();
+        (tmp, Source::open(&p).unwrap())
+    }
+
+    #[test]
+    fn follows_an_hfs_wrapper_to_the_embedded_hfsplus() {
+        let mut v = vec![0u8; 8192];
+        // Old HFS master directory block at offset 1024: "BD", drAlBlkSiz=512
+        // (0x14), drAlBlSt=4 sectors (0x1C), embed "H+" (0x7C), start block 2.
+        let mdb = 1024;
+        v[mdb..mdb + 2].copy_from_slice(&SIG_HFS.to_be_bytes());
+        v[mdb + 0x14..mdb + 0x18].copy_from_slice(&512u32.to_be_bytes());
+        v[mdb + 0x1C..mdb + 0x1E].copy_from_slice(&4u16.to_be_bytes());
+        v[mdb + 0x7C..mdb + 0x7E].copy_from_slice(&SIG_HFSPLUS.to_be_bytes());
+        v[mdb + 0x7E..mdb + 0x80].copy_from_slice(&2u16.to_be_bytes());
+        // Embedded offset = 4*512 + 2*512 = 3072; its header sits at +1024.
+        let embedded = 4 * 512 + 2 * 512;
+        v[embedded + 1024..embedded + 1026].copy_from_slice(&SIG_HFSPLUS.to_be_bytes());
+
+        let (_t, src) = source_of(&v);
+        assert!(is_hfsplus(&src, 0));
+        assert_eq!(hfsplus_offset(&src, 0), Some(embedded as u64));
+    }
+
+    #[test]
+    fn direct_and_non_hfsplus_offsets() {
+        // Direct HFS+ at the volume start.
+        let mut v = vec![0u8; 2048];
+        v[1024..1026].copy_from_slice(&SIG_HFSPLUS.to_be_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(hfsplus_offset(&src, 0), Some(0));
+        // Neither HFS+ nor a wrapper.
+        let (_t, src) = source_of(&vec![0u8; 2048]);
+        assert!(!is_hfsplus(&src, 0));
+    }
 
     fn test_vol() -> Volume {
         Volume {
