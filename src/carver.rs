@@ -559,6 +559,7 @@ fn file_length(
         Extent::Squashfs => Ok(squashfs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
+        Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
     }
 }
 
@@ -3054,6 +3055,31 @@ fn mpegps_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<
     } else {
         Ok(None)
     }
+}
+
+/// Microsoft Program Database (PDB) length. The MSF 7.0 superblock stores the
+/// block size (little-endian u32 at offset 0x20) and the total number of blocks
+/// (offset 0x28), so the file ends at `block_size × num_blocks`. The block size
+/// must be a sane power of two, which (with the 32-byte magic) rejects a
+/// coincidental match.
+fn pdb_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x2C];
+    if source.read_at(file_start, &mut h)? < 0x2C {
+        return Ok(None);
+    }
+    let block_size = u32::from_le_bytes([h[0x20], h[0x21], h[0x22], h[0x23]]) as u64;
+    if !block_size.is_power_of_two() || !(512..=65536).contains(&block_size) {
+        return Ok(None);
+    }
+    let num_blocks = u32::from_le_bytes([h[0x28], h[0x29], h[0x2A], h[0x2B]]) as u64;
+    let size = match block_size.checked_mul(num_blocks) {
+        Some(s) if s >= 0x2C => s,
+        _ => return Ok(None),
+    };
+    if file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
 }
 
 /// Android Dalvik executable (DEX) length. The header stores the total file
