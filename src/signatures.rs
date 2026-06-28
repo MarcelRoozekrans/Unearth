@@ -341,6 +341,13 @@ pub enum Extent {
     /// a false match implausible; the block size is checked to be a sane power of
     /// two.
     Pdb,
+    /// Binary (DOS) Encapsulated PostScript (`.eps`). The 30-byte header
+    /// (`C5 D0 D3 C6`) holds the byte offset and length of the PostScript section
+    /// and the optional WMF and TIFF previews (little-endian u32 pairs at offsets
+    /// 4, 12, and 20). The file ends at the furthest `offset + length` of the
+    /// sections present. The plain-text EPS form (no binary header) carries no
+    /// length and is not carved.
+    Eps,
 }
 
 /// A recoverable file type.
@@ -911,6 +918,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Pdb,
         max_size: 4 * GB,
+    },
+    Signature {
+        name: "Encapsulated PostScript (binary)",
+        ext: "eps",
+        magic: &[0xC5, 0xD0, 0xD3, 0xC6],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Eps,
+        max_size: 512 * MB,
     },
     Signature {
         name: "Android Dalvik executable (DEX)",
@@ -1559,7 +1575,7 @@ pub fn category_of(ext: &str) -> Category {
     match ext {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
-        | "ani" => Category::Image,
+        | "ani" | "eps" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" => Category::Audio,
         "mp4" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => Category::Video,
         // The OOXML/OpenDocument/e-book types come from ZIP-content

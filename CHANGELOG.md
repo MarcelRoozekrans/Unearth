@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **Binary EPS (`.eps`) carving** — Encapsulated PostScript with a DOS preview
+  header (`C5 D0 D3 C6`) is carved from the section table in its 30-byte header:
+  the file ends at the furthest `offset + length` of the PostScript section and
+  the optional WMF/TIFF previews. The plain-text EPS form (no binary header)
+  carries no length and is not carved. `identify` and `triage` recognise binary
+  `.eps` by content too.
 - **Microsoft Program Database (`.pdb`) carving** — the debug-symbol file every
   MSVC build produces is carved from its MSF 7.0 superblock, whose block size
   (offset 0x20) and block count (offset 0x28) give the exact size

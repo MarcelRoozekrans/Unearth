@@ -560,6 +560,7 @@ fn file_length(
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
+        Extent::Eps => Ok(eps_length(source, file_start, limit)?),
     }
 }
 
@@ -3080,6 +3081,35 @@ fn pdb_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(size))
+}
+
+/// Binary (DOS) EPS length. The 30-byte header carries three (offset, length)
+/// pairs of little-endian u32s — the PostScript section (offset 4) and the
+/// optional WMF (12) and TIFF (20) previews — so the file ends at the furthest
+/// `offset + length` of the sections present. The PostScript section must be
+/// present and start after the header, which rejects a coincidental magic.
+fn eps_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 28];
+    if source.read_at(file_start, &mut h)? < 28 {
+        return Ok(None);
+    }
+    let le32 = |o: usize| u32::from_le_bytes([h[o], h[o + 1], h[o + 2], h[o + 3]]) as u64;
+    let ps_off = le32(4);
+    let ps_len = le32(8);
+    if ps_off < 30 || ps_len == 0 {
+        return Ok(None);
+    }
+    let mut end = 0u64;
+    // PostScript, WMF preview, TIFF preview: each an (offset, length) pair.
+    for (off, len) in [(ps_off, ps_len), (le32(12), le32(16)), (le32(20), le32(24))] {
+        if off != 0 && len != 0 {
+            end = end.max(off.saturating_add(len));
+        }
+    }
+    if end < 30 || file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
 }
 
 /// Android Dalvik executable (DEX) length. The header stores the total file
