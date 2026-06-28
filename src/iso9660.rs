@@ -14,7 +14,8 @@
 //! areas, so even very long POSIX names are recovered in full. Files whose data
 //! is split across several **multi-extent** directory records (how ISO 9660
 //! stores files larger than ~4 GiB) are reassembled into one output file. A disc
-//! carrying an **El Torito** boot record is reported as bootable.
+//! carrying an **El Torito** boot record is reported as bootable, with the boot
+//! platform(s) (BIOS / UEFI) read from its boot catalog.
 //!
 //! Detection reads the **Volume Descriptor Set** at sector 16 (byte offset
 //! 32768): a series of 2048-byte descriptors each `{ type: u8, id: "CD001",
@@ -63,8 +64,9 @@ pub struct Volume {
     root_len: u64,
     /// Directory names are UCS-2 (Joliet) rather than short ISO 9660 identifiers.
     joliet: bool,
-    /// The disc carries an El Torito boot record (it is bootable).
-    bootable: bool,
+    /// A description of the disc's El Torito boot record (e.g.
+    /// `"El Torito (BIOS, UEFI)"`), or `None` when the disc is not bootable.
+    boot: Option<String>,
 }
 
 /// Recognise an ISO 9660 volume at `offset` by finding its Primary Volume
@@ -73,7 +75,7 @@ pub fn detect(src: &Source, offset: u64) -> Option<Volume> {
     let base = offset.checked_add(VDS_OFFSET)?;
     let mut primary: Option<Volume> = None;
     let mut joliet_root: Option<(u64, u64)> = None;
-    let mut bootable = false;
+    let mut boot: Option<String> = None;
     for i in 0..16u64 {
         let pos = base.checked_add(i * VD_SIZE)?;
         let mut d = [0u8; 256];
@@ -84,11 +86,13 @@ pub fn detect(src: &Source, offset: u64) -> Option<Volume> {
             break; // not a volume descriptor: the set has ended
         }
         match d[0] {
-            BOOT_RECORD => bootable |= &d[7..7 + EL_TORITO_ID.len()] == EL_TORITO_ID,
+            BOOT_RECORD if &d[7..7 + EL_TORITO_ID.len()] == EL_TORITO_ID => {
+                boot = Some(read_el_torito(src, offset, &d));
+            }
             PRIMARY => primary = Some(parse_primary(offset, src, &d)),
             SUPPLEMENTARY if is_joliet(&d) => joliet_root = Some(root_record(&d)),
             TERMINATOR => break,
-            _ => {} // non-Joliet supplementary: keep scanning
+            _ => {} // non-Joliet supplementary / non-El-Torito boot: keep scanning
         }
     }
     let mut vol = primary?;
@@ -98,7 +102,7 @@ pub fn detect(src: &Source, offset: u64) -> Option<Volume> {
         vol.root_len = len;
         vol.joliet = true;
     }
-    vol.bootable = bootable;
+    vol.boot = boot;
     Some(vol)
 }
 
@@ -146,7 +150,66 @@ fn parse_primary(offset: u64, src: &Source, pvd: &[u8]) -> Volume {
         root_lba,
         root_len,
         joliet: false,
-        bootable: false,
+        boot: None,
+    }
+}
+
+/// Read the El Torito boot catalog referenced by the Boot Record descriptor `d`
+/// and describe the boot platforms, e.g. `"El Torito (BIOS, UEFI)"`. Falls back
+/// to `"El Torito"` if the catalog can't be read or no platform resolves.
+fn read_el_torito(src: &Source, offset: u64, d: &[u8]) -> String {
+    let plain = || "El Torito".to_string();
+    // Boot System Use: the boot catalog's LBA is a u32 (LE) at offset 71.
+    let cat_lba = u32::from_le_bytes([d[71], d[72], d[73], d[74]]) as u64;
+    let Some(cat_byte) = cat_lba
+        .checked_mul(2048)
+        .and_then(|b| offset.checked_add(b))
+    else {
+        return plain();
+    };
+    let mut cat = [0u8; 2048];
+    if src.read_at(cat_byte, &mut cat).unwrap_or(0) < 64 {
+        return plain();
+    }
+    // The validation entry: header id 1, ending in the 0x55 0xAA key.
+    if cat[0] != 1 || cat[30] != 0x55 || cat[31] != 0xAA {
+        return plain();
+    }
+    let mut platforms: Vec<&'static str> = Vec::new();
+    // The validation entry's platform is the one the default entry boots.
+    push_platform(&mut platforms, cat[1]);
+    // Section headers (0x90 = more follow, 0x91 = last) each name a platform and
+    // count the section entries that follow them; walk past those to the next.
+    let mut pos = 64; // skip the validation entry and the default entry
+    for _ in 0..64 {
+        if pos + 32 > cat.len() {
+            break;
+        }
+        let id = cat[pos];
+        if id != 0x90 && id != 0x91 {
+            break;
+        }
+        push_platform(&mut platforms, cat[pos + 1]);
+        let entries = u16::from_le_bytes([cat[pos + 2], cat[pos + 3]]) as usize;
+        pos += 32 + entries * 32;
+        if id == 0x91 {
+            break; // final header
+        }
+    }
+    format!("El Torito ({})", platforms.join(", "))
+}
+
+/// Add a platform name for an El Torito platform id, avoiding duplicates.
+fn push_platform(platforms: &mut Vec<&'static str>, platform_id: u8) {
+    let name = match platform_id {
+        0x00 => "BIOS",
+        0x01 => "PowerPC",
+        0x02 => "Mac",
+        0xEF => "UEFI",
+        _ => "other",
+    };
+    if !platforms.contains(&name) {
+        platforms.push(name);
     }
 }
 
@@ -174,10 +237,10 @@ impl Volume {
         &self.label
     }
 
-    /// A short description of the disc's boot capability, or `None` when the disc
-    /// is not bootable. Currently this reports El Torito boot records.
-    pub fn boot_info(&self) -> Option<&'static str> {
-        self.bootable.then_some("El Torito")
+    /// A short description of the disc's boot capability (e.g.
+    /// `"El Torito (BIOS, UEFI)"`), or `None` when the disc is not bootable.
+    pub fn boot_info(&self) -> Option<&str> {
+        self.boot.as_deref()
     }
 
     /// Extract every file from the volume into `out_dir`, preserving names and
@@ -692,17 +755,46 @@ mod tests {
 
     #[test]
     fn detects_el_torito_bootable() {
+        const BS: usize = 2048;
+        let mut v = vec![0u8; 22 * BS];
+        let off = put_descriptor(&mut v, 0, PRIMARY);
+        v[off + 80..off + 84].copy_from_slice(&100u32.to_le_bytes());
+        v[off + 128..off + 130].copy_from_slice(&2048u16.to_le_bytes());
+        // A Boot Record descriptor (type 0) with the El Torito identifier and a
+        // pointer to the boot catalog at LBA 19.
+        let boff = put_descriptor(&mut v, 1, BOOT_RECORD);
+        v[boff + 7..boff + 7 + EL_TORITO_ID.len()].copy_from_slice(EL_TORITO_ID);
+        v[boff + 71..boff + 75].copy_from_slice(&19u32.to_le_bytes());
+
+        // Boot catalog at LBA 19: validation entry (BIOS), default entry, then a
+        // final section header for UEFI with one section entry.
+        let c = 19 * BS;
+        v[c] = 1; // validation header id
+        v[c + 1] = 0x00; // platform: BIOS
+        v[c + 30] = 0x55;
+        v[c + 31] = 0xAA;
+        v[c + 32] = 0x88; // default entry: bootable
+        v[c + 64] = 0x91; // final section header
+        v[c + 65] = 0xEF; // platform: UEFI
+        v[c + 66..c + 68].copy_from_slice(&1u16.to_le_bytes()); // one section entry
+
+        let (_t, src) = source_of(&v);
+        let vol = detect(&src, 0).unwrap();
+        assert_eq!(vol.boot_info(), Some("El Torito (BIOS, UEFI)"));
+    }
+
+    #[test]
+    fn el_torito_without_catalog_is_plain() {
         let mut v = vec![0u8; (VDS_OFFSET + 4 * VD_SIZE) as usize];
         let off = put_descriptor(&mut v, 0, PRIMARY);
         v[off + 80..off + 84].copy_from_slice(&100u32.to_le_bytes());
         v[off + 128..off + 130].copy_from_slice(&2048u16.to_le_bytes());
-        // A Boot Record descriptor (type 0) with the El Torito identifier.
+        // A boot record with the El Torito id but a catalog pointer to nowhere.
         let boff = put_descriptor(&mut v, 1, BOOT_RECORD);
         v[boff + 7..boff + 7 + EL_TORITO_ID.len()].copy_from_slice(EL_TORITO_ID);
 
         let (_t, src) = source_of(&v);
-        let vol = detect(&src, 0).unwrap();
-        assert_eq!(vol.boot_info(), Some("El Torito"));
+        assert_eq!(detect(&src, 0).unwrap().boot_info(), Some("El Torito"));
     }
 
     #[test]
