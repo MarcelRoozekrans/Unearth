@@ -11,7 +11,8 @@
 //! [`Table::from_backup`] set so callers can flag it. For MBR, the logical
 //! partitions inside an extended partition are enumerated by walking the
 //! Extended Boot Record chain, so disks with more than four partitions report
-//! all of them.
+//! all of them. For GPT, each partition's unique GUID (PARTUUID) and the disk
+//! GUID are reported too.
 
 use crate::source::Source;
 
@@ -31,6 +32,9 @@ pub struct Partition {
     pub kind: String,
     /// GPT partition name, when present and non-empty. Always `None` for MBR.
     pub name: Option<String>,
+    /// The partition's **unique** GUID (the PARTUUID that `/etc/fstab`,
+    /// bootloaders, and `/dev/disk/by-partuuid` reference). `None` for MBR.
+    pub uuid: Option<String>,
     /// Byte offset of the partition within the source.
     pub start: u64,
     /// Size of the partition in bytes.
@@ -45,6 +49,9 @@ pub struct Table {
     /// disk because the primary header (LBA 1) was missing or corrupt. Always
     /// `false` for MBR or when the primary GPT was used.
     pub from_backup: bool,
+    /// The GPT disk GUID (a unique identifier for the whole disk). `None` for
+    /// MBR or when there is no table.
+    pub disk_guid: Option<String>,
 }
 
 /// Read the partition table of `src`: GPT if a protective header is present,
@@ -60,6 +67,7 @@ pub fn read(src: &Source) -> Table {
         scheme: Scheme::None,
         partitions: Vec::new(),
         from_backup: false,
+        disk_guid: None,
     }
 }
 
@@ -69,20 +77,22 @@ pub fn read(src: &Source) -> Table {
 fn read_gpt(src: &Source) -> Option<Table> {
     for sector_size in [512u64, 4096] {
         // Primary GPT header sits at LBA 1.
-        if let Some(partitions) = parse_gpt_at(src, sector_size, sector_size) {
+        if let Some((partitions, disk_guid)) = parse_gpt_at(src, sector_size, sector_size) {
             return Some(Table {
                 scheme: Scheme::Gpt,
                 partitions,
                 from_backup: false,
+                disk_guid,
             });
         }
         // Backup GPT header sits at the last LBA of the disk.
         if let Some(backup_off) = src.size.checked_sub(sector_size) {
-            if let Some(partitions) = parse_gpt_at(src, sector_size, backup_off) {
+            if let Some((partitions, disk_guid)) = parse_gpt_at(src, sector_size, backup_off) {
                 return Some(Table {
                     scheme: Scheme::Gpt,
                     partitions,
                     from_backup: true,
+                    disk_guid,
                 });
             }
         }
@@ -94,7 +104,11 @@ fn read_gpt(src: &Source) -> Option<Table> {
 /// entries (the header's own `PartitionEntryLBA` field locates the array, so
 /// this works for both the primary and the backup header). `None` if there is
 /// no valid `EFI PART` header there.
-fn parse_gpt_at(src: &Source, sector_size: u64, hdr_off: u64) -> Option<Vec<Partition>> {
+fn parse_gpt_at(
+    src: &Source,
+    sector_size: u64,
+    hdr_off: u64,
+) -> Option<(Vec<Partition>, Option<String>)> {
     let mut hdr = [0u8; 92];
     if src.read_at(hdr_off, &mut hdr).ok()? < 92 || &hdr[0..8] != b"EFI PART" {
         return None;
@@ -105,6 +119,8 @@ fn parse_gpt_at(src: &Source, sector_size: u64, hdr_off: u64) -> Option<Vec<Part
     if !(128..=4096).contains(&entry_size) {
         return None;
     }
+    // The disk GUID lives at header offset 56.
+    let disk_guid = non_zero_guid(&hdr[56..72]);
     let array_start = entry_lba.checked_mul(sector_size)?;
     let mut partitions = Vec::new();
     let mut entry = vec![0u8; entry_size as usize];
@@ -122,11 +138,22 @@ fn parse_gpt_at(src: &Source, sector_size: u64, hdr_off: u64) -> Option<Vec<Part
         partitions.push(Partition {
             kind: gpt_type_name(&entry[0..16]),
             name: gpt_name(&entry[56..entry_size.min(128) as usize]),
+            // The unique partition GUID (PARTUUID) is at entry offset 16.
+            uuid: non_zero_guid(&entry[16..32]),
             start: first * sector_size,
             size,
         });
     }
-    Some(partitions)
+    Some((partitions, disk_guid))
+}
+
+/// Format a 16-byte GUID, returning `None` when it is all zero (unset).
+fn non_zero_guid(g: &[u8]) -> Option<String> {
+    if g.iter().all(|&b| b == 0) {
+        None
+    } else {
+        Some(guid_string(g))
+    }
 }
 
 fn read_mbr(src: &Source) -> Option<Table> {
@@ -146,6 +173,7 @@ fn read_mbr(src: &Source) -> Option<Table> {
         partitions.push(Partition {
             kind: mbr_type_name(kind),
             name: None,
+            uuid: None,
             start: start_lba * 512,
             size: sectors * 512,
         });
@@ -162,6 +190,7 @@ fn read_mbr(src: &Source) -> Option<Table> {
         scheme: Scheme::Mbr,
         partitions,
         from_backup: false,
+        disk_guid: None,
     })
 }
 
@@ -198,6 +227,7 @@ fn walk_ebr_chain(src: &Source, ext_base_lba: u64, out: &mut Vec<Partition>) {
             out.push(Partition {
                 kind: mbr_type_name(kind),
                 name: None,
+                uuid: None,
                 start: ebr_lba.saturating_add(rel) * 512,
                 size: sectors * 512,
             });
@@ -392,6 +422,8 @@ mod tests {
         disk[h + 72..h + 80].copy_from_slice(&2u64.to_le_bytes()); // entry array at LBA 2
         disk[h + 80..h + 84].copy_from_slice(&1u32.to_le_bytes()); // 1 entry
         disk[h + 84..h + 88].copy_from_slice(&128u32.to_le_bytes()); // entry size
+                                                                     // Disk GUID at header offset 56.
+        disk[h + 56..h + 72].copy_from_slice(&[0xAB; 16]);
 
         // Entry 0 at LBA 2: EFI System type, name "EFI", LBAs 34..=2081.
         let e = 2 * SS;
@@ -400,6 +432,8 @@ mod tests {
             0xC9, 0x3B,
         ];
         disk[e..e + 16].copy_from_slice(&efi);
+        // The unique partition GUID at entry offset 16.
+        disk[e + 16..e + 32].copy_from_slice(&[0xCD; 16]);
         disk[e + 32..e + 40].copy_from_slice(&34u64.to_le_bytes());
         disk[e + 40..e + 48].copy_from_slice(&2081u64.to_le_bytes());
         for (i, u) in "EFI".encode_utf16().enumerate() {
@@ -410,9 +444,15 @@ mod tests {
         let table = read(&src);
         assert_eq!(table.scheme, Scheme::Gpt);
         assert!(!table.from_backup, "primary header was used");
+        // The disk GUID and the partition's unique GUID are parsed in canonical
+        // 8-4-4-4-12 form.
+        let disk_guid = table.disk_guid.as_deref().unwrap();
+        assert_eq!(disk_guid.len(), 36);
+        assert_eq!(disk_guid.matches('-').count(), 4);
         assert_eq!(table.partitions.len(), 1);
         assert_eq!(table.partitions[0].kind, "EFI System");
         assert_eq!(table.partitions[0].name.as_deref(), Some("EFI"));
+        assert_eq!(table.partitions[0].uuid.as_deref().unwrap().len(), 36);
         assert_eq!(table.partitions[0].start, 34 * 512);
     }
 

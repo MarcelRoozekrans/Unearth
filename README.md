@@ -273,6 +273,13 @@ partitions** inside an extended partition are enumerated too (by walking the
 Extended Boot Record chain), so a disk with more than four partitions shows all
 of them, not just the four primaries.
 
+For GPT disks, each partition's **unique GUID** (the PARTUUID referenced by
+`/etc/fstab`, bootloaders, and `/dev/disk/by-partuuid`) and the **disk GUID** are
+reported as well — useful for correlating a recovered partition with a system's
+configuration. The text view prints them on `disk GUID:` and per-entry `uuid:`
+lines; `--json` / the MCP `list_volumes` tool add `disk_guid` and a per-partition
+`uuid` field.
+
 For GPT disks, if the **primary** header (LBA 1) is missing or corrupt — e.g.
 the first sectors were overwritten — the layout is recovered from the **backup
 GPT** header and entry array that the spec keeps at the end of the disk. The

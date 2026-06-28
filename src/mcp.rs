@@ -614,6 +614,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     obj(vec![
                         ("type", s(p.kind.clone())),
                         ("name", p.name.clone().map_or(Json::Null, s)),
+                        ("uuid", p.uuid.clone().map_or(Json::Null, s)),
                         ("start", n(p.start)),
                         ("size", n(p.size)),
                     ])
@@ -623,6 +624,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                 ("source_bytes", n(source.size)),
                 ("partition_scheme", s(scheme)),
                 ("gpt_from_backup", Json::Bool(table.from_backup)),
+                ("disk_guid", table.disk_guid.clone().map_or(Json::Null, s)),
                 ("partitions", Json::Arr(parts)),
                 ("volumes", Json::Arr(list)),
             ]))
