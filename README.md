@@ -692,7 +692,10 @@ alongside the per-file manifest.
 | avi    | AVI video                                        | RIFF size field             |
 | aiff   | AIFF audio                                        | IFF FORM size field (BE)     |
 | aifc   | AIFF-C audio                                      | IFF FORM size field (BE)     |
-| mp4    | MP4 / MOV / M4A media                            | ISO box (atom) walk         |
+| mp4    | MP4 media                                        | ISO box (atom) walk         |
+| mov    | QuickTime movie (iPhone/Mac)                    | ISO box (atom) walk         |
+| m4a    | M4A audio                                        | ISO box (atom) walk         |
+| m4v    | M4V video                                        | ISO box (atom) walk         |
 | 3gp    | 3GP video                                        | ISO box (atom) walk         |
 | flv    | Flash Video                                      | tag-chain walk              |
 | mkv    | Matroska / WebM video                            | EBML segment-size walk      |

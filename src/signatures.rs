@@ -778,6 +778,34 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 4 * GB,
     },
     Signature {
+        name: "QuickTime movie",
+        ext: "mov",
+        magic: b"ftyp",
+        magic_offset: 4,
+        // `qt  ` major brand (note the two trailing spaces) — iPhone/Mac video.
+        secondary: Some((4, b"qt  ")),
+        extent: Extent::Mp4Atoms,
+        max_size: 16 * GB,
+    },
+    Signature {
+        name: "M4A audio",
+        ext: "m4a",
+        magic: b"ftyp",
+        magic_offset: 4,
+        secondary: Some((4, b"M4A ")),
+        extent: Extent::Mp4Atoms,
+        max_size: 4 * GB,
+    },
+    Signature {
+        name: "M4V video",
+        ext: "m4v",
+        magic: b"ftyp",
+        magic_offset: 4,
+        secondary: Some((4, b"M4V ")),
+        extent: Extent::Mp4Atoms,
+        max_size: 16 * GB,
+    },
+    Signature {
         name: "MP4/MOV/M4A media",
         ext: "mp4",
         magic: b"ftyp",
@@ -1576,8 +1604,10 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" => Category::Image,
-        "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" => Category::Audio,
-        "mp4" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => Category::Video,
+        "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" => Category::Audio,
+        "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
+            Category::Video
+        }
         // The OOXML/OpenDocument/e-book types come from ZIP-content
         // classification; doc/xls/ppt/msg (and a generic OLE2 container) from
         // CFBF.
@@ -1629,8 +1659,12 @@ mod tests {
         // The window starts at the `ftyp` magic; the brand is 4 bytes later.
         assert_eq!(ext_of(b"ftypheic"), Some("heic"));
         assert_eq!(ext_of(b"ftypmif1"), Some("heic"));
-        // A non-HEIF brand falls through to the generic MP4 entry.
-        assert_eq!(ext_of(b"ftypqt  "), Some("mp4"));
+        // Brand-specific media types get their own extension.
+        assert_eq!(ext_of(b"ftypqt  "), Some("mov"));
+        assert_eq!(ext_of(b"ftypM4A "), Some("m4a"));
+        assert_eq!(ext_of(b"ftypM4V "), Some("m4v"));
+        // An unrecognised brand falls through to the generic MP4 entry.
+        assert_eq!(ext_of(b"ftypisom"), Some("mp4"));
     }
 
     #[test]
