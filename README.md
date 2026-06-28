@@ -177,7 +177,7 @@ Point an MCP client at the binary, for example in a Claude Desktop config:
 The agent can then detect volumes, carve or undelete into a directory you name,
 and verify the results — each tool returns a JSON summary. `list_volumes`
 reports the **partition table** (`partition_scheme` plus a `partitions` array of
-type/name/start/size) alongside the detected filesystems, and each volume's free
+type/name/start/size/attributes) alongside the detected filesystems, and each volume's free
 (unallocated) space as `free_bytes` (a number, or
 `null` for filesystems whose allocation map is not parsed), so the agent can
 gauge recoverable space, and it also takes `scan: true` to find
@@ -279,6 +279,13 @@ reported as well — useful for correlating a recovered partition with a system'
 configuration. The text view prints them on `disk GUID:` and per-entry `uuid:`
 lines; `--json` / the MCP `list_volumes` tool add `disk_guid` and a per-partition
 `uuid` field.
+
+Each partition's notable **attribute flags** are reported too — for GPT the
+attribute bits (`required`, `legacy-bios-bootable`, `read-only`, `hidden`,
+`no-automount`, `no-block-io`), and for MBR `active` when the boot flag is set.
+This helps spot, for instance, a hidden read-only recovery partition. The text
+view prints a `flags:` line under the entry; `--json` / the MCP `list_volumes`
+tool add a per-partition `attributes` array (empty when none apply).
 
 For GPT disks, if the **primary** header (LBA 1) is missing or corrupt — e.g.
 the first sectors were overwritten — the layout is recovered from the **backup

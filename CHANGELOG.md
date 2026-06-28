@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **Partition attribute flags are reported** — `info` / `list_volumes` now report
+  each partition's notable flags: for GPT the attribute bits (`required`,
+  `legacy-bios-bootable`, `read-only`, `hidden`, `no-automount`, `no-block-io`)
+  and for MBR `active` when the boot flag is set — helping spot, for instance, a
+  hidden read-only recovery partition. The text view adds a `flags:` line under
+  the entry and `--json` / the MCP `list_volumes` tool a per-partition
+  `attributes` array (empty when none apply).
 - **MPEG program stream (`.mpg`) carving** — the container used by DVDs, VCDs,
   and older camcorders/recorders is carved by walking its pack / system-header /
   PES-packet chain (each introduced by a `00 00 01` start code) to the

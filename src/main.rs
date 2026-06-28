@@ -376,14 +376,21 @@ fn info(args: InfoArgs) -> Result<()> {
                 Some(u) => format!("\"{}\"", json_escape(u)),
                 None => "null".to_string(),
             };
+            let attributes = p
+                .attributes
+                .iter()
+                .map(|a| format!("\"{a}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
             out.push_str(&format!(
-                "{}\n    {{\"type\": \"{}\", \"name\": {}, \"uuid\": {}, \"start\": {}, \"size\": {}}}",
+                "{}\n    {{\"type\": \"{}\", \"name\": {}, \"uuid\": {}, \"start\": {}, \"size\": {}, \"attributes\": [{}]}}",
                 if i == 0 { "" } else { "," },
                 json_escape(&p.kind),
                 name,
                 uuid,
                 p.start,
                 p.size,
+                attributes,
             ));
         }
         out.push_str(if table.partitions.is_empty() {
@@ -534,6 +541,9 @@ fn info(args: InfoArgs) -> Result<()> {
             );
             if let Some(u) = &p.uuid {
                 println!("      uuid: {u}");
+            }
+            if !p.attributes.is_empty() {
+                println!("      flags: {}", p.attributes.join(", "));
             }
         }
     }
