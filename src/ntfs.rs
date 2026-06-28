@@ -52,6 +52,12 @@ pub struct Volume {
     /// Whether the volume was cleanly unmounted (`$VOLUME_INFORMATION` dirty bit
     /// clear); `None` when the attribute is absent.
     clean: Option<bool>,
+    /// Volume creation time from `$Volume`'s `$STANDARD_INFORMATION`, Unix
+    /// seconds; `None` when unreadable.
+    created: Option<u64>,
+    /// Volume last-modification time from `$Volume`'s `$STANDARD_INFORMATION`,
+    /// Unix seconds; `None` when unreadable.
+    written: Option<u64>,
 }
 
 const ATTR_STANDARD_INFO: u32 = 0x10;
@@ -159,9 +165,12 @@ impl Volume {
             label: String::new(),
             serial,
             clean: None,
+            created: None,
+            written: None,
         };
         vol.label = vol.read_volume_label(src).unwrap_or_default();
         vol.clean = vol.read_dirty(src);
+        (vol.created, vol.written) = vol.read_times(src);
         Ok(vol)
     }
 
@@ -218,6 +227,35 @@ impl Volume {
         // Content: 8 reserved bytes, major/minor version (1 each), then flags.
         let flags = u16::from_le_bytes([*content.get(10)?, *content.get(11)?]);
         Some(flags & 0x0001 == 0)
+    }
+
+    /// Volume creation and last-modification times from `$Volume`'s
+    /// `$STANDARD_INFORMATION` (MFT record 3): two 8-byte Windows FILETIMEs at
+    /// content offsets 0x00 (created) and 0x08 (modified). Returns
+    /// `(created, written)` as Unix seconds, each `None` when unreadable.
+    fn read_times(&self, src: &Source) -> (Option<u64>, Option<u64>) {
+        let parse = || -> Option<(Option<u64>, Option<u64>)> {
+            let rec = self.read_record(src, VOLUME_RECORD).ok()??;
+            let content = resident_attr_content(&rec, ATTR_STANDARD_INFO)?;
+            let ft = |o: usize| -> Option<u64> {
+                let b = content.get(o..o + 8)?;
+                let t = crate::times::from_filetime(u64::from_le_bytes(b.try_into().ok()?))?;
+                Some(t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs())
+            };
+            Some((ft(0x00), ft(0x08)))
+        };
+        parse().unwrap_or((None, None))
+    }
+
+    /// Volume creation time (`$Volume` `$STANDARD_INFORMATION`) as Unix seconds.
+    pub fn created_time(&self) -> Option<u64> {
+        self.created
+    }
+
+    /// Volume last-modification time (`$Volume` `$STANDARD_INFORMATION`) as Unix
+    /// seconds.
+    pub fn written_time(&self) -> Option<u64> {
+        self.written
     }
 
     /// Read MFT record `index`, with fixups applied.

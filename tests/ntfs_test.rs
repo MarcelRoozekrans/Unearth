@@ -112,6 +112,28 @@ fn volume_info_attr(dirty: bool) -> Vec<u8> {
     attr
 }
 
+/// Build a resident `$STANDARD_INFORMATION` (0x10) attribute carrying the four
+/// FILETIMEs; `created`/`modified` are given as Windows FILETIME (100 ns ticks
+/// since 1601-01-01).
+fn std_info_attr(created: u64, modified: u64) -> Vec<u8> {
+    let mut content = vec![0u8; 48];
+    content[0x00..0x08].copy_from_slice(&created.to_le_bytes());
+    content[0x08..0x10].copy_from_slice(&modified.to_le_bytes());
+    content[0x10..0x18].copy_from_slice(&modified.to_le_bytes()); // mft change
+    content[0x18..0x20].copy_from_slice(&created.to_le_bytes()); // access
+    let mut attr = vec![0u8; 24];
+    attr[0..4].copy_from_slice(&0x10u32.to_le_bytes());
+    attr[8] = 0; // resident
+    attr[10..12].copy_from_slice(&24u16.to_le_bytes()); // name offset
+    attr[16..20].copy_from_slice(&(content.len() as u32).to_le_bytes());
+    attr[20..22].copy_from_slice(&24u16.to_le_bytes()); // content offset
+    attr.extend_from_slice(&content);
+    let mut attr = pad8(attr);
+    let len = attr.len() as u32;
+    attr[4..8].copy_from_slice(&len.to_le_bytes());
+    attr
+}
+
 /// Build a resident `$DATA` (0x80) attribute holding `content` inline.
 fn data_resident(content: &[u8]) -> Vec<u8> {
     let mut attr = vec![0u8; 24];
@@ -225,10 +247,18 @@ fn reads_the_volume_label() {
     let o = mft_byte(0);
     img[o..o + RECORD].copy_from_slice(&rec0);
 
-    // Record 3: $Volume with a $VOLUME_NAME and a dirty $VOLUME_INFORMATION.
+    // Record 3: $Volume with $STANDARD_INFORMATION (timestamps), a $VOLUME_NAME,
+    // and a dirty $VOLUME_INFORMATION.
+    let created_unix = 1_600_000_000u64;
+    let modified_unix = 1_700_000_000u64;
+    let to_filetime = |unix: u64| (unix + 11_644_473_600) * 10_000_000;
     let rec3 = build_record(
         FLAG_IN_USE,
-        &[volume_name_attr("MY NTFS DISK"), volume_info_attr(true)],
+        &[
+            std_info_attr(to_filetime(created_unix), to_filetime(modified_unix)),
+            volume_name_attr("MY NTFS DISK"),
+            volume_info_attr(true),
+        ],
     );
     let o = mft_byte(3);
     img[o..o + RECORD].copy_from_slice(&rec3);
@@ -241,6 +271,8 @@ fn reads_the_volume_label() {
     let vol = ntfs::Volume::parse(&src, 0).unwrap();
     assert_eq!(vol.label(), "MY NTFS DISK");
     assert_eq!(vol.is_clean(), Some(false), "dirty bit set");
+    assert_eq!(vol.created_time(), Some(created_unix));
+    assert_eq!(vol.written_time(), Some(modified_unix));
     assert_eq!(
         recover::detect(&src).unwrap()[0].volume_label().as_deref(),
         Some("MY NTFS DISK")
