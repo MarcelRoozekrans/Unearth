@@ -395,6 +395,11 @@ plausible container subtypes (`docx`, `msg`, …) and empty files are never
 called corrupt. (`--json` adds a `corrupt` array; the MCP `triage` tool reports
 both `mismatches` and `corrupt`.)
 
+It also reports the **modification-time span** of the recovered files — the
+oldest and newest mtime — so you can see what period the data covers (e.g.
+`Modified: 2019-03-02T11:04:00Z .. 2024-06-18T08:51:13Z`). `--json` and the MCP
+`triage` tool add `oldest_mtime` / `newest_mtime` as Unix seconds.
+
 ### Undelete from a FAT/exFAT/NTFS/ext/HFS+ card/image (keeps original names)
 
 ```sh

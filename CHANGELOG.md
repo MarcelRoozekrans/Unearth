@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **`triage` reports the modification-time span** — the oldest and newest file
+  modification time across the directory, so you can see what period the
+  recovered data covers. The text view adds a `Modified: <oldest> .. <newest>`
+  line (ISO-8601 UTC) and `--json` / the MCP `triage` tool add `oldest_mtime` /
+  `newest_mtime` as Unix seconds.
 - **Filesystem UUIDs are reported** — `info` / `list_volumes` now report each
   volume's filesystem UUID (the `UUID=` value `/etc/fstab` and `blkid` use) for
   **ext**, **XFS**, **F2FS**, and **Btrfs**, so a recovered filesystem can be
