@@ -435,8 +435,16 @@ fn info(args: InfoArgs) -> Result<()> {
                     Some(n) => n.to_string(),
                     None => "null".to_string(),
                 };
+                let created_time = match vol.created_time() {
+                    Some(n) => n.to_string(),
+                    None => "null".to_string(),
+                };
+                let written_time = match vol.written_time() {
+                    Some(n) => n.to_string(),
+                    None => "null".to_string(),
+                };
                 out.push_str(&format!(
-                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"version\": {}, \"offset\": {}, \"size\": {}, \"alloc_unit_bytes\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"boot\": {}, \"clean\": {}, \"contained_volumes\": [{}]}}{}\n",
+                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"version\": {}, \"offset\": {}, \"size\": {}, \"alloc_unit_bytes\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"boot\": {}, \"clean\": {}, \"created_time\": {}, \"written_time\": {}, \"contained_volumes\": [{}]}}{}\n",
                     i,
                     json_escape(&vol.fs_label()),
                     version,
@@ -449,6 +457,8 @@ fn info(args: InfoArgs) -> Result<()> {
                     uuid,
                     boot,
                     clean,
+                    created_time,
+                    written_time,
                     volumes,
                     comma
                 ));
@@ -572,6 +582,12 @@ fn info(args: InfoArgs) -> Result<()> {
         }
         if let Some(unit) = vol.alloc_unit() {
             println!("      alloc unit: {}", human_bytes(unit));
+        }
+        if let Some(t) = vol.created_time() {
+            println!("      created: {}", filerecovery::times::format_utc(t));
+        }
+        if let Some(t) = vol.written_time() {
+            println!("      last written: {}", filerecovery::times::format_utc(t));
         }
         if let Some(free) = free_bytes(vol, &source) {
             let pct = if vol.size() > 0 {

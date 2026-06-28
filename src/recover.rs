@@ -282,6 +282,24 @@ impl Volume {
         }
     }
 
+    /// The filesystem's creation time as Unix seconds, when the backend records
+    /// one (currently ext's `s_mkfs_time`). `None` otherwise.
+    pub fn created_time(&self) -> Option<u64> {
+        match self {
+            Volume::Ext(v) => v.created_time(),
+            _ => None,
+        }
+    }
+
+    /// The filesystem's last-write time as Unix seconds, when the backend records
+    /// one (currently ext's `s_wtime`). `None` otherwise.
+    pub fn written_time(&self) -> Option<u64> {
+        match self {
+            Volume::Ext(v) => v.written_time(),
+            _ => None,
+        }
+    }
+
     /// The volume's allocation-unit size in bytes — the cluster size (FAT,
     /// exFAT, NTFS, ReFS) or block size (ext, HFS+, APFS, XFS, F2FS, Btrfs, ISO
     /// 9660) the filesystem allocates space in. Useful for recovery: carving

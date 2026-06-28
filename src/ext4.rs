@@ -105,6 +105,11 @@ pub struct Volume {
     /// The detected ext variant ("ext2", "ext3", or "ext4") from the feature
     /// flags.
     version: &'static str,
+    /// Filesystem creation time (`s_mkfs_time`), Unix seconds; `None` when the
+    /// field is unset (older ext2 images do not record it).
+    created: Option<u64>,
+    /// Last write time (`s_wtime`), Unix seconds; `None` when unset.
+    written: Option<u64>,
 }
 
 /// Classify an ext volume as `"ext2"`, `"ext3"`, or `"ext4"` from its feature
@@ -252,6 +257,13 @@ impl Volume {
         let uuid = crate::recover::format_uuid(&sb[0x68..0x78]);
         // s_state (u16 at 0x3A): bit 0 (EXT2_VALID_FS) set => cleanly unmounted.
         let clean = u16::from_le_bytes([sb[0x3A], sb[0x3B]]) & 0x0001 != 0;
+        // s_wtime (last write) at 0x30, s_mkfs_time (creation) at 0x108 — both
+        // little-endian u32 Unix seconds. A zero value means the field is unset.
+        let non_zero = |t: u32| if t == 0 { None } else { Some(t as u64) };
+        let written = non_zero(u32::from_le_bytes([sb[0x30], sb[0x31], sb[0x32], sb[0x33]]));
+        let created = non_zero(u32::from_le_bytes([
+            sb[0x108], sb[0x109], sb[0x10A], sb[0x10B],
+        ]));
 
         Ok(Volume {
             offset,
@@ -269,12 +281,25 @@ impl Volume {
             uuid,
             clean,
             version,
+            created,
+            written,
         })
     }
 
     /// The detected ext variant: `"ext2"`, `"ext3"`, or `"ext4"`.
     pub fn version(&self) -> &'static str {
         self.version
+    }
+
+    /// Filesystem creation time (`s_mkfs_time`) as Unix seconds, or `None` when
+    /// the superblock does not record it.
+    pub fn created_time(&self) -> Option<u64> {
+        self.created
+    }
+
+    /// Last write time (`s_wtime`) as Unix seconds, or `None` when unset.
+    pub fn written_time(&self) -> Option<u64> {
+        self.written
     }
 
     /// The volume label (`s_volume_name`), empty when unset.
