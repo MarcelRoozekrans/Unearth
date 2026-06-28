@@ -23,6 +23,8 @@ fn iso_image(blocks: u32, label: &str) -> Vec<u8> {
     v[off + 40..off + 40 + label.len()].copy_from_slice(label.as_bytes());
     v[off + 80..off + 84].copy_from_slice(&blocks.to_le_bytes());
     v[off + 128..off + 130].copy_from_slice(&2048u16.to_le_bytes());
+    // Volume creation date/time at offset 813: 2021-01-01 12:00:00, GMT.
+    v[off + 813..off + 829].copy_from_slice(b"2021010112000000");
     v
 }
 
@@ -38,6 +40,8 @@ fn detect_reports_iso9660_with_size_and_label() {
     assert_eq!(vols[0].fs_label(), "ISO 9660");
     assert_eq!(vols[0].size(), 50 * 2048);
     assert_eq!(vols[0].volume_label().as_deref(), Some("MY_DISC"));
+    // 2021-01-01 12:00:00 UTC = 18628 days + 12 h.
+    assert_eq!(vols[0].created_time(), Some(18628 * 86400 + 12 * 3600));
 
     // This image has no root directory tree, so there is nothing to extract.
     let out = tmp.path().join("out");

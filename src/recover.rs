@@ -298,24 +298,28 @@ impl Volume {
 
     /// The filesystem's creation time as Unix seconds, when the backend records
     /// one — ext's `s_mkfs_time`, NTFS's `$Volume` `$STANDARD_INFORMATION`
-    /// creation time, or HFS+'s `createDate`. `None` otherwise.
+    /// creation time, HFS+'s `createDate`, or an ISO 9660 PVD creation date.
+    /// `None` otherwise.
     pub fn created_time(&self) -> Option<u64> {
         match self {
             Volume::Ext(v) => v.created_time(),
             Volume::Ntfs(v) => v.created_time(),
             Volume::Hfs(v) => v.created_time(),
+            Volume::Iso(v) => v.created_time(),
             _ => None,
         }
     }
 
     /// The filesystem's last-write time as Unix seconds, when the backend records
     /// one — ext's `s_wtime`, NTFS's `$Volume` `$STANDARD_INFORMATION`
-    /// modification time, or HFS+'s `modifyDate`. `None` otherwise.
+    /// modification time, HFS+'s `modifyDate`, or an ISO 9660 PVD modification
+    /// date. `None` otherwise.
     pub fn written_time(&self) -> Option<u64> {
         match self {
             Volume::Ext(v) => v.written_time(),
             Volume::Ntfs(v) => v.written_time(),
             Volume::Hfs(v) => v.written_time(),
+            Volume::Iso(v) => v.written_time(),
             _ => None,
         }
     }
