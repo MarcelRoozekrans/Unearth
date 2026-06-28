@@ -42,6 +42,21 @@ const SUPERBLOCK_OFFSET: u64 = 1024;
 const EXT_MAGIC: u16 = 0xEF53;
 const INCOMPAT_FILETYPE: u32 = 0x0002;
 const INCOMPAT_64BIT: u32 = 0x0080;
+
+// Feature-flag masks used to tell ext2 / ext3 / ext4 apart, mirroring how
+// libblkid (util-linux) classifies a volume.
+/// `s_feature_compat` bit: an ext3+ journal is present (`HAS_JOURNAL`).
+const COMPAT_HAS_JOURNAL: u32 = 0x0004;
+/// `s_feature_incompat` bits understood by plain ext2: `FILETYPE` | `META_BG`.
+const EXT2_INCOMPAT_SUPP: u32 = INCOMPAT_FILETYPE | 0x0010;
+/// ext3 additionally understands the journal `RECOVER` incompat bit.
+const EXT3_INCOMPAT_SUPP: u32 = EXT2_INCOMPAT_SUPP | 0x0004;
+/// `s_feature_ro_compat` bits that do not by themselves imply ext4 (the same set
+/// libblkid treats as supported for ext2/ext3): `SPARSE_SUPER` | `LARGE_FILE` |
+/// `HUGE_FILE` | `BTREE_DIR` | `GDT_CSUM` | `DIR_NLINK` | `EXTRA_ISIZE` |
+/// `METADATA_CSUM`.
+const EXT2_RO_COMPAT_SUPP: u32 =
+    0x0001 | 0x0002 | 0x0008 | 0x0004 | 0x0010 | 0x0020 | 0x0040 | 0x0400;
 const FLAG_EXTENTS: u32 = 0x0008_0000;
 const EXTENT_MAGIC: u16 = 0xF30A;
 const MODE_FMT: u16 = 0xF000;
@@ -87,6 +102,26 @@ pub struct Volume {
     uuid: Option<String>,
     /// Whether the filesystem was cleanly unmounted (`s_state` bit 0).
     clean: bool,
+    /// The detected ext variant ("ext2", "ext3", or "ext4") from the feature
+    /// flags.
+    version: &'static str,
+}
+
+/// Classify an ext volume as `"ext2"`, `"ext3"`, or `"ext4"` from its feature
+/// flags, the way libblkid does: it is ext2 when it has no journal and only
+/// ext2-level features, ext3 when it has a journal and only ext3-level features,
+/// and ext4 otherwise (any ext4-only incompat/ro_compat feature, e.g. extents or
+/// 64-bit).
+fn classify_version(compat: u32, incompat: u32, ro_compat: u32) -> &'static str {
+    let has_journal = compat & COMPAT_HAS_JOURNAL != 0;
+    let ro_compat_ok = ro_compat & !EXT2_RO_COMPAT_SUPP == 0;
+    if !has_journal && incompat & !EXT2_INCOMPAT_SUPP == 0 && ro_compat_ok {
+        "ext2"
+    } else if has_journal && incompat & !EXT3_INCOMPAT_SUPP == 0 && ro_compat_ok {
+        "ext3"
+    } else {
+        "ext4"
+    }
 }
 
 /// Does the superblock at `vol_offset + 1024` carry the ext magic?
@@ -138,7 +173,10 @@ impl Volume {
         if inode_size < 128 || inode_size > block_size {
             bail!("implausible ext inode size {inode_size}");
         }
+        let feature_compat = u32::from_le_bytes([sb[0x5C], sb[0x5D], sb[0x5E], sb[0x5F]]);
         let feature_incompat = u32::from_le_bytes([sb[0x60], sb[0x61], sb[0x62], sb[0x63]]);
+        let feature_ro_compat = u32::from_le_bytes([sb[0x64], sb[0x65], sb[0x66], sb[0x67]]);
+        let version = classify_version(feature_compat, feature_incompat, feature_ro_compat);
         let is_64bit = feature_incompat & INCOMPAT_64BIT != 0;
         let desc_size = if is_64bit {
             let d = u16::from_le_bytes([sb[0xFE], sb[0xFF]]) as u64;
@@ -230,7 +268,13 @@ impl Volume {
             label,
             uuid,
             clean,
+            version,
         })
+    }
+
+    /// The detected ext variant: `"ext2"`, `"ext3"`, or `"ext4"`.
+    pub fn version(&self) -> &'static str {
+        self.version
     }
 
     /// The volume label (`s_volume_name`), empty when unset.
@@ -981,6 +1025,37 @@ mod tests {
     }
     fn be_u16(v: &mut Vec<u8>, n: u16) {
         v.extend_from_slice(&n.to_be_bytes());
+    }
+
+    #[test]
+    fn classify_version_distinguishes_ext_variants() {
+        // No journal, only ext2 features => ext2.
+        assert_eq!(classify_version(0, 0, 0), "ext2");
+        assert_eq!(classify_version(0, INCOMPAT_FILETYPE, 0x0001), "ext2");
+        // Journal present, only ext3-level features => ext3.
+        assert_eq!(
+            classify_version(COMPAT_HAS_JOURNAL, INCOMPAT_FILETYPE, 0x0001),
+            "ext3"
+        );
+        // RECOVER (replaying journal) is still ext3.
+        assert_eq!(
+            classify_version(COMPAT_HAS_JOURNAL, INCOMPAT_FILETYPE | 0x0004, 0),
+            "ext3"
+        );
+        // Extents incompat feature => ext4, even with a journal.
+        assert_eq!(
+            classify_version(COMPAT_HAS_JOURNAL, INCOMPAT_FILETYPE | 0x0040, 0),
+            "ext4"
+        );
+        // 64-bit incompat feature => ext4.
+        assert_eq!(
+            classify_version(COMPAT_HAS_JOURNAL, INCOMPAT_64BIT, 0),
+            "ext4"
+        );
+        // An ext4-only ro_compat feature (BIGALLOC 0x200) => ext4.
+        assert_eq!(classify_version(COMPAT_HAS_JOURNAL, 0, 0x0200), "ext4");
+        // An ext2 image that happens to carry an ext4-only incompat bit is ext4.
+        assert_eq!(classify_version(0, 0x0040, 0), "ext4");
     }
 
     #[test]
