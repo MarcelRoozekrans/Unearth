@@ -861,8 +861,11 @@ Common to both strategies:
   recovered from both **Joliet** (Windows-authored discs — UCS-2) and **Rock
   Ridge** (`NM` entries on Linux/macOS-authored discs) — including long names
   that spill into Rock Ridge continuation (`CE`) areas — so files come back with
-  their full filenames either way. Files split across **multi-extent** records
-  (how ISO 9660 stores files larger than ~4 GiB) are reassembled into one file.
+  their full filenames either way. Each extracted file's **recording date** (from
+  its directory record) is preserved as the output file's modification time, just
+  as the undelete backends preserve a deleted file's timestamps. Files split
+  across **multi-extent** records (how ISO 9660 stores files larger than ~4 GiB)
+  are reassembled into one file.
   A hybrid UDF disc is reported as UDF. A disc with an **El Torito** boot record
   is flagged as bootable with its boot platform(s) — e.g. `El Torito (BIOS,
   UEFI)`, read from the boot catalog — distinguishing a legacy-BIOS, UEFI, or
