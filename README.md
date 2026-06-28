@@ -398,8 +398,8 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 `--scan` reads the **whole source** and probes for filesystem signatures at
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
-(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID,
-Linux swap, and LUKS/BitLocker):
+(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, HFS+, HFS, APFS, Btrfs, LVM2, Linux
+MD/RAID, Linux swap, and LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -811,6 +811,14 @@ Common to both strategies:
   plus any tail extents from the **extents-overflow B-tree**, so fragmented
   files come back whole. A file whose catalog record has been overwritten, or
   whose tail extents survive nowhere, is not recovered by metadata — use `scan`.
+- **HFS** (the original **Mac OS Standard** filesystem, 1985–1998, found on old
+  Mac floppies, disks, and CDs — the predecessor of HFS+) is *recognised* and its
+  size and **volume name** are reported by `info`/`list_volumes` (from the `BD`
+  Master Directory Block 1024 bytes in). Its catalog is a different, long-obsolete
+  on-disk B-tree from HFS+, so it is not recovered from metadata — use `scan`
+  (carving). An MDB that instead *wraps* an embedded HFS+ volume is followed to
+  the HFS+ volume and recovered as HFS+ (see the **HFS wrapper** note above), so
+  only a *pure* old-HFS volume is reported as `HFS`.
 - **APFS** is *recognised* and its contained **volumes are listed by name** (so
   `info`/`list_volumes` report the container, its size, and the volumes inside
   it), but it is not recovered from metadata: its copy-on-write design reclaims

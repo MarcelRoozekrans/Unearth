@@ -54,6 +54,7 @@ pub mod ext4;
 pub mod f2fs;
 pub mod fat;
 pub mod hash;
+pub mod hfs;
 pub mod hfsplus;
 pub mod identify;
 pub mod image;

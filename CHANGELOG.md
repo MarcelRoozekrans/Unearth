@@ -14,6 +14,15 @@ formats.
 
 ### Added
 
+- **Old HFS (Mac OS Standard) volumes are recognised** — the original HFS
+  filesystem (1985–1998, found on old Mac floppies, disks, and CDs) is now
+  detected from its `BD` Master Directory Block, so `info` / `list_volumes`
+  report its size and volume name instead of leaving it unrecognised. Its catalog
+  is a long-obsolete on-disk format, so it is not recovered from metadata — use
+  `scan` (carving). A `BD` block that wraps an embedded HFS+ volume is still
+  followed to the HFS+ volume, so only a pure old-HFS volume is reported as `HFS`.
+  This completes the Mac filesystem family (HFS / HFS+ / HFSX, plus the HFS
+  wrapper and Apple Partition Map).
 - **QuickTime / M4A / M4V get their own extensions when carved** — ISO base-media
   files are now carved to a brand-specific extension instead of always `.mp4`:
   the `qt  ` major brand (iPhone/Mac video) → `.mov`, `M4A ` → `.m4a`, and

@@ -27,7 +27,7 @@ use anyhow::{bail, Result};
 
 use crate::source::Source;
 use crate::{
-    apfs, btrfs, encrypted, exfat, ext4, f2fs, fat, hfsplus, iso9660, lvm, mdraid, ntfs, refs,
+    apfs, btrfs, encrypted, exfat, ext4, f2fs, fat, hfs, hfsplus, iso9660, lvm, mdraid, ntfs, refs,
     swap, udf, xfs,
 };
 
@@ -202,6 +202,7 @@ pub enum Volume {
     F2fs(f2fs::Volume),
     Lvm(lvm::Volume),
     Mdraid(mdraid::Volume),
+    HfsStd(hfs::Volume),
     Swap(swap::Volume),
     Encrypted(encrypted::Volume),
     Udf(udf::Volume),
@@ -224,6 +225,7 @@ impl Volume {
             Volume::F2fs(v) => v.offset,
             Volume::Lvm(v) => v.offset,
             Volume::Mdraid(v) => v.offset,
+            Volume::HfsStd(v) => v.offset,
             Volume::Swap(v) => v.offset,
             Volume::Encrypted(v) => v.offset,
             Volume::Udf(v) => v.offset,
@@ -246,6 +248,7 @@ impl Volume {
             Volume::F2fs(v) => v.size(),
             Volume::Lvm(v) => v.size(),
             Volume::Mdraid(v) => v.size(),
+            Volume::HfsStd(v) => v.size(),
             Volume::Swap(v) => v.size(),
             Volume::Encrypted(v) => v.size(),
             Volume::Udf(v) => v.size(),
@@ -268,6 +271,7 @@ impl Volume {
             Volume::F2fs(v) => v.fs_label().to_string(),
             Volume::Lvm(v) => v.fs_label().to_string(),
             Volume::Mdraid(v) => v.fs_label(),
+            Volume::HfsStd(v) => v.fs_label().to_string(),
             Volume::Swap(v) => v.fs_label().to_string(),
             Volume::Encrypted(v) => v.fs_label().to_string(),
             Volume::Udf(v) => v.fs_label().to_string(),
@@ -385,6 +389,7 @@ impl Volume {
             Volume::Xfs(v) => v.label(),
             Volume::F2fs(v) => v.label(),
             Volume::Mdraid(v) => v.label(),
+            Volume::HfsStd(v) => v.label(),
             Volume::Swap(v) => v.label(),
             Volume::Encrypted(v) => v.label(),
             Volume::Iso(v) => v.label(),
@@ -490,6 +495,7 @@ impl Volume {
             Volume::F2fs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Lvm(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Mdraid(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::HfsStd(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Swap(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Encrypted(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Udf(v) => v.recover_deleted(src, out_dir, opts),
@@ -548,7 +554,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
+        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, HFS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
@@ -623,6 +629,12 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     if hfsplus::is_hfsplus(src, offset) {
         if let Ok(v) = hfsplus::Volume::parse(src, offset) {
             return Ok(Some(Volume::Hfs(v)));
+        }
+    }
+    // Pure old HFS (after hfsplus, which claims HFS+ wrappers).
+    if hfs::is_hfs(src, offset) {
+        if let Ok(v) = hfs::Volume::parse(src, offset) {
+            return Ok(Some(Volume::HfsStd(v)));
         }
     }
     if apfs::is_apfs(src, offset) {
@@ -756,6 +768,11 @@ pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     if hfsplus::is_hfsplus(src, offset) {
         if let Ok(v) = hfsplus::Volume::parse(src, offset) {
             return Ok(Volume::Hfs(v));
+        }
+    }
+    if hfs::is_hfs(src, offset) {
+        if let Ok(v) = hfs::Volume::parse(src, offset) {
+            return Ok(Volume::HfsStd(v));
         }
     }
     if apfs::is_apfs(src, offset) {
