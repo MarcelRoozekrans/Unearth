@@ -26,6 +26,8 @@ const MAGIC: &[u8; 4] = b"XFSB";
 const BLOCKSIZE_OFFSET: usize = 4;
 /// `sb_dblocks` (big-endian u64) at offset 8: total filesystem blocks.
 const DBLOCKS_OFFSET: usize = 8;
+/// `sb_uuid` (16 bytes) at offset 0x20: the filesystem UUID.
+const UUID_OFFSET: usize = 0x20;
 /// `sb_fname[12]` at offset 0x6C: the filesystem label.
 const LABEL_OFFSET: usize = 0x6C;
 const LABEL_LEN: usize = 12;
@@ -39,6 +41,7 @@ pub struct Volume {
     size: u64,
     block_size: u32,
     label: String,
+    uuid: Option<String>,
 }
 
 /// Does the superblock at `vol_offset` carry the XFS magic (`XFSB`)?
@@ -80,11 +83,13 @@ impl Volume {
         let raw = &sb[LABEL_OFFSET..LABEL_OFFSET + LABEL_LEN];
         let end = raw.iter().position(|&b| b == 0).unwrap_or(LABEL_LEN);
         let label = String::from_utf8_lossy(&raw[..end]).trim().to_string();
+        let uuid = crate::recover::format_uuid(&sb[UUID_OFFSET..UUID_OFFSET + 16]);
         Ok(Volume {
             offset,
             size,
             block_size,
             label,
+            uuid,
         })
     }
 
@@ -106,6 +111,11 @@ impl Volume {
     /// XFS block size in bytes.
     pub fn block_size(&self) -> u32 {
         self.block_size
+    }
+
+    /// The filesystem UUID (`sb_uuid`), or `None` when unset.
+    pub fn uuid(&self) -> Option<String> {
+        self.uuid.clone()
     }
 
     /// XFS metadata undelete is not supported (see the module docs); this always
@@ -146,13 +156,16 @@ mod tests {
 
     #[test]
     fn detects_sizes_and_labels_a_volume() {
-        let (_t, src) = source_of(&superblock(4096, 2560, "data"));
+        let mut sb = superblock(4096, 2560, "data");
+        sb[UUID_OFFSET..UUID_OFFSET + 16].copy_from_slice(&[0x11; 16]);
+        let (_t, src) = source_of(&sb);
         assert!(is_xfs(&src, 0));
         let v = Volume::parse(&src, 0).unwrap();
         assert_eq!(v.fs_label(), "XFS");
         assert_eq!(v.size(), 4096 * 2560);
         assert_eq!(v.block_size(), 4096);
         assert_eq!(v.label(), "data");
+        assert_eq!(v.uuid().unwrap(), "11111111-1111-1111-1111-111111111111");
     }
 
     #[test]

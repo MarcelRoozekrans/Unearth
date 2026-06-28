@@ -29,6 +29,8 @@ const MAGIC: u32 = 0xF2F5_2010;
 const LOG_BLOCKSIZE_OFFSET: usize = 0x10;
 /// `block_count` (u64) at offset 0x24: total blocks, in units of the block size.
 const BLOCK_COUNT_OFFSET: usize = 0x24;
+/// `uuid` (16 bytes) at offset 0x6C: the filesystem UUID.
+const UUID_OFFSET: usize = 0x6C;
 /// `volume_name[512]` (UTF-16LE, NUL-terminated) at offset 0x7C.
 const VOLUME_NAME_OFFSET: usize = 0x7C;
 /// How many UTF-16 code units of the label to read (plenty for any real label).
@@ -43,6 +45,7 @@ pub struct Volume {
     size: u64,
     block_size: u32,
     label: String,
+    uuid: Option<String>,
 }
 
 /// Does the superblock at `vol_offset` carry the F2FS magic (`0xF2F52010`)?
@@ -94,11 +97,13 @@ impl Volume {
             .unwrap_or_else(|| src.size.saturating_sub(offset));
         let label =
             decode_label(&sb[VOLUME_NAME_OFFSET..VOLUME_NAME_OFFSET + VOLUME_NAME_UNITS * 2]);
+        let uuid = crate::recover::format_uuid(&sb[UUID_OFFSET..UUID_OFFSET + 16]);
         Ok(Volume {
             offset,
             size,
             block_size,
             label,
+            uuid,
         })
     }
 
@@ -120,6 +125,11 @@ impl Volume {
     /// F2FS block size in bytes.
     pub fn block_size(&self) -> u32 {
         self.block_size
+    }
+
+    /// The filesystem UUID, or `None` when unset.
+    pub fn uuid(&self) -> Option<String> {
+        self.uuid.clone()
     }
 
     /// F2FS metadata undelete is not supported (see the module docs); this always
@@ -159,6 +169,7 @@ mod tests {
             .copy_from_slice(&log_blocksize.to_le_bytes());
         v[sb + BLOCK_COUNT_OFFSET..sb + BLOCK_COUNT_OFFSET + 8]
             .copy_from_slice(&block_count.to_le_bytes());
+        v[sb + UUID_OFFSET..sb + UUID_OFFSET + 16].copy_from_slice(&[0x22; 16]);
         for (i, u) in label.encode_utf16().enumerate() {
             let o = sb + VOLUME_NAME_OFFSET + i * 2;
             v[o..o + 2].copy_from_slice(&u.to_le_bytes());
@@ -184,6 +195,7 @@ mod tests {
         assert_eq!(v.block_size(), 4096);
         assert_eq!(v.size(), 4096 * 2560);
         assert_eq!(v.label(), "userdata");
+        assert_eq!(v.uuid().unwrap(), "22222222-2222-2222-2222-222222222222");
     }
 
     #[test]

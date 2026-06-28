@@ -83,6 +83,8 @@ pub struct Volume {
     first_data_block: u64,
     /// Volume label (`s_volume_name`), empty when unset.
     label: String,
+    /// Filesystem UUID (`s_uuid`), `None` when unset.
+    uuid: Option<String>,
 }
 
 /// Does the superblock at `vol_offset + 1024` carry the ext magic?
@@ -206,6 +208,8 @@ impl Volume {
         let raw = &sb[0x78..0x88];
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
         let label = String::from_utf8_lossy(&raw[..end]).into_owned();
+        // s_uuid: 16 bytes at superblock offset 0x68.
+        let uuid = crate::recover::format_uuid(&sb[0x68..0x78]);
 
         Ok(Volume {
             offset,
@@ -220,12 +224,18 @@ impl Volume {
             blocks_per_group,
             first_data_block,
             label,
+            uuid,
         })
     }
 
     /// The volume label (`s_volume_name`), empty when unset.
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// The filesystem UUID (`s_uuid`), or `None` when unset.
+    pub fn uuid(&self) -> Option<String> {
+        self.uuid.clone()
     }
 
     fn read_block(&self, src: &Source, block: u64) -> Result<Vec<u8>> {

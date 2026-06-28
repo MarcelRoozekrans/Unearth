@@ -89,6 +89,24 @@ pub fn file_name_of(p: &Path) -> &str {
     p.file_name().and_then(|s| s.to_str()).unwrap_or("")
 }
 
+/// Format 16 raw bytes as a canonical UUID (`8-4-4-4-12`), or `None` when all
+/// zero (unset). Unlike a GPT GUID, a filesystem UUID is stored big-endian, so
+/// the bytes are emitted in order with no field swapping.
+pub(crate) fn format_uuid(b: &[u8]) -> Option<String> {
+    if b.len() < 16 || b[..16].iter().all(|&x| x == 0) {
+        return None;
+    }
+    let h: String = b[..16].iter().map(|x| format!("{x:02x}")).collect();
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    ))
+}
+
 /// Case-insensitive glob match supporting `*` (any run, including empty) and `?`
 /// (exactly one character). Used for the `--name` recovery filter.
 fn glob_match(pattern: &str, name: &str) -> bool {
@@ -276,6 +294,19 @@ impl Volume {
             None
         } else {
             Some(label.to_string())
+        }
+    }
+
+    /// The filesystem's own UUID — the `UUID=` value that `/etc/fstab` and
+    /// `blkid` use to identify a volume — for the backends that expose one (ext,
+    /// XFS, F2FS, Btrfs). `None` for filesystems without a stable UUID.
+    pub fn volume_uuid(&self) -> Option<String> {
+        match self {
+            Volume::Ext(v) => v.uuid(),
+            Volume::Xfs(v) => v.uuid(),
+            Volume::F2fs(v) => v.uuid(),
+            Volume::Btrfs(v) => v.uuid(),
+            _ => None,
         }
     }
 
