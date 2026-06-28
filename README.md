@@ -23,7 +23,7 @@ its partition table is gone.
 
 ### `undelete` — filesystem-aware recovery (FAT12/16/32, exFAT, NTFS, ext2/3/4, HFS+)
 
-The filesystem type is auto-detected (bare volume, or a GPT or MBR partition
+The filesystem type is auto-detected (bare volume, or a GPT, MBR, or APM partition
 table), and FAT, exFAT, NTFS, ext2/3/4, and HFS+/HFSX are all handled by the
 same `undelete` command.
 
@@ -263,15 +263,17 @@ filerecovery info disk.img --json      # machine-readable layout for scripting
 filerecovery info disk.img --scan      # find lost partitions (whole-disk signature scan)
 ```
 
-The **partition table** is shown first when present: the scheme (GPT or MBR) and
-each entry's type (a friendly name for known GPT type GUIDs / MBR type bytes, or
-the raw GUID/`0xNN` otherwise), its GPT name, and its byte range. This surfaces
-the on-disk layout even for partitions whose filesystem isn't recovered (an EFI
-System Partition, a swap partition, an empty slot). `--json` adds
-`partition_scheme` and a `partitions` array. For MBR disks, the **logical
-partitions** inside an extended partition are enumerated too (by walking the
-Extended Boot Record chain), so a disk with more than four partitions shows all
-of them, not just the four primaries.
+The **partition table** is shown first when present: the scheme (GPT, MBR, or
+**APM** — the Apple Partition Map used by PowerPC-era Macs, older Mac disks, and
+hybrid CDs) and each entry's type (a friendly name for known GPT type GUIDs / MBR
+type bytes, the APM type string such as `Apple_HFS`, or the raw GUID/`0xNN`
+otherwise), its name, and its byte range. This surfaces the on-disk layout even
+for partitions whose filesystem isn't recovered (an EFI System Partition, a swap
+partition, an empty slot). `--json` adds `partition_scheme` and a `partitions`
+array. For MBR disks, the **logical partitions** inside an extended partition are
+enumerated too (by walking the Extended Boot Record chain), so a disk with more
+than four partitions shows all of them, not just the four primaries. Volumes
+inside APM partitions are detected and recovered like any other.
 
 For GPT disks, each partition's **unique GUID** (the PARTUUID referenced by
 `/etc/fstab`, bootloaders, and `/dev/disk/by-partuuid`) and the **disk GUID** are
@@ -467,7 +469,7 @@ filerecovery undelete card.img -o recovered
 sudo filerecovery undelete /dev/mmcblk0 -o recovered   # SD card, needs root
 ```
 
-The filesystem and volume are auto-detected (bare volume, or a GPT or MBR
+The filesystem and volume are auto-detected (bare volume, or a GPT, MBR, or APM
 partition table). Override the location with `--offset <BYTES>` if needed.
 
 `undelete` options:

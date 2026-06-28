@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **Apple Partition Map (APM) is supported** — disks partitioned with the Apple
+  Partition Map (PowerPC-era Macs, older Mac disks, hybrid CDs) are now
+  recognised: `info` / `list_volumes` report the `apm` scheme and each entry's
+  type (e.g. `Apple_HFS`), name, and byte range, and `undelete` / `scan` /
+  `recover` detect and recover the volumes inside APM partitions. Both 512-byte
+  and 2048-byte block maps are handled. This is the third partition scheme
+  alongside GPT and MBR.
 - **Extracted ISO 9660 files keep their recording date** — a file extracted from
   an ISO 9660 disc now has its directory-record recording date/time applied as
   the output file's modification time, matching how the undelete backends already

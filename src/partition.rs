@@ -21,6 +21,8 @@ use crate::source::Source;
 pub enum Scheme {
     Gpt,
     Mbr,
+    /// Apple Partition Map (PowerPC-era Macs, older Mac disks, hybrid CDs).
+    Apm,
     /// No partition table (a bare filesystem, or an unrecognised source).
     None,
 }
@@ -93,12 +95,82 @@ pub fn read(src: &Source) -> Table {
     if let Some(t) = read_mbr(src) {
         return t;
     }
+    if let Some(partitions) = read_apm(src) {
+        return Table {
+            scheme: Scheme::Apm,
+            partitions,
+            from_backup: false,
+            disk_guid: None,
+        };
+    }
     Table {
         scheme: Scheme::None,
         partitions: Vec::new(),
         from_backup: false,
         disk_guid: None,
     }
+}
+
+/// Apple Partition Map block size candidates: 512 for disks, 2048 for CDs.
+const APM_BLOCK_SIZES: [u64; 2] = [512, 2048];
+
+/// Parse an Apple Partition Map. The map is a run of one-block entries starting
+/// at block 1, each with the `PM` signature, the count of map blocks, and the
+/// partition's start/size (in blocks) plus name and type strings. Returns the
+/// partitions, or `None` when there is no APM. Tries 512- and 2048-byte blocks.
+pub(crate) fn read_apm(src: &Source) -> Option<Vec<Partition>> {
+    for &bs in &APM_BLOCK_SIZES {
+        let mut first = [0u8; 512];
+        if src.read_at(bs, &mut first).ok()? < 512 {
+            continue;
+        }
+        // pmSig "PM" (0x504D) at offset 0 of the first map entry (block 1).
+        if &first[0..2] != b"PM" {
+            continue;
+        }
+        let count = u32::from_be_bytes(first[4..8].try_into().unwrap()) as u64;
+        if !(1..=1024).contains(&count) {
+            continue;
+        }
+        let mut partitions = Vec::new();
+        for i in 0..count {
+            let off = bs.checked_mul(i + 1)?;
+            let mut e = [0u8; 512];
+            if src.read_at(off, &mut e).ok()? < 512 || &e[0..2] != b"PM" {
+                break;
+            }
+            let start = u32::from_be_bytes(e[8..12].try_into().unwrap()) as u64;
+            let blocks = u32::from_be_bytes(e[12..16].try_into().unwrap()) as u64;
+            if blocks == 0 {
+                continue;
+            }
+            partitions.push(Partition {
+                kind: apm_string(&e[48..80]), // pmPartType, e.g. "Apple_HFS"
+                name: {
+                    let n = apm_string(&e[16..48]); // pmPartName
+                    if n.is_empty() {
+                        None
+                    } else {
+                        Some(n)
+                    }
+                },
+                uuid: None,
+                start: start.checked_mul(bs)?,
+                size: blocks.checked_mul(bs)?,
+                attributes: Vec::new(),
+            });
+        }
+        if !partitions.is_empty() {
+            return Some(partitions);
+        }
+    }
+    None
+}
+
+/// A NUL/space-trimmed ASCII string from a fixed APM field.
+fn apm_string(raw: &[u8]) -> String {
+    let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+    String::from_utf8_lossy(&raw[..end]).trim().to_string()
 }
 
 /// Read a GPT, preferring the primary header at LBA 1 but falling back to the
@@ -543,5 +615,36 @@ mod tests {
     fn bare_source_has_no_table() {
         let (_t, src) = source_of(&vec![0u8; 4096]);
         assert_eq!(read(&src).scheme, Scheme::None);
+    }
+
+    #[test]
+    fn reads_an_apple_partition_map() {
+        const BS: usize = 512;
+        let mut disk = vec![0u8; 8 * BS];
+        // Two map entries (blocks 1 and 2), each with the "PM" signature and the
+        // map-block count of 2.
+        let put_entry =
+            |d: &mut [u8], block: usize, start: u32, blocks: u32, name: &str, ty: &str| {
+                let e = block * BS;
+                d[e..e + 2].copy_from_slice(b"PM");
+                d[e + 4..e + 8].copy_from_slice(&2u32.to_be_bytes()); // pmMapBlkCnt
+                d[e + 8..e + 12].copy_from_slice(&start.to_be_bytes());
+                d[e + 12..e + 16].copy_from_slice(&blocks.to_be_bytes());
+                d[e + 16..e + 16 + name.len()].copy_from_slice(name.as_bytes());
+                d[e + 48..e + 48 + ty.len()].copy_from_slice(ty.as_bytes());
+            };
+        put_entry(&mut disk, 1, 64, 100, "Macintosh HD", "Apple_HFS");
+        put_entry(&mut disk, 2, 164, 50, "", "Apple_Free");
+
+        let (_t, src) = source_of(&disk);
+        let table = read(&src);
+        assert_eq!(table.scheme, Scheme::Apm);
+        assert_eq!(table.partitions.len(), 2);
+        assert_eq!(table.partitions[0].kind, "Apple_HFS");
+        assert_eq!(table.partitions[0].name.as_deref(), Some("Macintosh HD"));
+        assert_eq!(table.partitions[0].start, 64 * 512);
+        assert_eq!(table.partitions[0].size, 100 * 512);
+        assert_eq!(table.partitions[1].kind, "Apple_Free");
+        assert_eq!(table.partitions[1].name, None);
     }
 }

@@ -537,8 +537,18 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
         }
     }
 
+    // 4. An Apple Partition Map (older Mac disks, hybrid CDs) — checked after
+    // GPT/MBR since those are more specific.
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
+        for p in crate::partition::read_apm(src).unwrap_or_default() {
+            if let Some(v) = try_parse_volume(src, p.start)? {
+                volumes.push(v);
+            }
+        }
+    }
+
+    if volumes.is_empty() {
+        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
