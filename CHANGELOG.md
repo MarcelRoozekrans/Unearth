@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **MPEG transport stream (`.ts`) carving** — the container used by DVB/ATSC
+  broadcast captures, HDHomeRun/DVR recordings, and many camcorders is carved by
+  walking its fixed 188-byte packets (each starting with the `0x47` sync byte) to
+  the end of the stream, giving an exact end at the last whole packet. The sync
+  byte is required at two packet boundaries plus a longer consecutive run, so the
+  single-byte sync cannot trigger a false carve. The 192-byte (M2TS) and 204-byte
+  (FEC) variants are not carved. `identify` and `triage` recognise `.ts` by
+  content too.
 - **ext filesystem timestamps are reported** — `info` / `list_volumes` now show
   an ext volume's creation time (`s_mkfs_time`) and last-write time (`s_wtime`),
   the same values `dumpe2fs` reports, so a recovered volume can be dated. The
