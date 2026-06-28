@@ -63,6 +63,7 @@ pub mod json;
 pub mod lvm;
 pub mod manifest;
 pub mod mcp;
+pub mod mdraid;
 pub mod ntfs;
 pub mod partition;
 pub mod recover;

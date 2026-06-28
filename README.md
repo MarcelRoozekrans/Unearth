@@ -380,8 +380,8 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 `--scan` reads the **whole source** and probes for filesystem signatures at
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
-(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, HFS+, APFS, Btrfs, LVM2, Linux swap,
-and LUKS/BitLocker):
+(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID,
+Linux swap, and LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -820,6 +820,13 @@ Common to both strategies:
   by `info`/`list_volumes`. The logical volumes inside are not mapped, so recover
   with a whole-source `scan` (or `--scan`), which finds the filesystems inside the
   LVs at their physical offsets.
+- **Linux MD/RAID** members are *recognised* from their version-1 `mdadm`
+  superblock (1.1 at the device start, 1.2 at 4 KiB in), and `info`/`list_volumes`
+  report the array's **RAID level** (e.g. `Linux RAID5`), **UUID**, name, and the
+  member's data size. The array is not assembled, so assemble it with `mdadm
+  --assemble` first and recover from the assembled device (or `scan` the member to
+  carve whatever lies contiguously within it). The 1.0 layout (superblock near the
+  end of the device) is not detected.
 - **Linux swap** areas are *recognised* (rather than shown as an unrecognised
   volume) and their size, **UUID**, and **label** are reported by
   `info`/`list_volumes`, read from the version-2 swap header (`SWAPSPACE2`). A

@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **Linux MD/RAID members are recognised** — a software-RAID member device is
+  detected from its version-1 `mdadm` superblock (1.1 at the device start, 1.2 at
+  4 KiB in) and reported by `info` / `list_volumes` with the array's RAID level
+  (e.g. `Linux RAID5`), UUID, name, and the member's data size, instead of
+  showing as an unrecognised volume. The array is not assembled — assemble it
+  with `mdadm` first, then recover from the assembled device. The 1.0 layout
+  (superblock near the end of the device) is not detected.
 - **Inode (file) usage is reported** — `info` / `list_volumes` now show roughly
   how many files and directories a volume holds, for **ext**
   (`s_inodes_count` / `s_free_inodes_count`) and **XFS** (`sb_icount` /
