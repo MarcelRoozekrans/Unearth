@@ -31,8 +31,12 @@ const UUID_OFFSET: usize = 0x20;
 /// `sb_fname[12]` at offset 0x6C: the filesystem label.
 const LABEL_OFFSET: usize = 0x6C;
 const LABEL_LEN: usize = 12;
+/// `sb_icount` (big-endian u64) at offset 0x80: allocated inodes.
+const ICOUNT_OFFSET: usize = 0x80;
+/// `sb_ifree` (big-endian u64) at offset 0x88: free inodes.
+const IFREE_OFFSET: usize = 0x88;
 /// We read this many bytes of the superblock to cover every field above.
-const HEADER_LEN: usize = LABEL_OFFSET + LABEL_LEN;
+const HEADER_LEN: usize = IFREE_OFFSET + 8;
 
 /// A recognised XFS volume (detection only; no metadata undelete).
 pub struct Volume {
@@ -42,6 +46,10 @@ pub struct Volume {
     block_size: u32,
     label: String,
     uuid: Option<String>,
+    /// Allocated inodes (`sb_icount`).
+    icount: u64,
+    /// Free inodes (`sb_ifree`).
+    ifree: u64,
 }
 
 /// Does the superblock at `vol_offset` carry the XFS magic (`XFSB`)?
@@ -84,18 +92,28 @@ impl Volume {
         let end = raw.iter().position(|&b| b == 0).unwrap_or(LABEL_LEN);
         let label = String::from_utf8_lossy(&raw[..end]).trim().to_string();
         let uuid = crate::recover::format_uuid(&sb[UUID_OFFSET..UUID_OFFSET + 16]);
+        let icount = u64::from_be_bytes(sb[ICOUNT_OFFSET..ICOUNT_OFFSET + 8].try_into().unwrap());
+        let ifree = u64::from_be_bytes(sb[IFREE_OFFSET..IFREE_OFFSET + 8].try_into().unwrap());
         Ok(Volume {
             offset,
             size,
             block_size,
             label,
             uuid,
+            icount,
+            ifree,
         })
     }
 
     /// Total size of the volume in bytes (block count × block size).
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    /// Inode usage as `(used, total)` — the allocated inodes minus the free
+    /// ones, out of the allocated total.
+    pub fn inode_usage(&self) -> (u64, u64) {
+        (self.icount.saturating_sub(self.ifree), self.icount)
     }
 
     /// Short filesystem label.
@@ -141,6 +159,8 @@ mod tests {
         v[0..4].copy_from_slice(MAGIC);
         v[BLOCKSIZE_OFFSET..BLOCKSIZE_OFFSET + 4].copy_from_slice(&block_size.to_be_bytes());
         v[DBLOCKS_OFFSET..DBLOCKS_OFFSET + 8].copy_from_slice(&dblocks.to_be_bytes());
+        v[ICOUNT_OFFSET..ICOUNT_OFFSET + 8].copy_from_slice(&128u64.to_be_bytes());
+        v[IFREE_OFFSET..IFREE_OFFSET + 8].copy_from_slice(&40u64.to_be_bytes());
         let bytes = label.as_bytes();
         v[LABEL_OFFSET..LABEL_OFFSET + bytes.len()].copy_from_slice(bytes);
         v
@@ -166,6 +186,8 @@ mod tests {
         assert_eq!(v.block_size(), 4096);
         assert_eq!(v.label(), "data");
         assert_eq!(v.uuid().unwrap(), "11111111-1111-1111-1111-111111111111");
+        // 128 inodes allocated, 40 free => 88 used.
+        assert_eq!(v.inode_usage(), (88, 128));
     }
 
     #[test]

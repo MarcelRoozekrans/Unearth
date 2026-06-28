@@ -439,6 +439,10 @@ fn info(args: InfoArgs) -> Result<()> {
                     Some(n) => n.to_string(),
                     None => "null".to_string(),
                 };
+                let (inodes_used, inodes_total) = match vol.inode_usage() {
+                    Some((u, t)) => (u.to_string(), t.to_string()),
+                    None => ("null".to_string(), "null".to_string()),
+                };
                 let created_time = match vol.created_time() {
                     Some(n) => n.to_string(),
                     None => "null".to_string(),
@@ -448,13 +452,15 @@ fn info(args: InfoArgs) -> Result<()> {
                     None => "null".to_string(),
                 };
                 out.push_str(&format!(
-                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"version\": {}, \"offset\": {}, \"size\": {}, \"alloc_unit_bytes\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"last_mounted\": {}, \"boot\": {}, \"clean\": {}, \"created_time\": {}, \"written_time\": {}, \"contained_volumes\": [{}]}}{}\n",
+                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"version\": {}, \"offset\": {}, \"size\": {}, \"alloc_unit_bytes\": {}, \"inodes_used\": {}, \"inodes_total\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"last_mounted\": {}, \"boot\": {}, \"clean\": {}, \"created_time\": {}, \"written_time\": {}, \"contained_volumes\": [{}]}}{}\n",
                     i,
                     json_escape(&vol.fs_label()),
                     version,
                     vol.offset(),
                     vol.size(),
                     alloc_unit,
+                    inodes_used,
+                    inodes_total,
                     free,
                     deleted,
                     label,
@@ -590,6 +596,9 @@ fn info(args: InfoArgs) -> Result<()> {
         }
         if let Some(unit) = vol.alloc_unit() {
             println!("      alloc unit: {}", human_bytes(unit));
+        }
+        if let Some((used, total)) = vol.inode_usage() {
+            println!("      inodes: {used} used / {total}");
         }
         if let Some(t) = vol.created_time() {
             println!("      created: {}", filerecovery::times::format_utc(t));

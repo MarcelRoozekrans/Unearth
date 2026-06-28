@@ -588,6 +588,14 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                         ("offset", n(v.offset())),
                         ("size", n(v.size())),
                         ("alloc_unit_bytes", v.alloc_unit().map_or(Json::Null, n)),
+                        (
+                            "inodes_used",
+                            v.inode_usage().map_or(Json::Null, |(u, _)| n(u)),
+                        ),
+                        (
+                            "inodes_total",
+                            v.inode_usage().map_or(Json::Null, |(_, t)| n(t)),
+                        ),
                         ("free_bytes", free),
                         ("deleted", del),
                         (
