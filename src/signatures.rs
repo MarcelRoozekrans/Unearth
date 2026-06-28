@@ -324,6 +324,16 @@ pub enum Extent {
     /// and 204-byte (Reed-Solomon FEC) variants are not carved — their packets do
     /// not begin with the sync byte at offset 0.
     Mpegts,
+    /// MPEG program stream (`.mpg`/`.mpeg`/`.vob`) — the container used by DVDs,
+    /// VCDs, and older camcorders/recorders. It opens with a pack header
+    /// (`00 00 01 BA`) and is a chain of packs, system headers, and PES packets,
+    /// each introduced by a `00 00 01` start code. Packs are sized from the
+    /// MPEG-1/MPEG-2 header layout (with pack stuffing); system headers and PES
+    /// packets carry a 16-bit length. The chain is walked to the program-end code
+    /// (`00 00 01 B9`), giving an exact end, or to the last whole packet when the
+    /// stream is truncated. Several consecutive valid packets are required so the
+    /// start code cannot trigger a false carve.
+    Mpegps,
 }
 
 /// A recoverable file type.
@@ -875,6 +885,15 @@ pub static SIGNATURES: &[Signature] = &[
         // single-byte sync is not a candidate on its own.
         secondary: Some((188, &[0x47])),
         extent: Extent::Mpegts,
+        max_size: 16 * GB,
+    },
+    Signature {
+        name: "MPEG program stream",
+        ext: "mpg",
+        magic: &[0x00, 0x00, 0x01, 0xBA],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Mpegps,
         max_size: 16 * GB,
     },
     Signature {
@@ -1526,7 +1545,7 @@ pub fn category_of(ext: &str) -> Category {
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" => Category::Audio,
-        "mp4" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" => Category::Video,
+        "mp4" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => Category::Video,
         // The OOXML/OpenDocument/e-book types come from ZIP-content
         // classification; doc/xls/ppt/msg (and a generic OLE2 container) from
         // CFBF.

@@ -558,6 +558,7 @@ fn file_length(
         Extent::Cpio => Ok(cpio_length(source, file_start, limit)?),
         Extent::Squashfs => Ok(squashfs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
+        Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
     }
 }
 
@@ -2965,6 +2966,94 @@ fn mpegts_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<
         return Ok(None);
     }
     Ok(Some(packets * PACKET))
+}
+
+/// MPEG program stream (.mpg) length. Walk the chain of packs / system headers /
+/// PES packets, each introduced by a `00 00 01` start code, to the program-end
+/// code (`00 00 01 B9`) — or to the last whole packet when the stream is
+/// truncated. Pack headers are sized from the MPEG-1/MPEG-2 layout (plus pack
+/// stuffing); every other element carries a 16-bit length. At least `MIN_PACKETS`
+/// consecutive valid packets are required so the start code cannot trigger a
+/// false carve.
+fn mpegps_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MIN_PACKETS: u64 = 4;
+    let avail = limit.saturating_sub(file_start);
+    let mut pos = 0u64;
+    let mut packets = 0u64;
+    loop {
+        if pos + 4 > avail {
+            break;
+        }
+        let mut sc = [0u8; 4];
+        if source.read_at(file_start + pos, &mut sc)? < 4 {
+            break;
+        }
+        if sc[0] != 0x00 || sc[1] != 0x00 || sc[2] != 0x01 {
+            break;
+        }
+        match sc[3] {
+            // Program end code: the stream ends right after it.
+            0xB9 => {
+                packets += 1;
+                pos += 4;
+                return if packets >= MIN_PACKETS {
+                    Ok(Some(pos))
+                } else {
+                    Ok(None)
+                };
+            }
+            // Pack header: size depends on MPEG-1 vs MPEG-2 and pack stuffing.
+            0xBA => {
+                let mut b = [0u8; 1];
+                if source.read_at(file_start + pos + 4, &mut b)? < 1 {
+                    break;
+                }
+                let hdr_len = if b[0] & 0xC0 == 0x40 {
+                    // MPEG-2: 14-byte header plus the low 3 bits of byte 13.
+                    if pos + 14 > avail {
+                        break;
+                    }
+                    let mut s = [0u8; 1];
+                    if source.read_at(file_start + pos + 13, &mut s)? < 1 {
+                        break;
+                    }
+                    14 + (s[0] & 0x07) as u64
+                } else if b[0] & 0xF0 == 0x20 {
+                    12 // MPEG-1
+                } else {
+                    break; // not a valid pack header
+                };
+                if pos + hdr_len > avail {
+                    break;
+                }
+                pos += hdr_len;
+                packets += 1;
+            }
+            // System header / PES packet: a 16-bit big-endian length at offset 4.
+            sid if sid >= 0xBB => {
+                if pos + 6 > avail {
+                    break;
+                }
+                let mut l = [0u8; 2];
+                if source.read_at(file_start + pos + 4, &mut l)? < 2 {
+                    break;
+                }
+                let next = pos + 6 + u16::from_be_bytes(l) as u64;
+                if next > avail {
+                    break;
+                }
+                pos = next;
+                packets += 1;
+            }
+            // Any other start code is unexpected at the program-stream layer.
+            _ => break,
+        }
+    }
+    if packets >= MIN_PACKETS {
+        Ok(Some(pos))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Android Dalvik executable (DEX) length. The header stores the total file
