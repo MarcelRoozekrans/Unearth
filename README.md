@@ -398,8 +398,8 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 `--scan` reads the **whole source** and probes for filesystem signatures at
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
-(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, HFS+, HFS, APFS, Btrfs, LVM2,
-Linux MD/RAID, Linux swap, and LUKS/BitLocker):
+(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, JFS, HFS+, HFS, APFS, Btrfs,
+LVM2, Linux MD/RAID, Linux swap, and LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -854,6 +854,11 @@ Common to both strategies:
   64 KiB in for 3.6 or 8 KiB in for the older 3.5). Its single balanced-tree
   layout is unlike the ext family and the format is long obsolete, so it is not
   recovered from metadata — use `scan` (carving).
+- **JFS** (IBM's Journaled File System, ported to Linux from AIX/OS2) is
+  *recognised* and its size, **label**, and **UUID** are reported by
+  `info`/`list_volumes` (from the `JFS1` aggregate superblock 32 KiB in). Its
+  inode/directory B+tree layout is unlike the ext family, so it is not recovered
+  from metadata — use `scan` (carving).
 - **LVM2** (the Linux Logical Volume Manager) physical volumes are *recognised*
   from their `LABELONE` / `LVM2 001` on-disk label, and the PV's size is reported
   by `info`/`list_volumes`. The logical volumes inside are not mapped, so recover

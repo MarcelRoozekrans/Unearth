@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **JFS volumes are recognised** — IBM's Journaled File System (ported to Linux
+  from AIX/OS2) is now detected from its `JFS1` aggregate superblock, so
+  `info` / `list_volumes` report its size, label, and UUID instead of leaving it
+  unrecognised. Its B+tree layout is unlike the ext family, so it is not recovered
+  from metadata — use `scan` (carving).
 - **ReiserFS volumes are recognised** — the once-popular Linux journaling
   filesystem (the SUSE default through the 2000s, now removed from the mainline
   kernel) is now detected from its `ReIsEr2Fs` / `ReIsErFs` superblock, so
