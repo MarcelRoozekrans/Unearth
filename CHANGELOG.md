@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **Free space is reported for XFS and Btrfs** — `info` / `list_volumes` now show
+  free space for XFS (from `sb_fdblocks`) and Btrfs (`total_bytes` −
+  `bytes_used`), read straight from the superblock, in addition to the
+  allocation-map-based free space already reported for FAT/exFAT/ext/NTFS/HFS+.
+  This is a reported `free_bytes` count only — free-space-only carving
+  (`--unallocated`) still needs an allocation map, which those backends don't
+  expose.
 - **Linux MD/RAID members are recognised** — a software-RAID member device is
   detected from its version-1 `mdadm` superblock (1.1 at the device start, 1.2 at
   4 KiB in) and reported by `info` / `list_volumes` with the array's RAID level

@@ -345,12 +345,16 @@ is reported for **ext** (`s_inodes_count` / `s_free_inodes_count`) and **XFS**
 `inodes_total` fields in `--json` and the MCP `list_volumes` tool), so you can
 gauge the scale of data a recovered volume held.
 
-Each volume's **free (unallocated) space** is also reported — read from the
-filesystem's allocation map for FAT, exFAT, ext2/3/4, NTFS, and HFS+/HFSX. The
-text view prints a `free:` line (bytes and the unallocated percentage) under the
-volume, so you can gauge how much deleted data might be recoverable before
-running a carve; `--json` includes a `free_bytes` field. It is `null` for
-filesystems whose allocation map is not parsed.
+Each volume's **free (unallocated) space** is also reported — from the
+filesystem's allocation map for FAT, exFAT, ext2/3/4, NTFS, and HFS+/HFSX, and
+from the superblock's free/used counts for **XFS** (`sb_fdblocks`) and **Btrfs**
+(`total_bytes` − `bytes_used`). The text view prints a `free:` line (bytes and
+the unallocated percentage) under the volume, so you can gauge how much deleted
+data might be recoverable before running a carve; `--json` includes a
+`free_bytes` field. It is `null` for filesystems whose free space is not parsed.
+(For XFS and Btrfs this is a reported count only — free-space-only carving via
+`--unallocated` still needs an allocation map, which those backends don't expose,
+so a whole-source `scan` is the fallback there.)
 
 With `--json`, the detected layout is written to stdout as a single object
 (`source`, `source_bytes`, and a `volumes` array of

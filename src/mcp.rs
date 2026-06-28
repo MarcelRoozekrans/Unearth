@@ -574,10 +574,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     } else {
                         Json::Null
                     };
-                    let free = match v.free_extents(&source) {
-                        Some(ex) => n(ex.iter().map(|(_, len)| len).sum::<u64>()),
-                        None => Json::Null,
-                    };
+                    let free = v.free_space(&source).map_or(Json::Null, n);
                     obj(vec![
                         ("index", n(i as u64)),
                         ("filesystem", s(v.fs_label())),

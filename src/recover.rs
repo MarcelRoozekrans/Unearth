@@ -448,6 +448,22 @@ impl Volume {
         }
     }
 
+    /// Total free (unallocated) bytes in the volume, for reporting. Uses the
+    /// allocation map (the sum of [`Self::free_extents`]) when available, and
+    /// otherwise the free/used counts recorded in the superblock (XFS, Btrfs).
+    /// Unlike `free_extents`, this is just a count — it does not enable
+    /// free-space (`--unallocated`) carving. `None` when unknown.
+    pub fn free_space(&self, src: &Source) -> Option<u64> {
+        if let Some(ex) = self.free_extents(src) {
+            return Some(ex.iter().map(|(_, len)| len).sum());
+        }
+        match self {
+            Volume::Xfs(v) => Some(v.free_bytes()),
+            Volume::Btrfs(v) => Some(v.free_bytes()),
+            _ => None,
+        }
+    }
+
     /// Recover all deleted files from this volume into `out_dir`.
     pub fn recover_deleted(
         &self,
