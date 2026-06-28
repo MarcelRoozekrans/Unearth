@@ -396,12 +396,16 @@ fn info(args: InfoArgs) -> Result<()> {
                     Some(l) => format!("\"{}\"", json_escape(&l)),
                     None => "null".to_string(),
                 };
+                let uuid = match vol.volume_uuid() {
+                    Some(u) => format!("\"{}\"", json_escape(&u)),
+                    None => "null".to_string(),
+                };
                 let free = match free_bytes(vol, &source) {
                     Some(n) => n.to_string(),
                     None => "null".to_string(),
                 };
                 out.push_str(&format!(
-                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"contained_volumes\": [{}]}}{}\n",
+                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"contained_volumes\": [{}]}}{}\n",
                     i,
                     json_escape(&vol.fs_label()),
                     vol.offset(),
@@ -409,6 +413,7 @@ fn info(args: InfoArgs) -> Result<()> {
                     free,
                     deleted,
                     label,
+                    uuid,
                     volumes,
                     comma
                 ));
@@ -517,6 +522,9 @@ fn info(args: InfoArgs) -> Result<()> {
         );
         if let Some(label) = vol.volume_label() {
             println!("      label: {label}");
+        }
+        if let Some(uuid) = vol.volume_uuid() {
+            println!("      uuid: {uuid}");
         }
         if let Some(free) = free_bytes(vol, &source) {
             let pct = if vol.size() > 0 {

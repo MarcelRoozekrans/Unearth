@@ -31,6 +31,8 @@ const SUPERBLOCK_OFFSET: u64 = 0x1_0000;
 const MAGIC_OFFSET: usize = 64;
 const BTRFS_MAGIC: &[u8; 8] = b"_BHRfS_M";
 /// `total_bytes` (u64) field offset within the superblock.
+/// `fsid` (16 bytes) at offset 0x20: the filesystem UUID.
+const FSID: usize = 0x20;
 const TOTAL_BYTES: usize = 112;
 /// `sectorsize` (u32) field offset.
 const SECTORSIZE: usize = 144;
@@ -71,6 +73,8 @@ pub struct Volume {
     sectorsize: u32,
     nodesize: u32,
     label: String,
+    /// Filesystem UUID (`fsid`), `None` when unset.
+    uuid: Option<String>,
     /// Names of the subvolumes, best-effort. Empty when the trees could not be
     /// walked.
     subvolumes: Vec<String>,
@@ -115,6 +119,7 @@ impl Volume {
         let raw = &sb[LABEL..LABEL + LABEL_LEN];
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
         let label = String::from_utf8_lossy(&raw[..end]).into_owned();
+        let uuid = crate::recover::format_uuid(&sb[FSID..FSID + 16]);
 
         // Best-effort: list the subvolumes. Any failure leaves it empty without
         // failing detection.
@@ -127,6 +132,7 @@ impl Volume {
             sectorsize,
             nodesize,
             label,
+            uuid,
             subvolumes,
         })
     }
@@ -149,6 +155,11 @@ impl Volume {
     /// The user-set filesystem label, or an empty string if none is set.
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// The filesystem UUID (`fsid`), or `None` when unset.
+    pub fn uuid(&self) -> Option<String> {
+        self.uuid.clone()
     }
 
     /// Sector and node sizes, for reporting.
@@ -364,6 +375,7 @@ mod tests {
         v[sb + TOTAL_BYTES..sb + TOTAL_BYTES + 8].copy_from_slice(&total.to_le_bytes());
         v[sb + SECTORSIZE..sb + SECTORSIZE + 4].copy_from_slice(&4096u32.to_le_bytes());
         v[sb + NODESIZE..sb + NODESIZE + 4].copy_from_slice(&16384u32.to_le_bytes());
+        v[sb + FSID..sb + FSID + 16].copy_from_slice(&[0x33; 16]);
         let lb = label.as_bytes();
         v[sb + LABEL..sb + LABEL + lb.len()].copy_from_slice(lb);
         v
@@ -386,6 +398,7 @@ mod tests {
         assert_eq!(v.size(), 1 << 30);
         assert_eq!(v.label(), "backups");
         assert_eq!(v.geometry(), (4096, 16384));
+        assert_eq!(v.uuid().unwrap(), "33333333-3333-3333-3333-333333333333");
     }
 
     #[test]

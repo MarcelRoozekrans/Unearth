@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **Filesystem UUIDs are reported** — `info` / `list_volumes` now report each
+  volume's filesystem UUID (the `UUID=` value `/etc/fstab` and `blkid` use) for
+  **ext**, **XFS**, **F2FS**, and **Btrfs**, so a recovered filesystem can be
+  correlated with a system's configuration. The text view adds a `uuid:` line and
+  `--json` / the MCP `list_volumes` tool a per-volume `uuid` field. (Distinct from
+  a GPT partition's PARTUUID, which is reported in the partition table.)
 - **GPT partition GUIDs are reported** — `info` / `list_volumes` now report each
   GPT partition's **unique GUID** (the PARTUUID that `/etc/fstab`, bootloaders,
   and `/dev/disk/by-partuuid` reference) and the **disk GUID**, so a recovered
