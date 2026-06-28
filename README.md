@@ -696,6 +696,7 @@ alongside the per-file manifest.
 | elf    | ELF executable / shared object                   | section-header table offset |
 | exe    | PE executable (EXE/DLL)                          | PE/COFF section table        |
 | pdb    | Program Database (MSVC debug symbols)           | MSF block-size × block-count |
+| eps    | Encapsulated PostScript (binary/DOS)            | section offset+length table  |
 | macho  | Mach-O binary (macOS/iOS)                        | segment + link-edit extents  |
 | dex    | Android Dalvik executable                        | file-size field in header   |
 | wasm   | WebAssembly module                               | section (LEB128) walk        |
