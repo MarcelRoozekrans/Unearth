@@ -311,10 +311,11 @@ for filesystems with no such sub-version.)
 
 A volume's **creation** and **last-write** times are reported when the
 filesystem records them — for **ext** from the superblock's `s_mkfs_time` /
-`s_wtime` (the values `dumpe2fs` shows), and for **NTFS** from the `$Volume`
-file's `$STANDARD_INFORMATION` (the same timestamps Windows keeps). The text
-view adds `created:` and `last written:` lines (ISO-8601 UTC) and `--json` / the
-MCP `list_volumes` tool add `created_time` / `written_time` fields (Unix seconds,
+`s_wtime` (the values `dumpe2fs` shows), for **NTFS** from the `$Volume` file's
+`$STANDARD_INFORMATION` (the same timestamps Windows keeps), and for **HFS+**
+from the volume header's `createDate` / `modifyDate`. The text view adds
+`created:` and `last written:` lines (ISO-8601 UTC) and `--json` / the MCP
+`list_volumes` tool add `created_time` / `written_time` fields (Unix seconds,
 `null` when unset), so a recovered volume can be dated and correlated with when
 it was made and last used.
 

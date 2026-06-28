@@ -111,6 +111,10 @@ pub fn hfsplus_volume(name: &str, payload: &[u8]) -> Vec<u8> {
     let vh = 1024;
     put_be16(&mut v, vh, 0x482B); // "H+"
     put_be16(&mut v, vh + 2, 4); // version
+                                 // createDate (0x10) / modifyDate (0x14): seconds since the HFS epoch (1904);
+                                 // these decode to Unix 1_600_000_000 and 1_700_000_000.
+    put_be32(&mut v, vh + 0x10, 1_600_000_000 + 2_082_844_800);
+    put_be32(&mut v, vh + 0x14, 1_700_000_000 + 2_082_844_800);
     put_be32(&mut v, vh + 40, HFS_BS as u32); // allocation block size
     put_be32(&mut v, vh + 44, total_blocks as u32);
     // Catalog file fork: logicalSize, totalBlocks, then first extent.

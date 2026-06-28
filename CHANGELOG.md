@@ -25,11 +25,12 @@ formats.
 - **Filesystem creation / last-write times are reported** — `info` /
   `list_volumes` now show a volume's creation and last-write times when the
   filesystem records them: **ext** from `s_mkfs_time` / `s_wtime` (the values
-  `dumpe2fs` reports) and **NTFS** from the `$Volume` file's
-  `$STANDARD_INFORMATION` (the timestamps Windows keeps), so a recovered volume
-  can be dated. The text view adds `created:` and `last written:` lines
-  (ISO-8601 UTC) and `--json` / the MCP `list_volumes` tool add `created_time` /
-  `written_time` fields (Unix seconds, `null` when unset).
+  `dumpe2fs` reports), **NTFS** from the `$Volume` file's `$STANDARD_INFORMATION`
+  (the timestamps Windows keeps), and **HFS+** from the volume header's
+  `createDate` / `modifyDate`, so a recovered volume can be dated. The text view
+  adds `created:` and `last written:` lines (ISO-8601 UTC) and `--json` / the MCP
+  `list_volumes` tool add `created_time` / `written_time` fields (Unix seconds,
+  `null` when unset).
 - **The allocation-unit size is reported** — `info` / `list_volumes` now report
   each volume's cluster size (FAT, exFAT, NTFS, ReFS) or block size (ext, HFS+,
   APFS, XFS, F2FS, Btrfs, ISO 9660) — the granularity the filesystem allocates

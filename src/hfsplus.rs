@@ -73,6 +73,24 @@ pub struct Volume {
     extents_overflow_extents: Vec<(u32, u32)>,
     extents_overflow_size: u64,
     hfsx: bool,
+    /// Volume creation time (`createDate`), Unix seconds; `None` when unset.
+    created: Option<u64>,
+    /// Volume last-modification time (`modifyDate`), Unix seconds; `None` when
+    /// unset.
+    written: Option<u64>,
+}
+
+/// Seconds between the HFS epoch (1904-01-01) and the Unix epoch (1970-01-01).
+const HFS_EPOCH_OFFSET: u32 = 2_082_844_800;
+
+/// Convert an HFS+ date (seconds since 1904-01-01) to Unix seconds, or `None`
+/// when the field is unset or predates the Unix epoch.
+fn hfs_time(secs: u32) -> Option<u64> {
+    if secs == 0 || secs < HFS_EPOCH_OFFSET {
+        None
+    } else {
+        Some((secs - HFS_EPOCH_OFFSET) as u64)
+    }
 }
 
 /// Additional data-fork extents keyed by file CNID, recovered from the
@@ -191,6 +209,12 @@ impl Volume {
             extents_overflow_extents.push((start, count));
         }
 
+        // createDate @ 0x10 and modifyDate @ 0x14, both big-endian seconds since
+        // the HFS epoch (1904). modifyDate is GMT; createDate is, per the HFS+
+        // spec, stored in local time, so it can be off by the volume's timezone.
+        let created = hfs_time(be32(&vh, 0x10));
+        let written = hfs_time(be32(&vh, 0x14));
+
         Ok(Volume {
             offset,
             block_size,
@@ -201,7 +225,19 @@ impl Volume {
             extents_overflow_extents,
             extents_overflow_size,
             hfsx,
+            created,
+            written,
         })
+    }
+
+    /// Volume creation time (`createDate`) as Unix seconds, or `None` when unset.
+    pub fn created_time(&self) -> Option<u64> {
+        self.created
+    }
+
+    /// Volume last-modification time (`modifyDate`) as Unix seconds, or `None`.
+    pub fn written_time(&self) -> Option<u64> {
+        self.written
     }
 
     /// Total size of the volume in bytes.
@@ -870,6 +906,8 @@ mod tests {
             extents_overflow_extents: vec![],
             extents_overflow_size: 0,
             hfsx: false,
+            created: None,
+            written: None,
         }
     }
 

@@ -122,6 +122,10 @@ fn free_extents_reads_the_allocation_bitmap() {
     let src = Source::open(&img).unwrap();
     let vol = filerecovery::hfsplus::Volume::parse(&src, 0).unwrap();
 
+    // createDate / modifyDate decode from the HFS epoch to Unix seconds.
+    assert_eq!(vol.created_time(), Some(1_600_000_000));
+    assert_eq!(vol.written_time(), Some(1_700_000_000));
+
     let free = vol.free_extents(&src).unwrap();
     let bs = 512u64;
     let covered = |block: u64| {
