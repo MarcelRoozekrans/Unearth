@@ -13,7 +13,8 @@
 //! decoded too, including names that spill into Rock Ridge continuation (`CE`)
 //! areas, so even very long POSIX names are recovered in full. Files whose data
 //! is split across several **multi-extent** directory records (how ISO 9660
-//! stores files larger than ~4 GiB) are reassembled into one output file.
+//! stores files larger than ~4 GiB) are reassembled into one output file. A disc
+//! carrying an **El Torito** boot record is reported as bootable.
 //!
 //! Detection reads the **Volume Descriptor Set** at sector 16 (byte offset
 //! 32768): a series of 2048-byte descriptors each `{ type: u8, id: "CD001",
@@ -37,9 +38,12 @@ use crate::source::Source;
 /// The Volume Descriptor Set begins at sector 16 with 2048-byte sectors.
 const VDS_OFFSET: u64 = 16 * 2048;
 const VD_SIZE: u64 = 2048;
+const BOOT_RECORD: u8 = 0;
 const PRIMARY: u8 = 1;
 const SUPPLEMENTARY: u8 = 2;
 const TERMINATOR: u8 = 255;
+/// The boot-system identifier of an El Torito Boot Record descriptor (offset 7).
+const EL_TORITO_ID: &[u8] = b"EL TORITO SPECIFICATION";
 /// Bound the directory walk against malformed or hostile images.
 const MAX_DEPTH: usize = 64;
 const MAX_ENTRIES: u64 = 5_000_000;
@@ -59,6 +63,8 @@ pub struct Volume {
     root_len: u64,
     /// Directory names are UCS-2 (Joliet) rather than short ISO 9660 identifiers.
     joliet: bool,
+    /// The disc carries an El Torito boot record (it is bootable).
+    bootable: bool,
 }
 
 /// Recognise an ISO 9660 volume at `offset` by finding its Primary Volume
@@ -67,6 +73,7 @@ pub fn detect(src: &Source, offset: u64) -> Option<Volume> {
     let base = offset.checked_add(VDS_OFFSET)?;
     let mut primary: Option<Volume> = None;
     let mut joliet_root: Option<(u64, u64)> = None;
+    let mut bootable = false;
     for i in 0..16u64 {
         let pos = base.checked_add(i * VD_SIZE)?;
         let mut d = [0u8; 256];
@@ -77,10 +84,11 @@ pub fn detect(src: &Source, offset: u64) -> Option<Volume> {
             break; // not a volume descriptor: the set has ended
         }
         match d[0] {
+            BOOT_RECORD => bootable |= &d[7..7 + EL_TORITO_ID.len()] == EL_TORITO_ID,
             PRIMARY => primary = Some(parse_primary(offset, src, &d)),
             SUPPLEMENTARY if is_joliet(&d) => joliet_root = Some(root_record(&d)),
             TERMINATOR => break,
-            _ => {} // boot record / non-Joliet supplementary: keep scanning
+            _ => {} // non-Joliet supplementary: keep scanning
         }
     }
     let mut vol = primary?;
@@ -90,6 +98,7 @@ pub fn detect(src: &Source, offset: u64) -> Option<Volume> {
         vol.root_len = len;
         vol.joliet = true;
     }
+    vol.bootable = bootable;
     Some(vol)
 }
 
@@ -137,6 +146,7 @@ fn parse_primary(offset: u64, src: &Source, pvd: &[u8]) -> Volume {
         root_lba,
         root_len,
         joliet: false,
+        bootable: false,
     }
 }
 
@@ -162,6 +172,12 @@ impl Volume {
     /// The volume identifier from the Primary Volume Descriptor (may be empty).
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// A short description of the disc's boot capability, or `None` when the disc
+    /// is not bootable. Currently this reports El Torito boot records.
+    pub fn boot_info(&self) -> Option<&'static str> {
+        self.bootable.then_some("El Torito")
     }
 
     /// Extract every file from the volume into `out_dir`, preserving names and
@@ -671,6 +687,22 @@ mod tests {
         assert_eq!(vol.fs_label(), "ISO 9660");
         assert_eq!(vol.size(), 100 * 2048);
         assert_eq!(vol.label(), "UBUNTU_2204");
+        assert_eq!(vol.boot_info(), None, "no boot record => not bootable");
+    }
+
+    #[test]
+    fn detects_el_torito_bootable() {
+        let mut v = vec![0u8; (VDS_OFFSET + 4 * VD_SIZE) as usize];
+        let off = put_descriptor(&mut v, 0, PRIMARY);
+        v[off + 80..off + 84].copy_from_slice(&100u32.to_le_bytes());
+        v[off + 128..off + 130].copy_from_slice(&2048u16.to_le_bytes());
+        // A Boot Record descriptor (type 0) with the El Torito identifier.
+        let boff = put_descriptor(&mut v, 1, BOOT_RECORD);
+        v[boff + 7..boff + 7 + EL_TORITO_ID.len()].copy_from_slice(EL_TORITO_ID);
+
+        let (_t, src) = source_of(&v);
+        let vol = detect(&src, 0).unwrap();
+        assert_eq!(vol.boot_info(), Some("El Torito"));
     }
 
     #[test]

@@ -789,7 +789,9 @@ Common to both strategies:
   that spill into Rock Ridge continuation (`CE`) areas — so files come back with
   their full filenames either way. Files split across **multi-extent** records
   (how ISO 9660 stores files larger than ~4 GiB) are reassembled into one file.
-  A hybrid UDF disc is reported as UDF.
+  A hybrid UDF disc is reported as UDF. A disc with an **El Torito** boot record
+  is flagged as bootable (a `boot:` line in `info`, a `boot` field in `--json` /
+  `list_volumes`), distinguishing a live/install image from a pure data disc.
 - **Encrypted volumes** — **LUKS** (LUKS1/LUKS2) and **BitLocker** — are
   *recognised* and reported by `info`/`list_volumes`, but they hold only
   ciphertext until unlocked, so nothing can be recovered (and carving the raw
