@@ -14,6 +14,15 @@ formats.
 
 ### Added
 
+- **Linux swap areas are recognised** — a swap partition is detected from its
+  version-2 swap header (`SWAPSPACE2`) and reported by `info` / `list_volumes`
+  with its size, **UUID**, and **label**, instead of showing as an unrecognised
+  volume. A swap area holds no files to recover, but identifying it by its
+  `UUID=` (the value `/etc/fstab` uses) helps confirm which disk an image came
+  from and rules the area out as a place to look for lost data. The header's page
+  size is detected from the magic's position (4–64 KiB), and the area is checked
+  before the boot-sector filesystems so a stale disklabel in the reserved
+  `bootbits` region is not misread as FAT/NTFS.
 - **Volume clean/dirty state is reported** — `info` / `list_volumes` now report
   whether a volume was cleanly unmounted, from ext (`s_state`), exFAT
   (`VolumeFlags`), and NTFS (`$VOLUME_INFORMATION`). A volume that is marked

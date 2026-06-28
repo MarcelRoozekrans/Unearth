@@ -297,7 +297,8 @@ in `--json` and the MCP `list_volumes` tool), so a recovered filesystem can be
 correlated with a system's configuration. For **ext**, **XFS**, **F2FS**, and
 **Btrfs** this is the filesystem UUID; for **FAT**, **exFAT**, and **NTFS** it is
 the volume serial number in the conventional form (`XXXX-XXXX` for FAT/exFAT, 16
-hex digits for NTFS), exactly as `blkid` reports them. (This is the volume's own
+hex digits for NTFS), exactly as `blkid` reports them. A **Linux swap** area's
+UUID is reported too (from its swap header). (This is the volume's own
 identifier, distinct from a GPT partition's PARTUUID reported in the partition
 table.)
 
@@ -343,8 +344,8 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 `--scan` reads the **whole source** and probes for filesystem signatures at
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
-(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, HFS+, APFS, Btrfs, LVM2, and
-LUKS/BitLocker):
+(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, HFS+, APFS, Btrfs, LVM2, Linux swap,
+and LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -782,6 +783,12 @@ Common to both strategies:
   by `info`/`list_volumes`. The logical volumes inside are not mapped, so recover
   with a whole-source `scan` (or `--scan`), which finds the filesystems inside the
   LVs at their physical offsets.
+- **Linux swap** areas are *recognised* (rather than shown as an unrecognised
+  volume) and their size, **UUID**, and **label** are reported by
+  `info`/`list_volumes`, read from the version-2 swap header (`SWAPSPACE2`). A
+  swap partition holds no files to recover, but identifying it by its `UUID=`
+  (the value `/etc/fstab` uses) helps confirm which disk an image came from and
+  rules the area out as a place to look for lost data.
 - **UDF** (optical discs — DVD/Blu-ray — and many large USB drives and camcorder
   cards) is *recognised* and reported by `info`/`list_volumes` (via its Volume
   Recognition Sequence at sector 16), but its descriptor metadata is not parsed,
