@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **MPEG program stream (`.mpg`) carving** — the container used by DVDs, VCDs,
+  and older camcorders/recorders is carved by walking its pack / system-header /
+  PES-packet chain (each introduced by a `00 00 01` start code) to the
+  program-end code (`00 00 01 B9`), giving an exact end — or to the last whole
+  packet when the stream is truncated. Pack headers are sized from the
+  MPEG-1/MPEG-2 layout (with pack stuffing); a run of consecutive valid packets
+  is required so the start code cannot trigger a false carve. `identify` and
+  `triage` recognise `.mpg` by content too.
 - **Free space is reported for XFS and Btrfs** — `info` / `list_volumes` now show
   free space for XFS (from `sb_fdblocks`) and Btrfs (`total_bytes` −
   `bytes_used`), read straight from the superblock, in addition to the

@@ -683,6 +683,7 @@ alongside the per-file manifest.
 | flv    | Flash Video                                      | tag-chain walk              |
 | mkv    | Matroska / WebM video                            | EBML segment-size walk      |
 | ts     | MPEG transport stream (DVB/DVR)                  | 188-byte packet-sync walk   |
+| mpg    | MPEG program stream (DVD/VOB)                    | pack/PES walk to end code    |
 | ogg    | Ogg (Vorbis/Opus/Theora)                        | Ogg page-chain walk         |
 | asf    | ASF / WMV / WMA media                            | ASF object walk             |
 | elf    | ELF executable / shared object                   | section-header table offset |
