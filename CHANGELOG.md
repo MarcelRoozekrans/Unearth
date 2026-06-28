@@ -14,10 +14,12 @@ formats.
 
 ### Added
 
-- **Bootable ISOs are flagged (El Torito)** — `info` / `list_volumes` now report
-  whether an ISO 9660 disc carries an El Torito boot record, distinguishing a
-  live/install image from a pure data disc. The text view adds a `boot:` line
-  and `--json` / the MCP `list_volumes` tool a `boot` field per volume.
+- **Bootable ISOs are flagged with their boot platform (El Torito)** — `info` /
+  `list_volumes` report whether an ISO 9660 disc carries an El Torito boot record
+  and the platform(s) it boots — e.g. `El Torito (BIOS, UEFI)`, read from the
+  boot catalog's validation entry and section headers — distinguishing a
+  legacy-BIOS, UEFI, or hybrid image from a pure data disc. The text view adds a
+  `boot:` line and `--json` / the MCP `list_volumes` tool a `boot` field.
 - **`triage` reports the modification-time span** — the oldest and newest file
   modification time across the directory, so you can see what period the
   recovered data covers. The text view adds a `Modified: <oldest> .. <newest>`
