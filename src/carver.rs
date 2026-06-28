@@ -557,6 +557,7 @@ fn file_length(
         Extent::Tar => Ok(tar_length(source, file_start, limit)?),
         Extent::Cpio => Ok(cpio_length(source, file_start, limit)?),
         Extent::Squashfs => Ok(squashfs_length(source, file_start, limit)?),
+        Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
     }
 }
 
@@ -2923,6 +2924,47 @@ fn aac_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     Ok(Some(pos))
+}
+
+/// MPEG transport stream (.ts) length. A TS is a run of fixed 188-byte packets,
+/// each starting with the sync byte `0x47`; the packets are walked to the first
+/// boundary without the sync byte, so the file ends at the last whole packet.
+/// Sync bytes are read in chunks to avoid a syscall per packet. The signature
+/// already required the sync at offsets 0 and 188, and `MIN_PACKETS` consecutive
+/// packets are required here, so the single-byte sync cannot trigger a false
+/// carve. Only the 188-byte form is carved (see [`Extent::Mpegts`]).
+fn mpegts_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const PACKET: u64 = 188;
+    const MIN_PACKETS: u64 = 8;
+    let avail = limit.saturating_sub(file_start);
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut pos = 0u64;
+    let mut packets = 0u64;
+    'walk: loop {
+        if pos + PACKET > avail {
+            break;
+        }
+        let want = ((avail - pos).min(buf.len() as u64)) as usize;
+        let n = source.read_at(file_start + pos, &mut buf[..want])?;
+        let mut off = 0usize;
+        // Scan whole packets within what we read.
+        while off + PACKET as usize <= n {
+            if buf[off] != 0x47 {
+                break 'walk;
+            }
+            off += PACKET as usize;
+            pos += PACKET;
+            packets += 1;
+        }
+        // No full packet fit in this read (truncated tail): stop.
+        if off == 0 {
+            break;
+        }
+    }
+    if packets < MIN_PACKETS {
+        return Ok(None);
+    }
+    Ok(Some(packets * PACKET))
 }
 
 /// Android Dalvik executable (DEX) length. The header stores the total file

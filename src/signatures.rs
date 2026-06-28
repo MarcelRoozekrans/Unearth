@@ -314,6 +314,16 @@ pub enum Extent {
     /// the block-size/`block_log` consistency are checked to reject a coincidental
     /// magic.
     Squashfs,
+    /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
+    /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
+    /// run of fixed **188-byte packets**, each beginning with the sync byte
+    /// `0x47`; the packets are walked to the end of the stream, giving an exact
+    /// end at the last whole packet. The signature requires the sync byte at two
+    /// packet boundaries and the walk requires a longer run, so the single-byte
+    /// sync cannot trigger a false carve. The 192-byte (M2TS, timestamp-prefixed)
+    /// and 204-byte (Reed-Solomon FEC) variants are not carved — their packets do
+    /// not begin with the sync byte at offset 0.
+    Mpegts,
 }
 
 /// A recoverable file type.
@@ -855,6 +865,17 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Aac,
         max_size: 200 * MB,
+    },
+    Signature {
+        name: "MPEG transport stream",
+        ext: "ts",
+        magic: &[0x47],
+        magic_offset: 0,
+        // Require the sync byte again one 188-byte packet later, so the
+        // single-byte sync is not a candidate on its own.
+        secondary: Some((188, &[0x47])),
+        extent: Extent::Mpegts,
+        max_size: 16 * GB,
     },
     Signature {
         name: "Android Dalvik executable (DEX)",
@@ -1505,7 +1526,7 @@ pub fn category_of(ext: &str) -> Category {
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" => Category::Audio,
-        "mp4" | "3gp" | "mkv" | "avi" | "flv" | "asf" => Category::Video,
+        "mp4" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" => Category::Video,
         // The OOXML/OpenDocument/e-book types come from ZIP-content
         // classification; doc/xls/ppt/msg (and a generic OLE2 container) from
         // CFBF.
