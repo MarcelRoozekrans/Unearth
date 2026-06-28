@@ -283,19 +283,23 @@ impl Volume {
     }
 
     /// The filesystem's creation time as Unix seconds, when the backend records
-    /// one (currently ext's `s_mkfs_time`). `None` otherwise.
+    /// one — ext's `s_mkfs_time` or NTFS's `$Volume` `$STANDARD_INFORMATION`
+    /// creation time. `None` otherwise.
     pub fn created_time(&self) -> Option<u64> {
         match self {
             Volume::Ext(v) => v.created_time(),
+            Volume::Ntfs(v) => v.created_time(),
             _ => None,
         }
     }
 
     /// The filesystem's last-write time as Unix seconds, when the backend records
-    /// one (currently ext's `s_wtime`). `None` otherwise.
+    /// one — ext's `s_wtime` or NTFS's `$Volume` `$STANDARD_INFORMATION`
+    /// modification time. `None` otherwise.
     pub fn written_time(&self) -> Option<u64> {
         match self {
             Volume::Ext(v) => v.written_time(),
+            Volume::Ntfs(v) => v.written_time(),
             _ => None,
         }
     }
