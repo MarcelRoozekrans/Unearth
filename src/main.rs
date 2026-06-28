@@ -411,6 +411,10 @@ fn info(args: InfoArgs) -> Result<()> {
                     Some(l) => format!("\"{}\"", json_escape(&l)),
                     None => "null".to_string(),
                 };
+                let version = match vol.fs_version() {
+                    Some(v) => format!("\"{}\"", json_escape(v)),
+                    None => "null".to_string(),
+                };
                 let uuid = match vol.volume_uuid() {
                     Some(u) => format!("\"{}\"", json_escape(&u)),
                     None => "null".to_string(),
@@ -428,9 +432,10 @@ fn info(args: InfoArgs) -> Result<()> {
                     None => "null".to_string(),
                 };
                 out.push_str(&format!(
-                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"boot\": {}, \"clean\": {}, \"contained_volumes\": [{}]}}{}\n",
+                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"version\": {}, \"offset\": {}, \"size\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"boot\": {}, \"clean\": {}, \"contained_volumes\": [{}]}}{}\n",
                     i,
                     json_escape(&vol.fs_label()),
+                    version,
                     vol.offset(),
                     vol.size(),
                     free,
@@ -545,6 +550,9 @@ fn info(args: InfoArgs) -> Result<()> {
             human_bytes(vol.size()),
             deleted
         );
+        if let Some(version) = vol.fs_version() {
+            println!("      version: {version}");
+        }
         if let Some(label) = vol.volume_label() {
             println!("      label: {label}");
         }

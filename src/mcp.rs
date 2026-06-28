@@ -581,6 +581,10 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                     obj(vec![
                         ("index", n(i as u64)),
                         ("filesystem", s(v.fs_label())),
+                        (
+                            "version",
+                            v.fs_version().map_or(Json::Null, |x| s(x.to_string())),
+                        ),
                         ("offset", n(v.offset())),
                         ("size", n(v.size())),
                         ("free_bytes", free),

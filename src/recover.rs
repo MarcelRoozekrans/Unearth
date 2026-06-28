@@ -271,6 +271,17 @@ impl Volume {
         }
     }
 
+    /// The precise on-disk format version, when the backend can refine its
+    /// family label — currently the ext variant (`"ext2"`, `"ext3"`, or
+    /// `"ext4"`), distinguished from the `"ext2/3/4"` family by the superblock
+    /// feature flags. `None` for filesystems with no such sub-version.
+    pub fn fs_version(&self) -> Option<&'static str> {
+        match self {
+            Volume::Ext(v) => Some(v.version()),
+            _ => None,
+        }
+    }
+
     /// Names of sub-volumes contained in this volume: APFS volumes inside a
     /// container, or Btrfs subvolumes. Other filesystems have none.
     pub fn contained_volumes(&self) -> Vec<String> {

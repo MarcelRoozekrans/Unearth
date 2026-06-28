@@ -302,6 +302,13 @@ UUID is reported too (from its swap header). (This is the volume's own
 identifier, distinct from a GPT partition's PARTUUID reported in the partition
 table.)
 
+An **ext** volume's precise variant — **ext2**, **ext3**, or **ext4** — is
+reported on a `version:` line (and as a `version` field in `--json` and the MCP
+`list_volumes` tool), distinguished from the `ext2/3/4` family label by the
+superblock feature flags the way `blkid` does: ext2 has no journal, ext3 adds
+one, and ext4 carries an ext4-only feature such as extents or 64-bit. (`null`
+for filesystems with no such sub-version.)
+
 Each volume's **clean/dirty state** is reported when the filesystem records it —
 ext (`s_state`), exFAT (`VolumeFlags`), and NTFS (`$VOLUME_INFORMATION`). A
 volume that was not cleanly unmounted is flagged with a `state: dirty` line in

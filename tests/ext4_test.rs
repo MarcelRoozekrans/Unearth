@@ -35,7 +35,7 @@ fn write_superblock(img: &mut [u8]) {
     img[sb + 0x38..sb + 0x3A].copy_from_slice(&0xEF53u16.to_le_bytes()); // magic
     img[sb + 0x3A..sb + 0x3C].copy_from_slice(&0x0001u16.to_le_bytes()); // s_state: clean
     img[sb + 0x58..sb + 0x5A].copy_from_slice(&(INODE_SIZE as u16).to_le_bytes()); // inode_size
-    img[sb + 0x60..sb + 0x64].copy_from_slice(&0x0002u32.to_le_bytes()); // incompat: FILETYPE
+    img[sb + 0x60..sb + 0x64].copy_from_slice(&0x0042u32.to_le_bytes()); // incompat: FILETYPE | EXTENTS
 }
 
 fn write_gdt(img: &mut [u8]) {
@@ -194,9 +194,13 @@ fn recovers_deleted_ext4_files() {
     let volumes = recover::detect(&source).unwrap();
     assert_eq!(volumes.len(), 1);
     assert_eq!(volumes[0].fs_label(), "ext2/3/4");
+    // The superblock advertises the EXTENTS incompat feature, so it classifies
+    // as ext4.
+    assert_eq!(volumes[0].fs_version(), Some("ext4"));
 
     let vol = ext4::Volume::parse(&source, 0).unwrap();
     assert!(vol.is_clean(), "s_state clean bit set");
+    assert_eq!(vol.version(), "ext4");
     let stats = vol
         .recover_deleted(
             &source,

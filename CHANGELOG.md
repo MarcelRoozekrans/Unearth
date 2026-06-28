@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **The ext variant (ext2 / ext3 / ext4) is reported** — `info` / `list_volumes`
+  now refine the `ext2/3/4` family label to the precise variant, read from the
+  superblock feature flags the way `blkid` classifies them: ext2 has no journal,
+  ext3 adds a journal, and ext4 carries an ext4-only feature such as extents or
+  64-bit block addressing. The text view adds a `version:` line and `--json` /
+  the MCP `list_volumes` tool a `version` field (`null` for filesystems without a
+  sub-version).
 - **Linux swap areas are recognised** — a swap partition is detected from its
   version-2 swap header (`SWAPSPACE2`) and reported by `info` / `list_volumes`
   with its size, **UUID**, and **label**, instead of showing as an unrecognised
