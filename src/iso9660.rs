@@ -53,6 +53,11 @@ const MAX_DIR_BYTES: u64 = 32 * 1024 * 1024;
 /// Most `CE` continuation areas to follow for one name (a loop guard).
 const MAX_CE_FOLLOW: usize = 8;
 
+/// A multi-extent file being accumulated during the directory walk: its relative
+/// path, the `(lba, byte length)` extents gathered so far, and the recording
+/// time from its first directory record.
+type PendingFile = (PathBuf, Vec<(u64, u64)>, Option<std::time::SystemTime>);
+
 /// A recognised ISO 9660 volume.
 pub struct Volume {
     /// Byte offset of the volume within the source.
@@ -311,7 +316,7 @@ impl Volume {
             // split across several consecutive directory records that share one
             // name, all but the last flagged "more extents to follow" (file-flag
             // bit 7). `None` between files.
-            let mut pending: Option<(PathBuf, Vec<(u64, u64)>)> = None;
+            let mut pending: Option<PendingFile> = None;
             while pos < dir.len() {
                 let rec_len = dir[pos] as usize;
                 if rec_len == 0 {
@@ -346,21 +351,23 @@ impl Volume {
                 // A continuation record of a multi-extent file already in
                 // progress: append its extent (the name comes from the first
                 // record) and flush once the final record clears the flag.
-                if let Some((_, extents)) = pending.as_mut() {
+                if let Some((_, extents, _)) = pending.as_mut() {
                     if !is_dir {
                         extents.push((child_lba, child_len));
                         if !more_extents {
-                            let (frel, fexts) = pending.take().unwrap();
+                            let (frel, fexts, fmtime) = pending.take().unwrap();
                             self.recover_file(
-                                src, out_dir, &fexts, frel, vol_end, opts, &mut stats,
+                                src, out_dir, &fexts, frel, fmtime, vol_end, opts, &mut stats,
                             );
                         }
                         continue;
                     }
                     // Malformed: a directory record interrupts the sequence.
                     // Flush what we have, then handle this record normally.
-                    let (frel, fexts) = pending.take().unwrap();
-                    self.recover_file(src, out_dir, &fexts, frel, vol_end, opts, &mut stats);
+                    let (frel, fexts, fmtime) = pending.take().unwrap();
+                    self.recover_file(
+                        src, out_dir, &fexts, frel, fmtime, vol_end, opts, &mut stats,
+                    );
                 }
 
                 // Prefer a Rock Ridge POSIX name (Linux/Unix discs) over the
@@ -380,10 +387,12 @@ impl Volume {
                     }
                     continue;
                 }
+                // Recording date/time: a 7-byte field at record offset 18.
+                let mtime = crate::times::from_iso9660_dir(&rec[18..25]);
                 if more_extents {
                     // First record of a multi-extent file: start accumulating
                     // its extents; later records append until one clears the flag.
-                    pending = Some((child_rel, vec![(child_lba, child_len)]));
+                    pending = Some((child_rel, vec![(child_lba, child_len)], mtime));
                     continue;
                 }
                 self.recover_file(
@@ -391,14 +400,17 @@ impl Volume {
                     out_dir,
                     &[(child_lba, child_len)],
                     child_rel,
+                    mtime,
                     vol_end,
                     opts,
                     &mut stats,
                 );
             }
             // Flush a multi-extent file whose final record never arrived.
-            if let Some((frel, fexts)) = pending.take() {
-                self.recover_file(src, out_dir, &fexts, frel, vol_end, opts, &mut stats);
+            if let Some((frel, fexts, fmtime)) = pending.take() {
+                self.recover_file(
+                    src, out_dir, &fexts, frel, fmtime, vol_end, opts, &mut stats,
+                );
             }
         }
         Ok(stats)
@@ -430,6 +442,7 @@ impl Volume {
         out_dir: &Path,
         extents: &[(u64, u64)],
         rel: PathBuf,
+        mtime: Option<std::time::SystemTime>,
         vol_end: u64,
         opts: &RecoverOptions,
         stats: &mut RecoverStats,
@@ -458,7 +471,7 @@ impl Volume {
             stats.record_recovered(rel, total, None);
             return;
         }
-        match write_file(src, out_dir, &rel, &byte_extents) {
+        match write_file(src, out_dir, &rel, &byte_extents, mtime) {
             Ok(digest) => stats.record_recovered(rel, total, Some(digest)),
             Err(_) => stats.record_skipped(rel, total),
         }
@@ -625,6 +638,7 @@ fn write_file(
     out_dir: &Path,
     rel: &Path,
     extents: &[(u64, u64)],
+    mtime: Option<std::time::SystemTime>,
 ) -> Result<[u8; 32]> {
     let target = unique_path(out_dir, rel);
     if let Some(parent) = target.parent() {
@@ -650,7 +664,9 @@ fn write_file(
         }
     }
     out.flush().ok();
-    let (_, digest) = out.into_parts();
+    let (file, digest) = out.into_parts();
+    // Preserve the file's recording date from the directory record.
+    crate::times::apply(&file, mtime, None);
     Ok(digest)
 }
 
@@ -733,6 +749,10 @@ mod tests {
         buf[at] = rec_len as u8;
         buf[at + 2..at + 6].copy_from_slice(&lba.to_le_bytes());
         buf[at + 10..at + 14].copy_from_slice(&len.to_le_bytes());
+        // Recording date/time (offset 18): 2021-01-01 00:00:00 GMT.
+        buf[at + 18] = 121; // year - 1900
+        buf[at + 19] = 1; // month
+        buf[at + 20] = 1; // day
         buf[at + 25] = if is_dir { 0x02 } else { 0 };
         buf[at + 32] = name.len() as u8;
         buf[at + 33..at + 33 + name.len()].copy_from_slice(name);
@@ -893,6 +913,15 @@ mod tests {
 
         assert_eq!(stats.recovered, 2, "two files extracted");
         assert_eq!(std::fs::read(out.join("HELLO.TXT")).unwrap(), payload_hello);
+        // The recording date (2021-01-01) is preserved on the extracted file.
+        let mtime = std::fs::metadata(out.join("HELLO.TXT"))
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(mtime, 18628 * 86400);
         assert_eq!(
             std::fs::read(out.join("SUB").join("NOTE.TXT")).unwrap(),
             payload_note,

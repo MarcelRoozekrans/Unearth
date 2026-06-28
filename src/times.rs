@@ -196,6 +196,25 @@ pub fn iso9660_datetime(field: &[u8]) -> Option<u64> {
     u64::try_from(total).ok()
 }
 
+/// Parse an ISO 9660 **directory-record** date/time — the compact 7-byte binary
+/// form (`years-since-1900`, month, day, hour, minute, second, signed GMT offset
+/// in 15-minute units) — into a [`SystemTime`]. `None` when the field is unset
+/// (all-zero) or out of range. Distinct from [`iso9660_datetime`], which parses
+/// the 17-byte ASCII form in the volume descriptor.
+pub fn from_iso9660_dir(b: &[u8]) -> Option<SystemTime> {
+    if b.len() < 7 || b[..6].iter().all(|&x| x == 0) {
+        return None;
+    }
+    let (year, month, day) = (1900 + b[0] as i64, b[1] as i64, b[2] as i64);
+    let (hour, min, sec) = (b[3] as i64, b[4] as i64, b[5] as i64);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || min > 59 || sec > 60 {
+        return None;
+    }
+    let tz = (b[6] as i8) as i64 * 15 * 60;
+    let total = days_from_civil(year, month, day) * 86_400 + hour * 3600 + min * 60 + sec - tz;
+    Some(UNIX_EPOCH + Duration::from_secs(u64::try_from(total).ok()?))
+}
+
 /// Format a Unix timestamp (seconds since 1970-01-01 UTC) as an ISO-8601 UTC
 /// string, `YYYY-MM-DDTHH:MM:SSZ`.
 pub fn format_utc(secs: u64) -> String {
@@ -267,6 +286,20 @@ mod tests {
         assert_eq!(iso9660_datetime(b"0000000000000000\0"), None);
         // Malformed (non-numeric) is None.
         assert_eq!(iso9660_datetime(b"notadatevalue!!!\0"), None);
+    }
+
+    #[test]
+    fn from_iso9660_dir_parses_binary_date() {
+        // 2021-01-01 00:00:00, GMT offset 0 (year byte = 2021-1900 = 121).
+        let b = [121u8, 1, 1, 0, 0, 0, 0];
+        let secs = from_iso9660_dir(&b)
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(secs, 18628 * 86400);
+        // All-zero is unset.
+        assert_eq!(from_iso9660_dir(&[0u8; 7]), None);
     }
 
     #[test]

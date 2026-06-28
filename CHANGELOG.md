@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **Extracted ISO 9660 files keep their recording date** — a file extracted from
+  an ISO 9660 disc now has its directory-record recording date/time applied as
+  the output file's modification time, matching how the undelete backends already
+  preserve a deleted file's timestamps. The 7-byte binary date in each directory
+  record is parsed (new `times::from_iso9660_dir`) and applied via the shared
+  `times::apply`.
 - **LUKS UUID and LUKS2 label are reported** — `info` / `list_volumes` now report
   a LUKS container's UUID (the value `cryptsetup luksUUID` / `blkid` show), read
   from offset 0xA8 of the LUKS1/LUKS2 header, plus the LUKS2 label when set — so
