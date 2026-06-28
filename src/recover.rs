@@ -315,6 +315,15 @@ impl Volume {
         }
     }
 
+    /// A short description of the volume's boot capability (e.g. an El Torito
+    /// bootable ISO), or `None` when it is not bootable / has no boot concept.
+    pub fn boot_info(&self) -> Option<String> {
+        match self {
+            Volume::Iso(v) => v.boot_info().map(str::to_string),
+            _ => None,
+        }
+    }
+
     /// Absolute byte ranges of the volume's free (unallocated) space, if this
     /// backend can compute it. Carving only these ranges recovers deleted
     /// content without re-finding files that are still allocated. Returns
