@@ -38,6 +38,7 @@ fn write_superblock(img: &mut [u8]) {
     img[sb + 0x108..sb + 0x10C].copy_from_slice(&1_600_000_000u32.to_le_bytes()); // s_mkfs_time
     img[sb + 0x58..sb + 0x5A].copy_from_slice(&(INODE_SIZE as u16).to_le_bytes()); // inode_size
     img[sb + 0x60..sb + 0x64].copy_from_slice(&0x0042u32.to_le_bytes()); // incompat: FILETYPE | EXTENTS
+    img[sb + 0x88..sb + 0x88 + 5].copy_from_slice(b"/home"); // s_last_mounted
 }
 
 fn write_gdt(img: &mut [u8]) {
@@ -203,6 +204,7 @@ fn recovers_deleted_ext4_files() {
     assert_eq!(volumes[0].alloc_unit(), Some(1024));
     assert_eq!(volumes[0].created_time(), Some(1_600_000_000));
     assert_eq!(volumes[0].written_time(), Some(1_700_000_000));
+    assert_eq!(volumes[0].last_mounted().as_deref(), Some("/home"));
 
     let vol = ext4::Volume::parse(&source, 0).unwrap();
     assert!(vol.is_clean(), "s_state clean bit set");

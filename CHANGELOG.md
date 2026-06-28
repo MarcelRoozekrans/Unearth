@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **The ext last-mounted path is reported** — `info` / `list_volumes` now show
+  the directory an ext volume was last mounted on (`s_last_mounted`, e.g. `/` or
+  `/home` — the `Last mounted on` value `dumpe2fs` reports), which helps identify
+  which volume a recovered image came from. The text view adds a `last mounted:`
+  line and `--json` / the MCP `list_volumes` tool a `last_mounted` field (`null`
+  when unset).
 - **MPEG transport stream (`.ts`) carving** — the container used by DVB/ATSC
   broadcast captures, HDHomeRun/DVR recordings, and many camcorders is carved by
   walking its fixed 188-byte packets (each starting with the `0x47` sync byte) to

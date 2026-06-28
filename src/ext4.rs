@@ -98,6 +98,8 @@ pub struct Volume {
     first_data_block: u64,
     /// Volume label (`s_volume_name`), empty when unset.
     label: String,
+    /// Path the volume was last mounted on (`s_last_mounted`), empty when unset.
+    last_mounted: String,
     /// Filesystem UUID (`s_uuid`), `None` when unset.
     uuid: Option<String>,
     /// Whether the filesystem was cleanly unmounted (`s_state` bit 0).
@@ -253,6 +255,10 @@ impl Volume {
         let raw = &sb[0x78..0x88];
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
         let label = String::from_utf8_lossy(&raw[..end]).into_owned();
+        // s_last_mounted: 64-byte NUL-padded path the volume was last mounted on.
+        let raw = &sb[0x88..0xC8];
+        let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+        let last_mounted = String::from_utf8_lossy(&raw[..end]).into_owned();
         // s_uuid: 16 bytes at superblock offset 0x68.
         let uuid = crate::recover::format_uuid(&sb[0x68..0x78]);
         // s_state (u16 at 0x3A): bit 0 (EXT2_VALID_FS) set => cleanly unmounted.
@@ -278,6 +284,7 @@ impl Volume {
             blocks_per_group,
             first_data_block,
             label,
+            last_mounted,
             uuid,
             clean,
             version,
@@ -289,6 +296,16 @@ impl Volume {
     /// The detected ext variant: `"ext2"`, `"ext3"`, or `"ext4"`.
     pub fn version(&self) -> &'static str {
         self.version
+    }
+
+    /// The path the volume was last mounted on (`s_last_mounted`), or `None` when
+    /// the superblock does not record one.
+    pub fn last_mounted(&self) -> Option<&str> {
+        if self.last_mounted.is_empty() {
+            None
+        } else {
+            Some(&self.last_mounted)
+        }
     }
 
     /// Filesystem creation time (`s_mkfs_time`) as Unix seconds, or `None` when
