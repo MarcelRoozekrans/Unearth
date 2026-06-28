@@ -33,6 +33,7 @@ fn write_boot(img: &mut [u8]) {
     img[40..48].copy_from_slice(&(TOTAL_CLUSTERS as u64).to_le_bytes()); // total sectors (spc=1)
     img[48..56].copy_from_slice(&(MFT_CLUSTER as u64).to_le_bytes()); // $MFT cluster
     img[64] = (-10i8) as u8; // clusters-per-record => 2^10 = 1024 bytes
+    img[72..80].copy_from_slice(&0x1A2B_3C4D_5E6F_7A8Bu64.to_le_bytes()); // volume serial
     img[510] = 0x55;
     img[511] = 0xAA;
 }
@@ -288,6 +289,7 @@ fn recovers_deleted_ntfs_files() {
     assert_eq!(volumes[0].fs_label(), "NTFS");
 
     let vol = ntfs::Volume::parse(&source, 0).unwrap();
+    assert_eq!(vol.uuid().as_deref(), Some("1A2B3C4D5E6F7A8B"));
     let stats = vol
         .recover_deleted(
             &source,

@@ -60,6 +60,8 @@ pub struct Volume {
     fat_size_sectors: u32,
     /// Boot-sector volume label (`BS_VolLab`), empty when unset or "NO NAME".
     label: String,
+    /// Volume serial number (`BS_VolID`), 0 when unset.
+    serial: u32,
 }
 
 /// One deleted file we intend to recover, with its reconstructed path.
@@ -241,6 +243,9 @@ impl Volume {
         } else {
             label
         };
+        // BS_VolID: the 4-byte serial immediately precedes the label field.
+        let serial_off = label_off - 4;
+        let serial = u32::from_le_bytes(bpb[serial_off..serial_off + 4].try_into().unwrap());
 
         Ok(Volume {
             offset,
@@ -256,12 +261,27 @@ impl Volume {
             count_of_clusters,
             fat_size_sectors,
             label,
+            serial,
         })
     }
 
     /// The boot-sector volume label, empty when unset.
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// The volume serial number (`BS_VolID`) as `XXXX-XXXX` (the form Windows
+    /// `vol` and `blkid` show), or `None` when unset.
+    pub fn uuid(&self) -> Option<String> {
+        if self.serial == 0 {
+            None
+        } else {
+            Some(format!(
+                "{:04X}-{:04X}",
+                self.serial >> 16,
+                self.serial & 0xFFFF
+            ))
+        }
     }
 
     fn cluster_bytes(&self) -> u64 {

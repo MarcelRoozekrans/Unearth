@@ -297,15 +297,20 @@ impl Volume {
         }
     }
 
-    /// The filesystem's own UUID — the `UUID=` value that `/etc/fstab` and
-    /// `blkid` use to identify a volume — for the backends that expose one (ext,
-    /// XFS, F2FS, Btrfs). `None` for filesystems without a stable UUID.
+    /// The volume's identifier — the `UUID=` value `/etc/fstab` and `blkid` use.
+    /// For ext / XFS / F2FS / Btrfs this is the filesystem UUID; for FAT / exFAT
+    /// / NTFS it is the volume serial number in the conventional form
+    /// (`XXXX-XXXX` for FAT/exFAT, 16 hex digits for NTFS). `None` for
+    /// filesystems without a stable identifier.
     pub fn volume_uuid(&self) -> Option<String> {
         match self {
             Volume::Ext(v) => v.uuid(),
             Volume::Xfs(v) => v.uuid(),
             Volume::F2fs(v) => v.uuid(),
             Volume::Btrfs(v) => v.uuid(),
+            Volume::Fat(v) => v.uuid(),
+            Volume::Exfat(v) => v.uuid(),
+            Volume::Ntfs(v) => v.uuid(),
             _ => None,
         }
     }

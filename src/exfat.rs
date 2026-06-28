@@ -42,6 +42,8 @@ pub struct Volume {
     volume_length_sectors: u64,
     /// Volume label (from the root directory's `0x83` entry), empty when unset.
     label: String,
+    /// Volume serial number (`VolumeSerialNumber`), 0 when unset.
+    serial: u32,
 }
 
 const ENTRY_SIZE: usize = 32;
@@ -82,6 +84,8 @@ impl Volume {
         ]);
         let bytes_per_sector_shift = boot[108];
         let sectors_per_cluster_shift = boot[109];
+        // VolumeSerialNumber: u32 at offset 100.
+        let serial = u32::from_le_bytes([boot[100], boot[101], boot[102], boot[103]]);
 
         if !(9..=12).contains(&bytes_per_sector_shift) {
             bail!("implausible exFAT bytes-per-sector shift {bytes_per_sector_shift}");
@@ -102,6 +106,7 @@ impl Volume {
             root_cluster,
             volume_length_sectors,
             label: String::new(),
+            serial,
         };
         vol.label = vol.read_label(src);
         Ok(vol)
@@ -167,6 +172,20 @@ impl Volume {
     /// The volume label, empty when unset.
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// The volume serial number as `XXXX-XXXX` (the form Windows `vol` and
+    /// `blkid` show), or `None` when unset.
+    pub fn uuid(&self) -> Option<String> {
+        if self.serial == 0 {
+            None
+        } else {
+            Some(format!(
+                "{:04X}-{:04X}",
+                self.serial >> 16,
+                self.serial & 0xFFFF
+            ))
+        }
     }
 
     /// Read the volume label from the root directory's Volume Label entry
