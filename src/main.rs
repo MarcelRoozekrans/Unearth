@@ -419,6 +419,10 @@ fn info(args: InfoArgs) -> Result<()> {
                     Some(u) => format!("\"{}\"", json_escape(&u)),
                     None => "null".to_string(),
                 };
+                let last_mounted = match vol.last_mounted() {
+                    Some(p) => format!("\"{}\"", json_escape(&p)),
+                    None => "null".to_string(),
+                };
                 let boot = match vol.boot_info() {
                     Some(b) => format!("\"{}\"", json_escape(&b)),
                     None => "null".to_string(),
@@ -444,7 +448,7 @@ fn info(args: InfoArgs) -> Result<()> {
                     None => "null".to_string(),
                 };
                 out.push_str(&format!(
-                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"version\": {}, \"offset\": {}, \"size\": {}, \"alloc_unit_bytes\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"boot\": {}, \"clean\": {}, \"created_time\": {}, \"written_time\": {}, \"contained_volumes\": [{}]}}{}\n",
+                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"version\": {}, \"offset\": {}, \"size\": {}, \"alloc_unit_bytes\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"last_mounted\": {}, \"boot\": {}, \"clean\": {}, \"created_time\": {}, \"written_time\": {}, \"contained_volumes\": [{}]}}{}\n",
                     i,
                     json_escape(&vol.fs_label()),
                     version,
@@ -455,6 +459,7 @@ fn info(args: InfoArgs) -> Result<()> {
                     deleted,
                     label,
                     uuid,
+                    last_mounted,
                     boot,
                     clean,
                     created_time,
@@ -573,6 +578,9 @@ fn info(args: InfoArgs) -> Result<()> {
         }
         if let Some(uuid) = vol.volume_uuid() {
             println!("      uuid: {uuid}");
+        }
+        if let Some(path) = vol.last_mounted() {
+            println!("      last mounted: {path}");
         }
         if let Some(boot) = vol.boot_info() {
             println!("      boot: {boot}");

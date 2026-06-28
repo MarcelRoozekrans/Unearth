@@ -271,6 +271,16 @@ impl Volume {
         }
     }
 
+    /// The path the volume was last mounted on, when the filesystem records it
+    /// (currently ext's `s_last_mounted`, e.g. `/` or `/home`) — useful for
+    /// identifying which volume a recovered image came from. `None` otherwise.
+    pub fn last_mounted(&self) -> Option<String> {
+        match self {
+            Volume::Ext(v) => v.last_mounted().map(str::to_string),
+            _ => None,
+        }
+    }
+
     /// The precise on-disk format version, when the backend can refine its
     /// family label — currently the ext variant (`"ext2"`, `"ext3"`, or
     /// `"ext4"`), distinguished from the `"ext2/3/4"` family by the superblock

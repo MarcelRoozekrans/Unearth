@@ -302,6 +302,12 @@ UUID is reported too (from its swap header). (This is the volume's own
 identifier, distinct from a GPT partition's PARTUUID reported in the partition
 table.)
 
+An **ext** volume's **last-mounted path** — the directory it was last mounted on
+(e.g. `/`, `/home`), the `Last mounted on` value `dumpe2fs` shows — is reported
+on a `last mounted:` line (and as a `last_mounted` field in `--json` and the MCP
+`list_volumes` tool) when the superblock records one, which helps identify which
+volume a recovered image came from.
+
 An **ext** volume's precise variant — **ext2**, **ext3**, or **ext4** — is
 reported on a `version:` line (and as a `version` field in `--json` and the MCP
 `list_volumes` tool), distinguished from the `ext2/3/4` family label by the
@@ -342,7 +348,7 @@ filesystems whose allocation map is not parsed.
 
 With `--json`, the detected layout is written to stdout as a single object
 (`source`, `source_bytes`, and a `volumes` array of
-`index`/`filesystem`/`offset`/`size`/`alloc_unit_bytes`/`free_bytes`/`deleted`/`label`/`created_time`/`written_time`/`contained_volumes`),
+`index`/`filesystem`/`offset`/`size`/`alloc_unit_bytes`/`free_bytes`/`deleted`/`label`/`last_mounted`/`created_time`/`written_time`/`contained_volumes`),
 so the tool's output can be consumed by scripts. `deleted` is `null` unless
 `--deleted` is also passed; `label` and `free_bytes` are `null` when the volume
 has none / cannot report it.
