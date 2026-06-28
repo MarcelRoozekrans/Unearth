@@ -305,9 +305,10 @@ correlated with a system's configuration. For **ext**, **XFS**, **F2FS**, and
 **Btrfs** this is the filesystem UUID; for **FAT**, **exFAT**, and **NTFS** it is
 the volume serial number in the conventional form (`XXXX-XXXX` for FAT/exFAT, 16
 hex digits for NTFS), exactly as `blkid` reports them. A **Linux swap** area's
-UUID is reported too (from its swap header). (This is the volume's own
-identifier, distinct from a GPT partition's PARTUUID reported in the partition
-table.)
+UUID and a **LUKS** container's UUID (the value `cryptsetup luksUUID` shows, plus
+a LUKS2 label when set) are reported too, from their headers. (This is the
+volume's own identifier, distinct from a GPT partition's PARTUUID reported in the
+partition table.)
 
 An **ext** volume's **last-mounted path** — the directory it was last mounted on
 (e.g. `/`, `/home`), the `Last mounted on` value `dumpe2fs` shows — is reported

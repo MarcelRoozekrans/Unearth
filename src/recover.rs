@@ -382,6 +382,7 @@ impl Volume {
             Volume::F2fs(v) => v.label(),
             Volume::Mdraid(v) => v.label(),
             Volume::Swap(v) => v.label(),
+            Volume::Encrypted(v) => v.label(),
             Volume::Iso(v) => v.label(),
             _ => "",
         };
@@ -408,6 +409,7 @@ impl Volume {
             Volume::Ntfs(v) => v.uuid(),
             Volume::Mdraid(v) => v.uuid(),
             Volume::Swap(v) => v.uuid(),
+            Volume::Encrypted(v) => v.uuid(),
             _ => None,
         }
     }
