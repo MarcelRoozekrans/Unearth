@@ -44,6 +44,8 @@ pub struct Volume {
     label: String,
     /// Volume serial number (`VolumeSerialNumber`), 0 when unset.
     serial: u32,
+    /// Whether the volume is marked dirty (`VolumeFlags` bit 1).
+    dirty: bool,
 }
 
 const ENTRY_SIZE: usize = 32;
@@ -86,6 +88,8 @@ impl Volume {
         let sectors_per_cluster_shift = boot[109];
         // VolumeSerialNumber: u32 at offset 100.
         let serial = u32::from_le_bytes([boot[100], boot[101], boot[102], boot[103]]);
+        // VolumeFlags: u16 at offset 106; bit 1 (0x0002) is the VolumeDirty flag.
+        let dirty = u16::from_le_bytes([boot[106], boot[107]]) & 0x0002 != 0;
 
         if !(9..=12).contains(&bytes_per_sector_shift) {
             bail!("implausible exFAT bytes-per-sector shift {bytes_per_sector_shift}");
@@ -107,6 +111,7 @@ impl Volume {
             volume_length_sectors,
             label: String::new(),
             serial,
+            dirty,
         };
         vol.label = vol.read_label(src);
         Ok(vol)
@@ -186,6 +191,11 @@ impl Volume {
                 self.serial & 0xFFFF
             ))
         }
+    }
+
+    /// Whether the volume was cleanly unmounted (the `VolumeDirty` flag is clear).
+    pub fn is_clean(&self) -> bool {
+        !self.dirty
     }
 
     /// Read the volume label from the root directory's Volume Label entry

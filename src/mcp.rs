@@ -594,6 +594,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                         ),
                         ("uuid", v.volume_uuid().map_or(Json::Null, s)),
                         ("boot", v.boot_info().map_or(Json::Null, s)),
+                        ("clean", v.is_clean().map_or(Json::Null, Json::Bool)),
                         (
                             "contained_volumes",
                             Json::Arr(v.contained_volumes().into_iter().map(s).collect()),

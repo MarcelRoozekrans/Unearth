@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **Volume clean/dirty state is reported** — `info` / `list_volumes` now report
+  whether a volume was cleanly unmounted, from ext (`s_state`), exFAT
+  (`VolumeFlags`), and NTFS (`$VOLUME_INFORMATION`). A volume that is marked
+  dirty (potentially inconsistent, so less reliable to recover from) gets a
+  `state: dirty` line in the text view; `--json` / the MCP `list_volumes` tool
+  add a `clean` boolean (`null` for filesystems without the flag).
 - **Bootable ISOs are flagged with their boot platform (El Torito)** — `info` /
   `list_volumes` report whether an ISO 9660 disc carries an El Torito boot record
   and the platform(s) it boots — e.g. `El Torito (BIOS, UEFI)`, read from the

@@ -85,6 +85,8 @@ pub struct Volume {
     label: String,
     /// Filesystem UUID (`s_uuid`), `None` when unset.
     uuid: Option<String>,
+    /// Whether the filesystem was cleanly unmounted (`s_state` bit 0).
+    clean: bool,
 }
 
 /// Does the superblock at `vol_offset + 1024` carry the ext magic?
@@ -210,6 +212,8 @@ impl Volume {
         let label = String::from_utf8_lossy(&raw[..end]).into_owned();
         // s_uuid: 16 bytes at superblock offset 0x68.
         let uuid = crate::recover::format_uuid(&sb[0x68..0x78]);
+        // s_state (u16 at 0x3A): bit 0 (EXT2_VALID_FS) set => cleanly unmounted.
+        let clean = u16::from_le_bytes([sb[0x3A], sb[0x3B]]) & 0x0001 != 0;
 
         Ok(Volume {
             offset,
@@ -225,6 +229,7 @@ impl Volume {
             first_data_block,
             label,
             uuid,
+            clean,
         })
     }
 
@@ -236,6 +241,11 @@ impl Volume {
     /// The filesystem UUID (`s_uuid`), or `None` when unset.
     pub fn uuid(&self) -> Option<String> {
         self.uuid.clone()
+    }
+
+    /// Whether the filesystem was cleanly unmounted (`s_state` bit 0).
+    pub fn is_clean(&self) -> bool {
+        self.clean
     }
 
     fn read_block(&self, src: &Source, block: u64) -> Result<Vec<u8>> {

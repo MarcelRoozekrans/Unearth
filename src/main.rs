@@ -419,12 +419,16 @@ fn info(args: InfoArgs) -> Result<()> {
                     Some(b) => format!("\"{}\"", json_escape(&b)),
                     None => "null".to_string(),
                 };
+                let clean = match vol.is_clean() {
+                    Some(b) => b.to_string(),
+                    None => "null".to_string(),
+                };
                 let free = match free_bytes(vol, &source) {
                     Some(n) => n.to_string(),
                     None => "null".to_string(),
                 };
                 out.push_str(&format!(
-                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"boot\": {}, \"contained_volumes\": [{}]}}{}\n",
+                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"offset\": {}, \"size\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"boot\": {}, \"clean\": {}, \"contained_volumes\": [{}]}}{}\n",
                     i,
                     json_escape(&vol.fs_label()),
                     vol.offset(),
@@ -434,6 +438,7 @@ fn info(args: InfoArgs) -> Result<()> {
                     label,
                     uuid,
                     boot,
+                    clean,
                     volumes,
                     comma
                 ));
@@ -548,6 +553,9 @@ fn info(args: InfoArgs) -> Result<()> {
         }
         if let Some(boot) = vol.boot_info() {
             println!("      boot: {boot}");
+        }
+        if vol.is_clean() == Some(false) {
+            println!("      state: dirty (not cleanly unmounted)");
         }
         if let Some(free) = free_bytes(vol, &source) {
             let pct = if vol.size() > 0 {

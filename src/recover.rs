@@ -324,6 +324,18 @@ impl Volume {
         }
     }
 
+    /// Whether the volume was cleanly unmounted (`Some(true)`) or is marked dirty
+    /// / inconsistent (`Some(false)`) — a sign the filesystem may need a check and
+    /// that recovery may be less reliable. `None` for backends without the flag.
+    pub fn is_clean(&self) -> Option<bool> {
+        match self {
+            Volume::Ext(v) => Some(v.is_clean()),
+            Volume::Exfat(v) => Some(v.is_clean()),
+            Volume::Ntfs(v) => v.is_clean(),
+            _ => None,
+        }
+    }
+
     /// Absolute byte ranges of the volume's free (unallocated) space, if this
     /// backend can compute it. Carving only these ranges recovers deleted
     /// content without re-finding files that are still allocated. Returns
