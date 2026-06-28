@@ -337,6 +337,11 @@ impl Volume {
         self.total_blocks.saturating_mul(self.block_size)
     }
 
+    /// The block (allocation unit) size in bytes.
+    pub fn block_size(&self) -> u64 {
+        self.block_size
+    }
+
     /// Absolute byte ranges of the volume's **free** blocks, merged where
     /// contiguous, from each block group's block bitmap (a clear bit means the
     /// block is free). Carving these recovers deleted data without re-finding

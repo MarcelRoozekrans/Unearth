@@ -348,6 +348,11 @@ impl Volume {
         self.total_sectors as u64 * self.bytes_per_sector as u64
     }
 
+    /// The cluster (allocation unit) size in bytes.
+    pub fn cluster_size(&self) -> u64 {
+        self.bytes_per_sector as u64 * self.sectors_per_cluster as u64
+    }
+
     /// Absolute byte ranges of the volume's **free** (unallocated) clusters,
     /// merged where contiguous. A free cluster is one whose FAT entry is 0;
     /// these hold whatever data was there before, including deleted files, so

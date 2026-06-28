@@ -109,6 +109,7 @@ fn recovers_deleted_fat_file_with_long_name() {
     assert_eq!(volumes.len(), 1);
     assert_eq!(volumes[0].fat_type, fat::FatType::Fat12);
     assert_eq!(volumes[0].uuid().as_deref(), Some("1234-5678"));
+    assert_eq!(volumes[0].cluster_size(), (BPS * SPC) as u64);
 
     let stats = volumes[0]
         .recover_deleted(

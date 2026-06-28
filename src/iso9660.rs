@@ -227,6 +227,11 @@ impl Volume {
         self.size
     }
 
+    /// The logical block size in bytes (from the PVD, normally 2048).
+    pub fn block_size(&self) -> u64 {
+        self.block_size
+    }
+
     /// Filesystem label.
     pub fn fs_label(&self) -> &'static str {
         "ISO 9660"

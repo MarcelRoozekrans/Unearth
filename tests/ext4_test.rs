@@ -197,6 +197,8 @@ fn recovers_deleted_ext4_files() {
     // The superblock advertises the EXTENTS incompat feature, so it classifies
     // as ext4.
     assert_eq!(volumes[0].fs_version(), Some("ext4"));
+    // log_block_size 0 => 1 KiB allocation blocks.
+    assert_eq!(volumes[0].alloc_unit(), Some(1024));
 
     let vol = ext4::Volume::parse(&source, 0).unwrap();
     assert!(vol.is_clean(), "s_state clean bit set");
