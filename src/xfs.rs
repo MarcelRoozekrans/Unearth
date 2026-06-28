@@ -35,8 +35,10 @@ const LABEL_LEN: usize = 12;
 const ICOUNT_OFFSET: usize = 0x80;
 /// `sb_ifree` (big-endian u64) at offset 0x88: free inodes.
 const IFREE_OFFSET: usize = 0x88;
+/// `sb_fdblocks` (big-endian u64) at offset 0x90: free data blocks.
+const FDBLOCKS_OFFSET: usize = 0x90;
 /// We read this many bytes of the superblock to cover every field above.
-const HEADER_LEN: usize = IFREE_OFFSET + 8;
+const HEADER_LEN: usize = FDBLOCKS_OFFSET + 8;
 
 /// A recognised XFS volume (detection only; no metadata undelete).
 pub struct Volume {
@@ -50,6 +52,8 @@ pub struct Volume {
     icount: u64,
     /// Free inodes (`sb_ifree`).
     ifree: u64,
+    /// Free data blocks (`sb_fdblocks`).
+    fdblocks: u64,
 }
 
 /// Does the superblock at `vol_offset` carry the XFS magic (`XFSB`)?
@@ -94,6 +98,8 @@ impl Volume {
         let uuid = crate::recover::format_uuid(&sb[UUID_OFFSET..UUID_OFFSET + 16]);
         let icount = u64::from_be_bytes(sb[ICOUNT_OFFSET..ICOUNT_OFFSET + 8].try_into().unwrap());
         let ifree = u64::from_be_bytes(sb[IFREE_OFFSET..IFREE_OFFSET + 8].try_into().unwrap());
+        let fdblocks =
+            u64::from_be_bytes(sb[FDBLOCKS_OFFSET..FDBLOCKS_OFFSET + 8].try_into().unwrap());
         Ok(Volume {
             offset,
             size,
@@ -102,7 +108,16 @@ impl Volume {
             uuid,
             icount,
             ifree,
+            fdblocks,
         })
+    }
+
+    /// Free space in bytes (`sb_fdblocks` × block size), capped at the volume
+    /// size so a corrupt count cannot exceed it.
+    pub fn free_bytes(&self) -> u64 {
+        self.fdblocks
+            .saturating_mul(self.block_size as u64)
+            .min(self.size)
     }
 
     /// Total size of the volume in bytes (block count × block size).
@@ -161,6 +176,7 @@ mod tests {
         v[DBLOCKS_OFFSET..DBLOCKS_OFFSET + 8].copy_from_slice(&dblocks.to_be_bytes());
         v[ICOUNT_OFFSET..ICOUNT_OFFSET + 8].copy_from_slice(&128u64.to_be_bytes());
         v[IFREE_OFFSET..IFREE_OFFSET + 8].copy_from_slice(&40u64.to_be_bytes());
+        v[FDBLOCKS_OFFSET..FDBLOCKS_OFFSET + 8].copy_from_slice(&1000u64.to_be_bytes());
         let bytes = label.as_bytes();
         v[LABEL_OFFSET..LABEL_OFFSET + bytes.len()].copy_from_slice(bytes);
         v
@@ -188,6 +204,8 @@ mod tests {
         assert_eq!(v.uuid().unwrap(), "11111111-1111-1111-1111-111111111111");
         // 128 inodes allocated, 40 free => 88 used.
         assert_eq!(v.inode_usage(), (88, 128));
+        // 1000 free blocks × 4096 = free space in bytes.
+        assert_eq!(v.free_bytes(), 1000 * 4096);
     }
 
     #[test]

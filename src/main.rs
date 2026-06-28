@@ -756,9 +756,10 @@ fn free_space_regions(source: &Source) -> Option<Vec<(u64, u64)>> {
 }
 
 /// Total free (unallocated) bytes in a single volume, or `None` when the
-/// backend cannot report its allocation map.
+/// backend cannot report it (from the allocation map, or the superblock counts
+/// for XFS / Btrfs).
 fn free_bytes(vol: &recover::Volume, source: &Source) -> Option<u64> {
-    Some(vol.free_extents(source)?.iter().map(|(_, len)| len).sum())
+    vol.free_space(source)
 }
 
 /// Accumulate one region's carve stats into a running total.

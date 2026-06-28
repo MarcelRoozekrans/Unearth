@@ -34,6 +34,8 @@ const BTRFS_MAGIC: &[u8; 8] = b"_BHRfS_M";
 /// `fsid` (16 bytes) at offset 0x20: the filesystem UUID.
 const FSID: usize = 0x20;
 const TOTAL_BYTES: usize = 112;
+/// `bytes_used` (u64) field offset.
+const BYTES_USED: usize = 120;
 /// `sectorsize` (u32) field offset.
 const SECTORSIZE: usize = 144;
 /// `nodesize` (u32) field offset.
@@ -70,6 +72,7 @@ pub struct Volume {
     /// Byte offset of the volume within the source.
     pub offset: u64,
     total_bytes: u64,
+    bytes_used: u64,
     sectorsize: u32,
     nodesize: u32,
     label: String,
@@ -105,6 +108,7 @@ impl Volume {
         if total_bytes == 0 {
             bail!("Btrfs volume reports zero total bytes");
         }
+        let bytes_used = le64(&sb, BYTES_USED);
         let sectorsize = le32(&sb, SECTORSIZE);
         let nodesize = le32(&sb, NODESIZE);
         // Guard against a coincidental magic in random data: the geometry must
@@ -129,12 +133,18 @@ impl Volume {
         Ok(Volume {
             offset,
             total_bytes,
+            bytes_used,
             sectorsize,
             nodesize,
             label,
             uuid,
             subvolumes,
         })
+    }
+
+    /// Free space in bytes (`total_bytes` − `bytes_used`).
+    pub fn free_bytes(&self) -> u64 {
+        self.total_bytes.saturating_sub(self.bytes_used)
     }
 
     /// Names of the subvolumes in this filesystem (empty when the trees could
@@ -373,6 +383,7 @@ mod tests {
         let sb = SUPERBLOCK_OFFSET as usize;
         v[sb + MAGIC_OFFSET..sb + MAGIC_OFFSET + 8].copy_from_slice(BTRFS_MAGIC);
         v[sb + TOTAL_BYTES..sb + TOTAL_BYTES + 8].copy_from_slice(&total.to_le_bytes());
+        v[sb + BYTES_USED..sb + BYTES_USED + 8].copy_from_slice(&(total / 4).to_le_bytes());
         v[sb + SECTORSIZE..sb + SECTORSIZE + 4].copy_from_slice(&4096u32.to_le_bytes());
         v[sb + NODESIZE..sb + NODESIZE + 4].copy_from_slice(&16384u32.to_le_bytes());
         v[sb + FSID..sb + FSID + 16].copy_from_slice(&[0x33; 16]);
@@ -396,6 +407,8 @@ mod tests {
         let v = Volume::parse(&src, 0).unwrap();
         assert_eq!(v.fs_label(), "Btrfs");
         assert_eq!(v.size(), 1 << 30);
+        // bytes_used is total/4, so free is the remaining three quarters.
+        assert_eq!(v.free_bytes(), (1 << 30) - (1 << 30) / 4);
         assert_eq!(v.label(), "backups");
         assert_eq!(v.geometry(), (4096, 16384));
         assert_eq!(v.uuid().unwrap(), "33333333-3333-3333-3333-333333333333");
