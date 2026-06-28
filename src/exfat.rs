@@ -170,10 +170,12 @@ impl Volume {
             .saturating_mul(self.bytes_per_sector)
     }
 
-    /// Absolute byte ranges of the volume's **free** clusters, merged where
-    /// contiguous, from the exFAT Allocation Bitmap (a `0x81` entry in the root
-    /// directory points to it). A clear bit means the cluster is free, so
-    /// carving those ranges recovers deleted data without re-finding live files.
+    /// The cluster (allocation unit) size in bytes.
+    pub fn cluster_size(&self) -> u64 {
+        self.bytes_per_sector
+            .saturating_mul(self.sectors_per_cluster)
+    }
+
     /// The volume label, empty when unset.
     pub fn label(&self) -> &str {
         &self.label
@@ -224,6 +226,10 @@ impl Volume {
         String::new()
     }
 
+    /// Absolute byte ranges of the volume's **free** clusters, merged where
+    /// contiguous, from the exFAT Allocation Bitmap (a `0x81` entry in the root
+    /// directory points to it). A clear bit means the cluster is free, so
+    /// carving those ranges recovers deleted data without re-finding live files.
     pub fn free_extents(&self, src: &Source) -> Result<Vec<(u64, u64)>> {
         // The Allocation Bitmap is described by a directory entry in the root.
         let root = self.read_directory(src, self.root_cluster, None, false)?;

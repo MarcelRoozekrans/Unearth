@@ -246,6 +246,11 @@ impl Volume {
         self.volume_size
     }
 
+    /// The cluster (allocation unit) size in bytes.
+    pub fn cluster_size(&self) -> u64 {
+        self.cluster_size
+    }
+
     /// Absolute byte ranges of the volume's **free** clusters, merged where
     /// contiguous, from the `$Bitmap` metadata file (MFT record 6). A clear bit
     /// means the cluster is free, so carving those ranges recovers deleted data

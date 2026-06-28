@@ -316,6 +316,13 @@ volume that was not cleanly unmounted is flagged with a `state: dirty` line in
 add a `clean` boolean (`null` when the filesystem has no such flag). A dirty
 volume may be inconsistent, so recovery from it is less reliable.
 
+Each volume's **allocation unit** — the cluster size (FAT, exFAT, NTFS, ReFS) or
+block size (ext, HFS+, APFS, XFS, F2FS, Btrfs, ISO 9660) the filesystem allocates
+space in — is reported on an `alloc unit:` line (and as an `alloc_unit_bytes`
+field in `--json` and the MCP `list_volumes` tool). It is the granularity carving
+aligns to and bounds each file's slack space. (`null` for backends with no such
+unit, e.g. LVM/swap/encrypted/UDF.)
+
 Each volume's **free (unallocated) space** is also reported — read from the
 filesystem's allocation map for FAT, exFAT, ext2/3/4, NTFS, and HFS+/HFSX. The
 text view prints a `free:` line (bytes and the unallocated percentage) under the
@@ -325,7 +332,7 @@ filesystems whose allocation map is not parsed.
 
 With `--json`, the detected layout is written to stdout as a single object
 (`source`, `source_bytes`, and a `volumes` array of
-`index`/`filesystem`/`offset`/`size`/`free_bytes`/`deleted`/`label`/`contained_volumes`),
+`index`/`filesystem`/`offset`/`size`/`alloc_unit_bytes`/`free_bytes`/`deleted`/`label`/`contained_volumes`),
 so the tool's output can be consumed by scripts. `deleted` is `null` unless
 `--deleted` is also passed; `label` and `free_bytes` are `null` when the volume
 has none / cannot report it.

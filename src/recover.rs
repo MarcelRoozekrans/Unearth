@@ -282,6 +282,33 @@ impl Volume {
         }
     }
 
+    /// The volume's allocation-unit size in bytes — the cluster size (FAT,
+    /// exFAT, NTFS, ReFS) or block size (ext, HFS+, APFS, XFS, F2FS, Btrfs, ISO
+    /// 9660) the filesystem allocates space in. Useful for recovery: carving
+    /// aligns to it and it bounds per-file slack. `None` for backends with no
+    /// such unit (LVM/swap/encrypted/UDF) or when the geometry is implausible.
+    pub fn alloc_unit(&self) -> Option<u64> {
+        let unit = match self {
+            Volume::Fat(v) => v.cluster_size(),
+            Volume::Exfat(v) => v.cluster_size(),
+            Volume::Ntfs(v) => v.cluster_size(),
+            Volume::Ext(v) => v.block_size(),
+            Volume::Hfs(v) => v.block_size(),
+            Volume::Apfs(v) => v.block_size(),
+            Volume::Btrfs(v) => v.geometry().0 as u64,
+            Volume::Refs(v) => return v.cluster_size(),
+            Volume::Xfs(v) => v.block_size() as u64,
+            Volume::F2fs(v) => v.block_size() as u64,
+            Volume::Iso(v) => v.block_size(),
+            _ => return None,
+        };
+        if unit == 0 {
+            None
+        } else {
+            Some(unit)
+        }
+    }
+
     /// Names of sub-volumes contained in this volume: APFS volumes inside a
     /// container, or Btrfs subvolumes. Other filesystems have none.
     pub fn contained_volumes(&self) -> Vec<String> {

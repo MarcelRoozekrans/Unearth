@@ -431,13 +431,18 @@ fn info(args: InfoArgs) -> Result<()> {
                     Some(n) => n.to_string(),
                     None => "null".to_string(),
                 };
+                let alloc_unit = match vol.alloc_unit() {
+                    Some(n) => n.to_string(),
+                    None => "null".to_string(),
+                };
                 out.push_str(&format!(
-                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"version\": {}, \"offset\": {}, \"size\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"boot\": {}, \"clean\": {}, \"contained_volumes\": [{}]}}{}\n",
+                    "    {{\"index\": {}, \"filesystem\": \"{}\", \"version\": {}, \"offset\": {}, \"size\": {}, \"alloc_unit_bytes\": {}, \"free_bytes\": {}, \"deleted\": {}, \"label\": {}, \"uuid\": {}, \"boot\": {}, \"clean\": {}, \"contained_volumes\": [{}]}}{}\n",
                     i,
                     json_escape(&vol.fs_label()),
                     version,
                     vol.offset(),
                     vol.size(),
+                    alloc_unit,
                     free,
                     deleted,
                     label,
@@ -564,6 +569,9 @@ fn info(args: InfoArgs) -> Result<()> {
         }
         if vol.is_clean() == Some(false) {
             println!("      state: dirty (not cleanly unmounted)");
+        }
+        if let Some(unit) = vol.alloc_unit() {
+            println!("      alloc unit: {}", human_bytes(unit));
         }
         if let Some(free) = free_bytes(vol, &source) {
             let pct = if vol.size() > 0 {

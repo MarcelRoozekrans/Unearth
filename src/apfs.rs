@@ -110,6 +110,11 @@ impl Volume {
         self.block_count.saturating_mul(self.block_size)
     }
 
+    /// The container block (allocation unit) size in bytes.
+    pub fn block_size(&self) -> u64 {
+        self.block_size
+    }
+
     pub fn fs_label(&self) -> &'static str {
         "APFS"
     }

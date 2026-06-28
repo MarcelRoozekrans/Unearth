@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **The allocation-unit size is reported** — `info` / `list_volumes` now report
+  each volume's cluster size (FAT, exFAT, NTFS, ReFS) or block size (ext, HFS+,
+  APFS, XFS, F2FS, Btrfs, ISO 9660) — the granularity the filesystem allocates
+  space in, which carving aligns to and which bounds per-file slack. The text
+  view adds an `alloc unit:` line and `--json` / the MCP `list_volumes` tool an
+  `alloc_unit_bytes` field (`null` for backends with no such unit).
 - **The ext variant (ext2 / ext3 / ext4) is reported** — `info` / `list_volumes`
   now refine the `ext2/3/4` family label to the precise variant, read from the
   superblock feature flags the way `blkid` classifies them: ext2 has no journal,

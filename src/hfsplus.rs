@@ -209,6 +209,11 @@ impl Volume {
         self.total_blocks.saturating_mul(self.block_size)
     }
 
+    /// The allocation block size in bytes.
+    pub fn block_size(&self) -> u64 {
+        self.block_size
+    }
+
     /// Absolute byte ranges of the volume's free (unallocated) space, derived
     /// from the allocation file (the volume bitmap). Each bit maps one
     /// allocation block, **most-significant bit first** (bit 7 of byte 0 is
