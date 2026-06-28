@@ -47,6 +47,8 @@ pub struct Volume {
     record_count: u64,
     /// Volume label (`$VOLUME_NAME` of `$Volume`), empty when unset.
     label: String,
+    /// Volume serial number (8 bytes at boot-sector offset 0x48).
+    serial: u64,
 }
 
 const ATTR_STANDARD_INFO: u32 = 0x10;
@@ -137,6 +139,11 @@ impl Volume {
             mft_data_extent(&rec0, cluster_size).context("parsing $MFT $DATA runs")?;
         let record_count = (mft_size / record_size).min(MAX_RECORDS);
 
+        // Volume serial number: 8 bytes at offset 0x48.
+        let serial = u64::from_le_bytes([
+            boot[72], boot[73], boot[74], boot[75], boot[76], boot[77], boot[78], boot[79],
+        ]);
+
         let mut vol = Volume {
             offset,
             bytes_per_sector,
@@ -146,6 +153,7 @@ impl Volume {
             mft_runs,
             record_count,
             label: String::new(),
+            serial,
         };
         vol.label = vol.read_volume_label(src).unwrap_or_default();
         Ok(vol)
@@ -154,6 +162,16 @@ impl Volume {
     /// The volume label, empty when unset.
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// The volume serial number as 16 uppercase hex digits (the form `blkid`
+    /// shows for NTFS), or `None` when unset.
+    pub fn uuid(&self) -> Option<String> {
+        if self.serial == 0 {
+            None
+        } else {
+            Some(format!("{:016X}", self.serial))
+        }
     }
 
     /// Read the volume label from `$Volume`'s `$VOLUME_NAME` attribute (MFT

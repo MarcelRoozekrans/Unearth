@@ -291,12 +291,15 @@ Each volume's **label** (its user-set name) is shown when set — for FAT,
 exFAT, NTFS, ext, Btrfs, XFS, and F2FS (the text view prints it on a `label:`
 line under the volume; `--json` includes a `label` field).
 
-Each volume's **filesystem UUID** — the `UUID=` value that `/etc/fstab` and
-`blkid` use to identify a volume — is reported for **ext**, **XFS**, **F2FS**,
-and **Btrfs**, so a recovered filesystem can be correlated with a system's
-configuration. The text view prints it on a `uuid:` line; `--json` and the MCP
-`list_volumes` tool add a `uuid` field per volume. (This is the filesystem's own
-UUID, distinct from a GPT partition's PARTUUID reported in the partition table.)
+Each volume's **identifier** — the `UUID=` value that `/etc/fstab` and `blkid`
+use to identify a volume — is reported on a `uuid:` line (and as a `uuid` field
+in `--json` and the MCP `list_volumes` tool), so a recovered filesystem can be
+correlated with a system's configuration. For **ext**, **XFS**, **F2FS**, and
+**Btrfs** this is the filesystem UUID; for **FAT**, **exFAT**, and **NTFS** it is
+the volume serial number in the conventional form (`XXXX-XXXX` for FAT/exFAT, 16
+hex digits for NTFS), exactly as `blkid` reports them. (This is the volume's own
+identifier, distinct from a GPT partition's PARTUUID reported in the partition
+table.)
 
 Each volume's **free (unallocated) space** is also reported — read from the
 filesystem's allocation map for FAT, exFAT, ext2/3/4, NTFS, and HFS+/HFSX. The

@@ -19,12 +19,14 @@ formats.
   recovered data covers. The text view adds a `Modified: <oldest> .. <newest>`
   line (ISO-8601 UTC) and `--json` / the MCP `triage` tool add `oldest_mtime` /
   `newest_mtime` as Unix seconds.
-- **Filesystem UUIDs are reported** — `info` / `list_volumes` now report each
-  volume's filesystem UUID (the `UUID=` value `/etc/fstab` and `blkid` use) for
-  **ext**, **XFS**, **F2FS**, and **Btrfs**, so a recovered filesystem can be
-  correlated with a system's configuration. The text view adds a `uuid:` line and
-  `--json` / the MCP `list_volumes` tool a per-volume `uuid` field. (Distinct from
-  a GPT partition's PARTUUID, which is reported in the partition table.)
+- **Filesystem UUIDs / volume serials are reported** — `info` / `list_volumes`
+  now report each volume's identifier (the `UUID=` value `/etc/fstab` and `blkid`
+  use) on a `uuid:` line / `uuid` field, so a recovered filesystem can be
+  correlated with a system's configuration. For **ext**, **XFS**, **F2FS**, and
+  **Btrfs** this is the filesystem UUID; for **FAT**, **exFAT**, and **NTFS** it
+  is the volume serial number in the conventional form (`XXXX-XXXX` for
+  FAT/exFAT, 16 hex digits for NTFS). (Distinct from a GPT partition's PARTUUID,
+  reported in the partition table.)
 - **GPT partition GUIDs are reported** — `info` / `list_volumes` now report each
   GPT partition's **unique GUID** (the PARTUUID that `/etc/fstab`, bootloaders,
   and `/dev/disk/by-partuuid` reference) and the **disk GUID**, so a recovered

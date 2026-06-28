@@ -33,6 +33,8 @@ fn write_bpb(img: &mut [u8]) {
     img[17..19].copy_from_slice(&(ROOT_ENTRIES as u16).to_le_bytes());
     img[19..21].copy_from_slice(&(TOTAL_SECTORS as u16).to_le_bytes());
     img[22..24].copy_from_slice(&(FAT_SECTORS as u16).to_le_bytes());
+    // BS_VolID (serial) for FAT12/16 is at offset 0x27.
+    img[0x27..0x2B].copy_from_slice(&0x1234_5678u32.to_le_bytes());
     img[510] = 0x55;
     img[511] = 0xAA;
 }
@@ -106,6 +108,7 @@ fn recovers_deleted_fat_file_with_long_name() {
     let volumes = fat::detect_volumes(&source).unwrap();
     assert_eq!(volumes.len(), 1);
     assert_eq!(volumes[0].fat_type, fat::FatType::Fat12);
+    assert_eq!(volumes[0].uuid().as_deref(), Some("1234-5678"));
 
     let stats = volumes[0]
         .recover_deleted(
