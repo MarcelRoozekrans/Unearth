@@ -78,7 +78,10 @@ catalog record and, for a file **fragmented** beyond them, the remaining extents
 from the **extents-overflow B-tree** — so fragmented files come back whole, not
 truncated. Only when a file's tail extents survive in neither place (the overflow
 tree was itself rewritten after deletion) is it reported skipped; fall back to
-`scan`.
+`scan`. An HFS+ volume embedded in an old **HFS wrapper** (the layout used on old
+Mac media and hybrid CDs, where the partition begins with an HFS `BD` master
+directory block pointing at the real HFS+ volume) is followed transparently to
+the embedded volume.
 
 ### `scan` — signature-based file carving
 
