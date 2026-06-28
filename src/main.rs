@@ -199,6 +199,14 @@ fn triage(args: TriageArgs) -> Result<()> {
             ("largest", Json::Arr(largest)),
             ("mismatches", Json::Arr(mismatches)),
             ("corrupt", Json::Arr(corrupt)),
+            (
+                "oldest_mtime",
+                sum.oldest_mtime.map_or(Json::Null, |t| Json::Num(t as f64)),
+            ),
+            (
+                "newest_mtime",
+                sum.newest_mtime.map_or(Json::Null, |t| Json::Num(t as f64)),
+            ),
         ]);
         println!("{out}");
         return Ok(());
@@ -250,6 +258,13 @@ fn triage(args: TriageArgs) -> Result<()> {
         for c in &sum.corrupt {
             println!("  {}: .{} header not found", c.path, c.claimed);
         }
+    }
+    if let (Some(oldest), Some(newest)) = (sum.oldest_mtime, sum.newest_mtime) {
+        println!(
+            "\nModified: {} .. {}",
+            filerecovery::times::format_utc(oldest),
+            filerecovery::times::format_utc(newest)
+        );
     }
     Ok(())
 }

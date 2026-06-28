@@ -1036,6 +1036,8 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                 ("largest", Json::Arr(largest)),
                 ("mismatches", Json::Arr(mismatches)),
                 ("corrupt", Json::Arr(corrupt)),
+                ("oldest_mtime", sum.oldest_mtime.map_or(Json::Null, n)),
+                ("newest_mtime", sum.newest_mtime.map_or(Json::Null, n)),
             ]))
         }
 

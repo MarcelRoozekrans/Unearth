@@ -60,6 +60,11 @@ pub struct Summary {
     /// Files whose extension names a known type but whose content matches no
     /// signature — likely truncated or corrupted.
     pub corrupt: Vec<Corrupt>,
+    /// Oldest and newest file modification time across the directory, as Unix
+    /// seconds — the time span the recovered data covers. `None` when no file
+    /// had a readable modification time.
+    pub oldest_mtime: Option<u64>,
+    pub newest_mtime: Option<u64>,
 }
 
 impl Summary {
@@ -95,6 +100,12 @@ pub fn summarize(dir: &Path, top_n: usize) -> Result<Summary> {
         summary.total_bytes = summary.total_bytes.saturating_add(size);
         if size == 0 {
             summary.empty_files += 1;
+        }
+
+        // Track the modification-time span (the period the data covers).
+        if let Some(secs) = mtime_secs(path) {
+            summary.oldest_mtime = Some(summary.oldest_mtime.map_or(secs, |o| o.min(secs)));
+            summary.newest_mtime = Some(summary.newest_mtime.map_or(secs, |n| n.max(secs)));
         }
 
         let ext = path
@@ -165,6 +176,17 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The file's modification time as Unix seconds, or `None` if unavailable (e.g.
+/// the platform doesn't record it or the time predates the epoch).
+fn mtime_secs(path: &Path) -> Option<u64> {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
 }
 
 /// Stream a file through SHA-256, returning its size, digest, and a copy of the
@@ -340,5 +362,37 @@ mod tests {
         assert_eq!(c.claimed, "jpg");
         // The good JPEG is neither corrupt nor a mismatch.
         assert!(sum.mismatches.is_empty(), "no mismatches");
+    }
+
+    #[test]
+    fn reports_modification_time_span() {
+        use std::fs::File;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("old.bin"), b"x").unwrap();
+        std::fs::write(dir.join("new.bin"), b"y").unwrap();
+        // Stamp two distinct modification times via the shared helper.
+        let old = crate::times::from_unix(1_000_000_000).unwrap();
+        let new = crate::times::from_unix(1_600_000_000).unwrap();
+        crate::times::apply(
+            &File::options()
+                .write(true)
+                .open(dir.join("old.bin"))
+                .unwrap(),
+            Some(old),
+            None,
+        );
+        crate::times::apply(
+            &File::options()
+                .write(true)
+                .open(dir.join("new.bin"))
+                .unwrap(),
+            Some(new),
+            None,
+        );
+
+        let sum = summarize(dir, 10).unwrap();
+        assert_eq!(sum.oldest_mtime, Some(1_000_000_000));
+        assert_eq!(sum.newest_mtime, Some(1_600_000_000));
     }
 }
