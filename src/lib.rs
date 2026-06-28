@@ -69,6 +69,7 @@ pub mod recover;
 pub mod refs;
 pub mod signatures;
 pub mod source;
+pub mod swap;
 pub mod times;
 pub mod triage;
 pub mod udf;

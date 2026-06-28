@@ -27,7 +27,8 @@ use anyhow::{bail, Result};
 
 use crate::source::Source;
 use crate::{
-    apfs, btrfs, encrypted, exfat, ext4, f2fs, fat, hfsplus, iso9660, lvm, ntfs, refs, udf, xfs,
+    apfs, btrfs, encrypted, exfat, ext4, f2fs, fat, hfsplus, iso9660, lvm, ntfs, refs, swap, udf,
+    xfs,
 };
 
 /// Options controlling a recovery run.
@@ -200,6 +201,7 @@ pub enum Volume {
     Xfs(xfs::Volume),
     F2fs(f2fs::Volume),
     Lvm(lvm::Volume),
+    Swap(swap::Volume),
     Encrypted(encrypted::Volume),
     Udf(udf::Volume),
     Iso(iso9660::Volume),
@@ -220,6 +222,7 @@ impl Volume {
             Volume::Xfs(v) => v.offset,
             Volume::F2fs(v) => v.offset,
             Volume::Lvm(v) => v.offset,
+            Volume::Swap(v) => v.offset,
             Volume::Encrypted(v) => v.offset,
             Volume::Udf(v) => v.offset,
             Volume::Iso(v) => v.offset,
@@ -240,6 +243,7 @@ impl Volume {
             Volume::Xfs(v) => v.size(),
             Volume::F2fs(v) => v.size(),
             Volume::Lvm(v) => v.size(),
+            Volume::Swap(v) => v.size(),
             Volume::Encrypted(v) => v.size(),
             Volume::Udf(v) => v.size(),
             Volume::Iso(v) => v.size(),
@@ -260,6 +264,7 @@ impl Volume {
             Volume::Xfs(v) => v.fs_label().to_string(),
             Volume::F2fs(v) => v.fs_label().to_string(),
             Volume::Lvm(v) => v.fs_label().to_string(),
+            Volume::Swap(v) => v.fs_label().to_string(),
             Volume::Encrypted(v) => v.fs_label().to_string(),
             Volume::Udf(v) => v.fs_label().to_string(),
             Volume::Iso(v) => v.fs_label().to_string(),
@@ -287,6 +292,7 @@ impl Volume {
             Volume::Btrfs(v) => v.label(),
             Volume::Xfs(v) => v.label(),
             Volume::F2fs(v) => v.label(),
+            Volume::Swap(v) => v.label(),
             Volume::Iso(v) => v.label(),
             _ => "",
         };
@@ -311,6 +317,7 @@ impl Volume {
             Volume::Fat(v) => v.uuid(),
             Volume::Exfat(v) => v.uuid(),
             Volume::Ntfs(v) => v.uuid(),
+            Volume::Swap(v) => v.uuid(),
             _ => None,
         }
     }
@@ -370,6 +377,7 @@ impl Volume {
             Volume::Xfs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::F2fs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Lvm(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Swap(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Encrypted(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Udf(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Iso(v) => v.recover_deleted(src, out_dir, opts),
@@ -417,7 +425,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, HFS+, APFS, Btrfs, LVM2, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
+        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, HFS+, APFS, Btrfs, LVM2, Linux swap, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
@@ -517,6 +525,14 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     if lvm::is_lvm(src, offset) {
         if let Ok(v) = lvm::Volume::parse(src, offset) {
             return Ok(Some(Volume::Lvm(v)));
+        }
+    }
+    // A swap area's first 1 KiB is reserved (`bootbits`) and can hold a stale
+    // disklabel, so check the swap magic (at `page_size - 10`) before the
+    // boot-sector filesystems to avoid misreading leftover bytes as FAT/NTFS.
+    if swap::is_swap(src, offset) {
+        if let Ok(v) = swap::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Swap(v)));
         }
     }
     if fat::looks_like_fat_vbr(&boot) {
@@ -634,6 +650,11 @@ pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     if lvm::is_lvm(src, offset) {
         if let Ok(v) = lvm::Volume::parse(src, offset) {
             return Ok(Volume::Lvm(v));
+        }
+    }
+    if swap::is_swap(src, offset) {
+        if let Ok(v) = swap::Volume::parse(src, offset) {
+            return Ok(Volume::Swap(v));
         }
     }
     let v = fat::Volume::parse(src, offset)?;
