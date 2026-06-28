@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **LUKS UUID and LUKS2 label are reported** — `info` / `list_volumes` now report
+  a LUKS container's UUID (the value `cryptsetup luksUUID` / `blkid` show), read
+  from offset 0xA8 of the LUKS1/LUKS2 header, plus the LUKS2 label when set — so
+  an encrypted volume can be correlated with a system's configuration even though
+  its contents can't be read without the key. Surfaced on the existing `uuid:` /
+  `label:` lines and `uuid` / `label` fields.
 - **Binary EPS (`.eps`) carving** — Encapsulated PostScript with a DOS preview
   header (`C5 D0 D3 C6`) is carved from the section table in its 30-byte header:
   the file ends at the furthest `offset + length` of the PostScript section and
