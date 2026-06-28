@@ -32,6 +32,7 @@ fn write_boot(img: &mut [u8]) {
     img[92..96].copy_from_slice(&CLUSTER_COUNT.to_le_bytes());
     img[96..100].copy_from_slice(&ROOT_CLUSTER.to_le_bytes());
     img[100..104].copy_from_slice(&0x1234_5678u32.to_le_bytes()); // VolumeSerialNumber
+    img[106..108].copy_from_slice(&0x0002u16.to_le_bytes()); // VolumeFlags: dirty
     img[108] = BPS_SHIFT;
     img[109] = SPC_SHIFT;
     img[110] = 1; // number of FATs
@@ -118,6 +119,7 @@ fn recovers_deleted_exfat_file() {
     // Recover directly through the exfat backend.
     let vol = exfat::Volume::parse(&source, 0).unwrap();
     assert_eq!(vol.uuid().as_deref(), Some("1234-5678"));
+    assert!(!vol.is_clean(), "VolumeDirty flag set");
     let stats = vol
         .recover_deleted(
             &source,

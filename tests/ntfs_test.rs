@@ -91,6 +91,27 @@ fn volume_name_attr(label: &str) -> Vec<u8> {
     attr
 }
 
+/// Build a resident `$VOLUME_INFORMATION` (0x70) attribute; `dirty` sets the
+/// volume-dirty flag (content offset 10, bit 0).
+fn volume_info_attr(dirty: bool) -> Vec<u8> {
+    let mut content = vec![0u8; 12];
+    content[8] = 3; // major version
+    content[9] = 1; // minor version
+    let flags: u16 = if dirty { 0x0001 } else { 0 };
+    content[10..12].copy_from_slice(&flags.to_le_bytes());
+    let mut attr = vec![0u8; 24];
+    attr[0..4].copy_from_slice(&0x70u32.to_le_bytes());
+    attr[8] = 0; // resident
+    attr[10..12].copy_from_slice(&24u16.to_le_bytes()); // name offset
+    attr[16..20].copy_from_slice(&(content.len() as u32).to_le_bytes());
+    attr[20..22].copy_from_slice(&24u16.to_le_bytes()); // content offset
+    attr.extend_from_slice(&content);
+    let mut attr = pad8(attr);
+    let len = attr.len() as u32;
+    attr[4..8].copy_from_slice(&len.to_le_bytes());
+    attr
+}
+
 /// Build a resident `$DATA` (0x80) attribute holding `content` inline.
 fn data_resident(content: &[u8]) -> Vec<u8> {
     let mut attr = vec![0u8; 24];
@@ -204,8 +225,11 @@ fn reads_the_volume_label() {
     let o = mft_byte(0);
     img[o..o + RECORD].copy_from_slice(&rec0);
 
-    // Record 3: $Volume with a $VOLUME_NAME attribute.
-    let rec3 = build_record(FLAG_IN_USE, &[volume_name_attr("MY NTFS DISK")]);
+    // Record 3: $Volume with a $VOLUME_NAME and a dirty $VOLUME_INFORMATION.
+    let rec3 = build_record(
+        FLAG_IN_USE,
+        &[volume_name_attr("MY NTFS DISK"), volume_info_attr(true)],
+    );
     let o = mft_byte(3);
     img[o..o + RECORD].copy_from_slice(&rec3);
 
@@ -214,10 +238,9 @@ fn reads_the_volume_label() {
     std::fs::write(&p, &img).unwrap();
     let src = Source::open(&p).unwrap();
 
-    assert_eq!(
-        ntfs::Volume::parse(&src, 0).unwrap().label(),
-        "MY NTFS DISK"
-    );
+    let vol = ntfs::Volume::parse(&src, 0).unwrap();
+    assert_eq!(vol.label(), "MY NTFS DISK");
+    assert_eq!(vol.is_clean(), Some(false), "dirty bit set");
     assert_eq!(
         recover::detect(&src).unwrap()[0].volume_label().as_deref(),
         Some("MY NTFS DISK")

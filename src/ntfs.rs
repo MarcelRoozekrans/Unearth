@@ -49,11 +49,15 @@ pub struct Volume {
     label: String,
     /// Volume serial number (8 bytes at boot-sector offset 0x48).
     serial: u64,
+    /// Whether the volume was cleanly unmounted (`$VOLUME_INFORMATION` dirty bit
+    /// clear); `None` when the attribute is absent.
+    clean: Option<bool>,
 }
 
 const ATTR_STANDARD_INFO: u32 = 0x10;
 const ATTR_FILE_NAME: u32 = 0x30;
 const ATTR_VOLUME_NAME: u32 = 0x60;
+const ATTR_VOLUME_INFORMATION: u32 = 0x70;
 const ATTR_DATA: u32 = 0x80;
 const ATTR_END: u32 = 0xFFFF_FFFF;
 /// MFT record of `$Volume`, which carries the volume label.
@@ -154,8 +158,10 @@ impl Volume {
             record_count,
             label: String::new(),
             serial,
+            clean: None,
         };
         vol.label = vol.read_volume_label(src).unwrap_or_default();
+        vol.clean = vol.read_dirty(src);
         Ok(vol)
     }
 
@@ -174,61 +180,44 @@ impl Volume {
         }
     }
 
+    /// Whether the volume was cleanly unmounted: the `$VOLUME_INFORMATION` flags
+    /// (MFT record 3) have the dirty bit clear. `None` when the attribute is
+    /// absent or unreadable.
+    pub fn is_clean(&self) -> Option<bool> {
+        self.clean
+    }
+
     /// Read the volume label from `$Volume`'s `$VOLUME_NAME` attribute (MFT
     /// record 3): a resident attribute whose content is the name in UTF-16LE.
     fn read_volume_label(&self, src: &Source) -> Option<String> {
         let rec = self.read_record(src, VOLUME_RECORD).ok()??;
-        if rec.len() < 24 || &rec[0..4] != b"FILE" {
+        let content = resident_attr_content(&rec, ATTR_VOLUME_NAME)?;
+        if content.len() < 2 {
             return None;
         }
-        let mut offset = u16::from_le_bytes([rec[20], rec[21]]) as usize;
-        while offset + 16 <= rec.len() {
-            let attr_type = u32::from_le_bytes([
-                rec[offset],
-                rec[offset + 1],
-                rec[offset + 2],
-                rec[offset + 3],
-            ]);
-            if attr_type == ATTR_END {
-                break;
-            }
-            let attr_len = u32::from_le_bytes([
-                rec[offset + 4],
-                rec[offset + 5],
-                rec[offset + 6],
-                rec[offset + 7],
-            ]) as usize;
-            if attr_len < 24 || offset + attr_len > rec.len() {
-                break;
-            }
-            // $VOLUME_NAME is resident; its content is the UTF-16LE label.
-            if attr_type == ATTR_VOLUME_NAME && rec[offset + 8] == 0 {
-                let content_len = u32::from_le_bytes([
-                    rec[offset + 16],
-                    rec[offset + 17],
-                    rec[offset + 18],
-                    rec[offset + 19],
-                ]) as usize;
-                let content_off = u16::from_le_bytes([rec[offset + 20], rec[offset + 21]]) as usize;
-                let start = offset + content_off;
-                let end = start.checked_add(content_len)?;
-                if end <= rec.len() && content_len >= 2 {
-                    let units: Vec<u16> = rec[start..end]
-                        .chunks_exact(2)
-                        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                        .collect();
-                    let name: String = char::decode_utf16(units)
-                        .map(|r| r.unwrap_or('\u{FFFD}'))
-                        .collect();
-                    if !name.is_empty() {
-                        return Some(name);
-                    }
-                }
-                return None;
-            }
-            offset += attr_len;
+        let units: Vec<u16> = content
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        let name: String = char::decode_utf16(units)
+            .map(|r| r.unwrap_or('\u{FFFD}'))
+            .collect();
+        if name.is_empty() {
+            None
+        } else {
+            Some(name)
         }
-        None
+    }
+
+    /// Read the volume dirty state from `$Volume`'s `$VOLUME_INFORMATION`
+    /// attribute: a u16 flags field at content offset 8, bit 0 (`0x0001`) is the
+    /// "dirty" flag. Returns whether the volume is clean (dirty bit clear).
+    fn read_dirty(&self, src: &Source) -> Option<bool> {
+        let rec = self.read_record(src, VOLUME_RECORD).ok()??;
+        let content = resident_attr_content(&rec, ATTR_VOLUME_INFORMATION)?;
+        // Content: 8 reserved bytes, major/minor version (1 each), then flags.
+        let flags = u16::from_le_bytes([*content.get(10)?, *content.get(11)?]);
+        Some(flags & 0x0001 == 0)
     }
 
     /// Read MFT record `index`, with fixups applied.
@@ -484,6 +473,50 @@ struct DataAttr {
 enum DataKind {
     Resident(Vec<u8>),
     NonResident(Runs),
+}
+
+/// Return the content of the first **resident** attribute of type `want` in a
+/// fixed-up FILE record `rec`, or `None` if there is no such resident attribute.
+fn resident_attr_content(rec: &[u8], want: u32) -> Option<&[u8]> {
+    if rec.len() < 24 || &rec[0..4] != b"FILE" {
+        return None;
+    }
+    let mut offset = u16::from_le_bytes([rec[20], rec[21]]) as usize;
+    while offset + 16 <= rec.len() {
+        let attr_type = u32::from_le_bytes([
+            rec[offset],
+            rec[offset + 1],
+            rec[offset + 2],
+            rec[offset + 3],
+        ]);
+        if attr_type == ATTR_END {
+            break;
+        }
+        let attr_len = u32::from_le_bytes([
+            rec[offset + 4],
+            rec[offset + 5],
+            rec[offset + 6],
+            rec[offset + 7],
+        ]) as usize;
+        if attr_len < 24 || offset + attr_len > rec.len() {
+            break;
+        }
+        // rec[offset + 8] == 0 marks a resident attribute.
+        if attr_type == want && rec[offset + 8] == 0 {
+            let content_len = u32::from_le_bytes([
+                rec[offset + 16],
+                rec[offset + 17],
+                rec[offset + 18],
+                rec[offset + 19],
+            ]) as usize;
+            let content_off = u16::from_le_bytes([rec[offset + 20], rec[offset + 21]]) as usize;
+            let start = offset + content_off;
+            let end = start.checked_add(content_len)?;
+            return rec.get(start..end);
+        }
+        offset += attr_len;
+    }
+    None
 }
 
 /// Parse the attributes of an MFT record we want to recover.

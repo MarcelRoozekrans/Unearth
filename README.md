@@ -301,6 +301,13 @@ hex digits for NTFS), exactly as `blkid` reports them. (This is the volume's own
 identifier, distinct from a GPT partition's PARTUUID reported in the partition
 table.)
 
+Each volume's **clean/dirty state** is reported when the filesystem records it —
+ext (`s_state`), exFAT (`VolumeFlags`), and NTFS (`$VOLUME_INFORMATION`). A
+volume that was not cleanly unmounted is flagged with a `state: dirty` line in
+`info` (clean volumes print nothing), and `--json` / the MCP `list_volumes` tool
+add a `clean` boolean (`null` when the filesystem has no such flag). A dirty
+volume may be inconsistent, so recovery from it is less reliable.
+
 Each volume's **free (unallocated) space** is also reported — read from the
 filesystem's allocation map for FAT, exFAT, ext2/3/4, NTFS, and HFS+/HFSX. The
 text view prints a `free:` line (bytes and the unallocated percentage) under the
