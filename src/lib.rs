@@ -69,6 +69,7 @@ pub mod ntfs;
 pub mod partition;
 pub mod recover;
 pub mod refs;
+pub mod reiserfs;
 pub mod signatures;
 pub mod source;
 pub mod swap;

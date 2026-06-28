@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **ReiserFS volumes are recognised** — the once-popular Linux journaling
+  filesystem (the SUSE default through the 2000s, now removed from the mainline
+  kernel) is now detected from its `ReIsEr2Fs` / `ReIsErFs` superblock, so
+  `info` / `list_volumes` report its size, label, and UUID instead of leaving it
+  unrecognised. Both on-disk layouts are handled — 3.6 (64 KiB in, with UUID and
+  label) and the older 3.5 (8 KiB in). Its tree layout is long obsolete, so it is
+  not recovered from metadata — use `scan` (carving).
 - **Old HFS (Mac OS Standard) volumes are recognised** — the original HFS
   filesystem (1985–1998, found on old Mac floppies, disks, and CDs) is now
   detected from its `BD` Master Directory Block, so `info` / `list_volumes`
