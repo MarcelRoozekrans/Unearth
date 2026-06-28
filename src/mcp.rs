@@ -600,6 +600,8 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                         ("uuid", v.volume_uuid().map_or(Json::Null, s)),
                         ("boot", v.boot_info().map_or(Json::Null, s)),
                         ("clean", v.is_clean().map_or(Json::Null, Json::Bool)),
+                        ("created_time", v.created_time().map_or(Json::Null, n)),
+                        ("written_time", v.written_time().map_or(Json::Null, n)),
                         (
                             "contained_volumes",
                             Json::Arr(v.contained_volumes().into_iter().map(s).collect()),

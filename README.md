@@ -309,6 +309,13 @@ superblock feature flags the way `blkid` does: ext2 has no journal, ext3 adds
 one, and ext4 carries an ext4-only feature such as extents or 64-bit. (`null`
 for filesystems with no such sub-version.)
 
+An **ext** volume's **creation** and **last-write** times are reported, read from
+the superblock's `s_mkfs_time` and `s_wtime` (the values `dumpe2fs` shows). The
+text view adds `created:` and `last written:` lines (ISO-8601 UTC) and `--json` /
+the MCP `list_volumes` tool add `created_time` / `written_time` fields (Unix
+seconds, `null` when unset), so a recovered volume can be dated and correlated
+with when it was made and last used.
+
 Each volume's **clean/dirty state** is reported when the filesystem records it —
 ext (`s_state`), exFAT (`VolumeFlags`), and NTFS (`$VOLUME_INFORMATION`). A
 volume that was not cleanly unmounted is flagged with a `state: dirty` line in
@@ -332,7 +339,7 @@ filesystems whose allocation map is not parsed.
 
 With `--json`, the detected layout is written to stdout as a single object
 (`source`, `source_bytes`, and a `volumes` array of
-`index`/`filesystem`/`offset`/`size`/`alloc_unit_bytes`/`free_bytes`/`deleted`/`label`/`contained_volumes`),
+`index`/`filesystem`/`offset`/`size`/`alloc_unit_bytes`/`free_bytes`/`deleted`/`label`/`created_time`/`written_time`/`contained_volumes`),
 so the tool's output can be consumed by scripts. `deleted` is `null` unless
 `--deleted` is also passed; `label` and `free_bytes` are `null` when the volume
 has none / cannot report it.

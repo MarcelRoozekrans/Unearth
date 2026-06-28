@@ -33,7 +33,9 @@ fn write_superblock(img: &mut [u8]) {
     img[sb + 0x20..sb + 0x24].copy_from_slice(&8192u32.to_le_bytes()); // blocks_per_group
     img[sb + 0x28..sb + 0x2C].copy_from_slice(&INODES_PER_GROUP.to_le_bytes()); // inodes_per_group
     img[sb + 0x38..sb + 0x3A].copy_from_slice(&0xEF53u16.to_le_bytes()); // magic
+    img[sb + 0x30..sb + 0x34].copy_from_slice(&1_700_000_000u32.to_le_bytes()); // s_wtime
     img[sb + 0x3A..sb + 0x3C].copy_from_slice(&0x0001u16.to_le_bytes()); // s_state: clean
+    img[sb + 0x108..sb + 0x10C].copy_from_slice(&1_600_000_000u32.to_le_bytes()); // s_mkfs_time
     img[sb + 0x58..sb + 0x5A].copy_from_slice(&(INODE_SIZE as u16).to_le_bytes()); // inode_size
     img[sb + 0x60..sb + 0x64].copy_from_slice(&0x0042u32.to_le_bytes()); // incompat: FILETYPE | EXTENTS
 }
@@ -199,6 +201,8 @@ fn recovers_deleted_ext4_files() {
     assert_eq!(volumes[0].fs_version(), Some("ext4"));
     // log_block_size 0 => 1 KiB allocation blocks.
     assert_eq!(volumes[0].alloc_unit(), Some(1024));
+    assert_eq!(volumes[0].created_time(), Some(1_600_000_000));
+    assert_eq!(volumes[0].written_time(), Some(1_700_000_000));
 
     let vol = ext4::Volume::parse(&source, 0).unwrap();
     assert!(vol.is_clean(), "s_state clean bit set");

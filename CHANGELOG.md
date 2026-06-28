@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **ext filesystem timestamps are reported** — `info` / `list_volumes` now show
+  an ext volume's creation time (`s_mkfs_time`) and last-write time (`s_wtime`),
+  the same values `dumpe2fs` reports, so a recovered volume can be dated. The
+  text view adds `created:` and `last written:` lines (ISO-8601 UTC) and `--json`
+  / the MCP `list_volumes` tool add `created_time` / `written_time` fields (Unix
+  seconds, `null` when unset).
 - **The allocation-unit size is reported** — `info` / `list_volumes` now report
   each volume's cluster size (FAT, exFAT, NTFS, ReFS) or block size (ext, HFS+,
   APFS, XFS, F2FS, Btrfs, ISO 9660) — the granularity the filesystem allocates
