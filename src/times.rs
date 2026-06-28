@@ -162,6 +162,40 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     (y + if m <= 2 { 1 } else { 0 }, m, d)
 }
 
+/// Parse an ISO 9660 "date and time" field — 16 ASCII digits
+/// `YYYYMMDDHHMMSScc` followed by a 1-byte signed GMT offset in 15-minute
+/// intervals — into Unix seconds (UTC). Returns `None` when the field is unset
+/// (all-zero or all-`'0'`) or malformed. The hundredths-of-a-second digits are
+/// ignored.
+pub fn iso9660_datetime(field: &[u8]) -> Option<u64> {
+    if field.len() < 17 {
+        return None;
+    }
+    // An unrecorded field is all binary zeros or all ASCII '0'.
+    if field[..16].iter().all(|&b| b == 0) || field[..16].iter().all(|&b| b == b'0') {
+        return None;
+    }
+    let num = |r: std::ops::Range<usize>| -> Option<i64> {
+        let s = std::str::from_utf8(&field[r]).ok()?;
+        s.parse::<i64>().ok()
+    };
+    let year = num(0..4)?;
+    let month = num(4..6)?;
+    let day = num(6..8)?;
+    let hour = num(8..10)?;
+    let min = num(10..12)?;
+    let sec = num(12..14)?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || min > 59 || sec > 60 {
+        return None;
+    }
+    let days = days_from_civil(year, month, day);
+    // The 17th byte is a signed offset from GMT in 15-minute units; subtract it
+    // to convert the recorded local time to UTC.
+    let tz_secs = (field[16] as i8) as i64 * 15 * 60;
+    let total = days * 86_400 + hour * 3600 + min * 60 + sec - tz_secs;
+    u64::try_from(total).ok()
+}
+
 /// Format a Unix timestamp (seconds since 1970-01-01 UTC) as an ISO-8601 UTC
 /// string, `YYYY-MM-DDTHH:MM:SSZ`.
 pub fn format_utc(secs: u64) -> String {
@@ -218,6 +252,21 @@ mod tests {
         let dt = UNIX_EPOCH + Duration::from_secs(18628 * 86400 + 12 * 3600 + 30 * 60 + 5);
         assert_eq!(parse_date("2021-01-01T12:30:05").unwrap(), dt);
         assert_eq!(parse_date("2021-01-01 12:30:05").unwrap(), dt);
+    }
+
+    #[test]
+    fn iso9660_datetime_parses_and_applies_tz() {
+        // 2021-01-01 12:00:00, GMT offset 0.
+        let mut f = *b"2021010112000000\0";
+        let base = 18628 * 86400 + 12 * 3600;
+        assert_eq!(iso9660_datetime(&f), Some(base as u64));
+        // GMT offset +8h = 32 fifteen-minute units, so UTC is 8h earlier.
+        f[16] = 32;
+        assert_eq!(iso9660_datetime(&f), Some((base - 8 * 3600) as u64));
+        // An unrecorded field (all '0' digits) is None.
+        assert_eq!(iso9660_datetime(b"0000000000000000\0"), None);
+        // Malformed (non-numeric) is None.
+        assert_eq!(iso9660_datetime(b"notadatevalue!!!\0"), None);
     }
 
     #[test]

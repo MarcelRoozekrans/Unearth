@@ -67,6 +67,10 @@ pub struct Volume {
     /// A description of the disc's El Torito boot record (e.g.
     /// `"El Torito (BIOS, UEFI)"`), or `None` when the disc is not bootable.
     boot: Option<String>,
+    /// Volume creation time from the PVD, Unix seconds; `None` when unset.
+    created: Option<u64>,
+    /// Volume modification time from the PVD, Unix seconds; `None` when unset.
+    written: Option<u64>,
 }
 
 /// Recognise an ISO 9660 volume at `offset` by finding its Primary Volume
@@ -89,7 +93,17 @@ pub fn detect(src: &Source, offset: u64) -> Option<Volume> {
             BOOT_RECORD if &d[7..7 + EL_TORITO_ID.len()] == EL_TORITO_ID => {
                 boot = Some(read_el_torito(src, offset, &d));
             }
-            PRIMARY => primary = Some(parse_primary(offset, src, &d)),
+            PRIMARY => {
+                let mut v = parse_primary(offset, src, &d);
+                // Volume creation (offset 813) and modification (830) date/time
+                // fields are 17 bytes each, beyond the 256 bytes read above.
+                let mut dates = [0u8; 34];
+                if src.read_at(pos + 813, &mut dates).unwrap_or(0) >= 34 {
+                    v.created = crate::times::iso9660_datetime(&dates[0..17]);
+                    v.written = crate::times::iso9660_datetime(&dates[17..34]);
+                }
+                primary = Some(v);
+            }
             SUPPLEMENTARY if is_joliet(&d) => joliet_root = Some(root_record(&d)),
             TERMINATOR => break,
             _ => {} // non-Joliet supplementary / non-El-Torito boot: keep scanning
@@ -151,6 +165,8 @@ fn parse_primary(offset: u64, src: &Source, pvd: &[u8]) -> Volume {
         root_len,
         joliet: false,
         boot: None,
+        created: None,
+        written: None,
     }
 }
 
@@ -230,6 +246,16 @@ impl Volume {
     /// The logical block size in bytes (from the PVD, normally 2048).
     pub fn block_size(&self) -> u64 {
         self.block_size
+    }
+
+    /// Volume creation time (PVD) as Unix seconds, or `None` when unset.
+    pub fn created_time(&self) -> Option<u64> {
+        self.created
+    }
+
+    /// Volume modification time (PVD) as Unix seconds, or `None` when unset.
+    pub fn written_time(&self) -> Option<u64> {
+        self.written
     }
 
     /// Filesystem label.
