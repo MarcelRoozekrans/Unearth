@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **Microsoft Program Database (`.pdb`) carving** — the debug-symbol file every
+  MSVC build produces is carved from its MSF 7.0 superblock, whose block size
+  (offset 0x20) and block count (offset 0x28) give the exact size
+  (`block_size × num_blocks`). The 32-byte magic and a power-of-two block-size
+  check reject a coincidental match. `identify` and `triage` recognise `.pdb` by
+  content too.
 - **Partition attribute flags are reported** — `info` / `list_volumes` now report
   each partition's notable flags: for GPT the attribute bits (`required`,
   `legacy-bios-bootable`, `read-only`, `hidden`, `no-automount`, `no-block-io`)

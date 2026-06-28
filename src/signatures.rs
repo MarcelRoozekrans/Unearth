@@ -334,6 +334,13 @@ pub enum Extent {
     /// stream is truncated. Several consecutive valid packets are required so the
     /// start code cannot trigger a false carve.
     Mpegps,
+    /// Microsoft Program Database (`.pdb`) — the debug-symbol file every MSVC
+    /// build produces. The MSF 7.0 superblock records the block size (a
+    /// little-endian u32 at offset 0x20) and the total block count (offset 0x28),
+    /// so the file ends at `block_size × num_blocks`. The long 32-byte magic makes
+    /// a false match implausible; the block size is checked to be a sane power of
+    /// two.
+    Pdb,
 }
 
 /// A recoverable file type.
@@ -895,6 +902,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Mpegps,
         max_size: 16 * GB,
+    },
+    Signature {
+        name: "Microsoft Program Database (PDB)",
+        ext: "pdb",
+        magic: b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Pdb,
+        max_size: 4 * GB,
     },
     Signature {
         name: "Android Dalvik executable (DEX)",
@@ -1554,7 +1570,7 @@ pub fn category_of(ext: &str) -> Category {
         "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "cpio" | "zst" | "lz4" | "jar" => {
             Category::Archive
         }
-        "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" => Category::Executable,
+        "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" => Category::System,
         _ => Category::Other,
