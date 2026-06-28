@@ -112,6 +112,10 @@ pub struct Volume {
     created: Option<u64>,
     /// Last write time (`s_wtime`), Unix seconds; `None` when unset.
     written: Option<u64>,
+    /// Total inode count (`s_inodes_count`).
+    inodes_count: u64,
+    /// Free inode count (`s_free_inodes_count`).
+    free_inodes: u64,
 }
 
 /// Classify an ext volume as `"ext2"`, `"ext3"`, or `"ext4"` from its feature
@@ -270,6 +274,9 @@ impl Volume {
         let created = non_zero(u32::from_le_bytes([
             sb[0x108], sb[0x109], sb[0x10A], sb[0x10B],
         ]));
+        // s_free_inodes_count: u32 at 0x10. With s_inodes_count this gives how
+        // many inodes (files + directories) the volume holds.
+        let free_inodes = u32::from_le_bytes([sb[0x10], sb[0x11], sb[0x12], sb[0x13]]) as u64;
 
         Ok(Volume {
             offset,
@@ -290,7 +297,18 @@ impl Volume {
             version,
             created,
             written,
+            inodes_count: inodes_count as u64,
+            free_inodes,
         })
+    }
+
+    /// Inode usage as `(used, total)` — roughly how many files and directories
+    /// the volume holds out of its inode table capacity.
+    pub fn inode_usage(&self) -> (u64, u64) {
+        (
+            self.inodes_count.saturating_sub(self.free_inodes),
+            self.inodes_count,
+        )
     }
 
     /// The detected ext variant: `"ext2"`, `"ext3"`, or `"ext4"`.

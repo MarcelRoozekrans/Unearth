@@ -316,6 +316,18 @@ impl Volume {
         }
     }
 
+    /// Inode usage as `(used, total)` — roughly how many files and directories
+    /// the volume holds — when the backend tracks it (ext's
+    /// `s_inodes_count`/`s_free_inodes_count`, XFS's `sb_icount`/`sb_ifree`).
+    /// `None` for filesystems with no fixed inode accounting.
+    pub fn inode_usage(&self) -> Option<(u64, u64)> {
+        match self {
+            Volume::Ext(v) => Some(v.inode_usage()),
+            Volume::Xfs(v) => Some(v.inode_usage()),
+            _ => None,
+        }
+    }
+
     /// The volume's allocation-unit size in bytes — the cluster size (FAT,
     /// exFAT, NTFS, ReFS) or block size (ext, HFS+, APFS, XFS, F2FS, Btrfs, ISO
     /// 9660) the filesystem allocates space in. Useful for recovery: carving

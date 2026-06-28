@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **Inode (file) usage is reported** — `info` / `list_volumes` now show roughly
+  how many files and directories a volume holds, for **ext**
+  (`s_inodes_count` / `s_free_inodes_count`) and **XFS** (`sb_icount` /
+  `sb_ifree`), so you can gauge the scale of data on a recovered volume. The text
+  view adds an `inodes: <used> used / <total>` line and `--json` / the MCP
+  `list_volumes` tool add `inodes_used` / `inodes_total` fields (`null` for
+  filesystems without fixed inode accounting).
 - **The ext last-mounted path is reported** — `info` / `list_volumes` now show
   the directory an ext volume was last mounted on (`s_last_mounted`, e.g. `/` or
   `/home` — the `Last mounted on` value `dumpe2fs` reports), which helps identify
