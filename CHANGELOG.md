@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **QuickTime / M4A / M4V get their own extensions when carved** — ISO base-media
+  files are now carved to a brand-specific extension instead of always `.mp4`:
+  the `qt  ` major brand (iPhone/Mac video) → `.mov`, `M4A ` → `.m4a`, and
+  `M4V ` → `.m4v`. `identify` and `triage` recognise them by content too. (Other
+  brands still carve as `.mp4`.)
 - **HFS-wrapped HFS+ volumes are detected** — an HFS+ volume embedded inside an
   old HFS `BD` wrapper (the layout on old Mac media and hybrid CDs) is now
   followed to the embedded volume, so `info` / `undelete` / `scan` work on it
