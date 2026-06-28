@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **More GPT partition types are named** — `info` / `list_volumes` now give
+  friendly names to many more GPT type GUIDs (Linux root for x86-64/ARM64,
+  `/srv`, extended boot, LUKS/dm-crypt, reserved; Windows LDM data/metadata;
+  ChromeOS kernel/root; Apple UFS/RAID; FreeBSD data/swap/UFS/boot) instead of
+  showing the raw GUID.
 - **Apple Partition Map (APM) is supported** — disks partitioned with the Apple
   Partition Map (PowerPC-era Macs, older Mac disks, hybrid CDs) are now
   recognised: `info` / `list_volumes` report the `apm` scheme and each entry's
