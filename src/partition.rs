@@ -39,6 +39,36 @@ pub struct Partition {
     pub start: u64,
     /// Size of the partition in bytes.
     pub size: u64,
+    /// Notable attribute flags: GPT attribute bits (`required`,
+    /// `legacy-bios-bootable`, `hidden`, `read-only`, …) or, for MBR, `active`
+    /// when the boot flag is set. Empty when none apply.
+    pub attributes: Vec<&'static str>,
+}
+
+/// Decode the GPT partition-entry attribute bitmask (a u64 at entry offset 48)
+/// into human-readable flag names. The low bits are generic; bits 60–63 are the
+/// type-specific flags used by Microsoft Basic Data partitions.
+fn gpt_attributes(attr: u64) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if attr & (1 << 0) != 0 {
+        out.push("required");
+    }
+    if attr & (1 << 1) != 0 {
+        out.push("no-block-io");
+    }
+    if attr & (1 << 2) != 0 {
+        out.push("legacy-bios-bootable");
+    }
+    if attr & (1 << 60) != 0 {
+        out.push("read-only");
+    }
+    if attr & (1 << 62) != 0 {
+        out.push("hidden");
+    }
+    if attr & (1 << 63) != 0 {
+        out.push("no-automount");
+    }
+    out
 }
 
 /// A parsed partition table.
@@ -142,6 +172,7 @@ fn parse_gpt_at(
             uuid: non_zero_guid(&entry[16..32]),
             start: first * sector_size,
             size,
+            attributes: gpt_attributes(u64::from_le_bytes(entry[48..56].try_into().unwrap())),
         });
     }
     Some((partitions, disk_guid))
@@ -176,6 +207,12 @@ fn read_mbr(src: &Source) -> Option<Table> {
             uuid: None,
             start: start_lba * 512,
             size: sectors * 512,
+            // The entry's status byte: 0x80 marks the active (bootable) partition.
+            attributes: if sec[e] == 0x80 {
+                vec!["active"]
+            } else {
+                vec![]
+            },
         });
         // An extended partition holds a linked list of logical partitions in
         // Extended Boot Records; walk that chain so they show up too.
@@ -230,6 +267,11 @@ fn walk_ebr_chain(src: &Source, ext_base_lba: u64, out: &mut Vec<Partition>) {
                 uuid: None,
                 start: ebr_lba.saturating_add(rel) * 512,
                 size: sectors * 512,
+                attributes: if sec[446] == 0x80 {
+                    vec!["active"]
+                } else {
+                    vec![]
+                },
             });
         }
         // Entry 1: pointer to the next EBR, its start relative to the extended
@@ -335,8 +377,9 @@ mod tests {
         let mut disk = vec![0u8; 4096];
         disk[510] = 0x55;
         disk[511] = 0xAA;
-        // Partition 0: Linux (0x83) at LBA 2048, 100 sectors.
+        // Partition 0: Linux (0x83) at LBA 2048, 100 sectors, marked active.
         let e = 446;
+        disk[e] = 0x80; // boot/active flag
         disk[e + 4] = 0x83;
         disk[e + 8..e + 12].copy_from_slice(&2048u32.to_le_bytes());
         disk[e + 12..e + 16].copy_from_slice(&100u32.to_le_bytes());
@@ -353,7 +396,9 @@ mod tests {
         assert_eq!(table.partitions[0].kind, "Linux");
         assert_eq!(table.partitions[0].start, 2048 * 512);
         assert_eq!(table.partitions[0].size, 100 * 512);
+        assert_eq!(table.partitions[0].attributes, vec!["active"]);
         assert_eq!(table.partitions[1].kind, "NTFS / exFAT");
+        assert!(table.partitions[1].attributes.is_empty());
     }
 
     #[test]
@@ -436,6 +481,8 @@ mod tests {
         disk[e + 16..e + 32].copy_from_slice(&[0xCD; 16]);
         disk[e + 32..e + 40].copy_from_slice(&34u64.to_le_bytes());
         disk[e + 40..e + 48].copy_from_slice(&2081u64.to_le_bytes());
+        // Attributes (offset 48): Required (bit 0) | Legacy BIOS Bootable (bit 2).
+        disk[e + 48..e + 56].copy_from_slice(&0b101u64.to_le_bytes());
         for (i, u) in "EFI".encode_utf16().enumerate() {
             disk[e + 56 + i * 2..e + 58 + i * 2].copy_from_slice(&u.to_le_bytes());
         }
@@ -454,6 +501,10 @@ mod tests {
         assert_eq!(table.partitions[0].name.as_deref(), Some("EFI"));
         assert_eq!(table.partitions[0].uuid.as_deref().unwrap().len(), 36);
         assert_eq!(table.partitions[0].start, 34 * 512);
+        assert_eq!(
+            table.partitions[0].attributes,
+            vec!["required", "legacy-bios-bootable"]
+        );
     }
 
     #[test]

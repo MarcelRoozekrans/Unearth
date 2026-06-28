@@ -633,6 +633,10 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                         ("uuid", p.uuid.clone().map_or(Json::Null, s)),
                         ("start", n(p.start)),
                         ("size", n(p.size)),
+                        (
+                            "attributes",
+                            Json::Arr(p.attributes.iter().map(|a| s(a.to_string())).collect()),
+                        ),
                     ])
                 })
                 .collect();
