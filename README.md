@@ -398,8 +398,8 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 `--scan` reads the **whole source** and probes for filesystem signatures at
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
-(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, HFS+, HFS,
-APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, and LUKS/BitLocker):
+(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, HFS+,
+HFS, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, and LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -872,6 +872,11 @@ Common to both strategies:
   cluster-coordinated and a member device is meaningful only as part of the
   cluster, so it is not recovered from metadata — use `scan` (carving). The
   superblock records no total size, so the source span is reported.
+- **OCFS2** (the Oracle Cluster File System 2 — also a shared-disk Linux cluster
+  filesystem) is *recognised* and its size, **label**, and **UUID** are reported
+  by `info`/`list_volumes` (from the `OCFSV2` superblock inode at block #2). Like
+  GFS2 its metadata is cluster-managed, so it is not recovered from metadata —
+  use `scan` (carving).
 - **LVM2** (the Linux Logical Volume Manager) physical volumes are *recognised*
   from their `LABELONE` / `LVM2 001` on-disk label, and the PV's size is reported
   by `info`/`list_volumes`. The logical volumes inside are not mapped, so recover
