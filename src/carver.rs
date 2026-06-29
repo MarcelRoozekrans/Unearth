@@ -565,6 +565,7 @@ fn file_length(
         Extent::Tar => Ok(tar_length(source, file_start, limit)?),
         Extent::Cpio => Ok(cpio_length(source, file_start, limit)?),
         Extent::Squashfs => Ok(squashfs_length(source, file_start, limit)?),
+        Extent::Iso9660 => Ok(iso9660_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3414,6 +3415,47 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// ISO 9660 disc-image length. The primary volume descriptor (PVD) lives at
+/// byte offset 0x8000 (logical sector 16): a type byte (1), the `CD001`
+/// standard identifier, and a version byte (1). It records the volume space
+/// size as a both-endian u32 logical-block count at offset 80 and the logical
+/// block size as a both-endian u16 at offset 128 (almost always 2048). The
+/// image length is their product. The little-endian and big-endian halves of
+/// each both-endian field must agree, and type/version/block-size are
+/// range-checked, to reject a coincidental `CD001` match (e.g. inside an
+/// SVD or terminator descriptor).
+fn iso9660_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    // The PVD begins 0x8000 bytes into the image.
+    let pvd_off = file_start.saturating_add(0x8000);
+    let mut pvd = [0u8; 132];
+    if source.read_at(pvd_off, &mut pvd)? < 132 {
+        return Ok(None);
+    }
+    // Descriptor type 1 (primary), identifier "CD001", version 1.
+    if pvd[0] != 1 || &pvd[1..6] != b"CD001" || pvd[6] != 1 {
+        return Ok(None);
+    }
+    // Volume space size: both-endian u32 (LE at 80, BE at 84) — halves must agree.
+    let space_le = u32::from_le_bytes(pvd[80..84].try_into().unwrap());
+    let space_be = u32::from_be_bytes(pvd[84..88].try_into().unwrap());
+    if space_le == 0 || space_le != space_be {
+        return Ok(None);
+    }
+    // Logical block size: both-endian u16 (LE at 128, BE at 130) — halves must
+    // agree and be a sane power-of-two sector size.
+    let bs_le = u16::from_le_bytes(pvd[128..130].try_into().unwrap());
+    let bs_be = u16::from_be_bytes(pvd[130..132].try_into().unwrap());
+    if bs_le != bs_be || !bs_le.is_power_of_two() || !(512..=8192).contains(&bs_le) {
+        return Ok(None);
+    }
+    let size = (space_le as u64).saturating_mul(bs_le as u64);
+    // Must at least span the system area plus this descriptor and fit the region.
+    if size < 0x8000 + 132 || file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
+}
+
 /// Parse an 8-character ASCII hex field from a cpio header.
 fn parse_cpio_hex(field: &[u8]) -> Option<u64> {
     u64::from_str_radix(std::str::from_utf8(field).ok()?, 16).ok()
@@ -4468,5 +4510,47 @@ mod tests {
         let bytes = android_sparse(&[8]);
         let (_t, src) = source_of(&bytes);
         assert_eq!(android_sparse_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a minimal ISO 9660 image of `blocks` × `block_size` bytes with a
+    /// primary volume descriptor at offset 0x8000.
+    fn iso9660_image(blocks: u32, block_size: u16) -> Vec<u8> {
+        let total = blocks as usize * block_size as usize;
+        let mut img = vec![0u8; total.max(0x8000 + 132)];
+        let pvd = 0x8000;
+        img[pvd] = 1; // descriptor type: primary
+        img[pvd + 1..pvd + 6].copy_from_slice(b"CD001");
+        img[pvd + 6] = 1; // version
+        img[pvd + 80..pvd + 84].copy_from_slice(&blocks.to_le_bytes());
+        img[pvd + 84..pvd + 88].copy_from_slice(&blocks.to_be_bytes());
+        img[pvd + 128..pvd + 130].copy_from_slice(&block_size.to_le_bytes());
+        img[pvd + 130..pvd + 132].copy_from_slice(&block_size.to_be_bytes());
+        img
+    }
+
+    #[test]
+    fn iso9660_length_multiplies_blocks_by_block_size() {
+        // 24 blocks × 2048 bytes = 48 KiB.
+        let img = iso9660_image(24, 2048);
+        let (_t, src) = source_of(&img);
+        assert_eq!(iso9660_length(&src, 0, src.size).unwrap(), Some(24 * 2048));
+    }
+
+    #[test]
+    fn iso9660_length_rejects_bad_descriptor_and_mismatch() {
+        // No PVD at all.
+        let (_t, src) = source_of(&vec![0u8; 0x8000 + 200]);
+        assert_eq!(iso9660_length(&src, 0, src.size).unwrap(), None);
+
+        // Disagreeing both-endian volume-space halves are rejected.
+        let mut img = iso9660_image(24, 2048);
+        img[0x8000 + 84..0x8000 + 88].copy_from_slice(&99u32.to_be_bytes());
+        let (_t, src) = source_of(&img);
+        assert_eq!(iso9660_length(&src, 0, src.size).unwrap(), None);
+
+        // A non-power-of-two block size is rejected.
+        let img = iso9660_image(24, 2000);
+        let (_t, src) = source_of(&img);
+        assert_eq!(iso9660_length(&src, 0, src.size).unwrap(), None);
     }
 }

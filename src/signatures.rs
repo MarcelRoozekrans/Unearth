@@ -77,6 +77,8 @@
 //! * [`Extent::Cpio`] — `cpio` archive (newc): walk the entry chain to the
 //!   `TRAILER!!!` entry.
 //! * [`Extent::Squashfs`] — SquashFS image: `bytes_used` from the superblock.
+//! * [`Extent::Iso9660`] — ISO 9660 disc image: volume space size × logical
+//!   block size from the primary volume descriptor.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -372,6 +374,15 @@ pub enum Extent {
     /// the block-size/`block_log` consistency are checked to reject a coincidental
     /// magic.
     Squashfs,
+    /// ISO 9660 disc image (`.iso`) — the standard CD/DVD filesystem, also used
+    /// for distro installers and optical-media backups. The primary volume
+    /// descriptor sits at logical sector 16 (byte offset 0x8000) and is keyed by
+    /// the `CD001` standard identifier. It records the volume space size (a
+    /// both-endian u32 logical-block count at offset 80) and the logical block
+    /// size (a both-endian u16 at offset 128, normally 2048); their product is
+    /// the exact image length. The descriptor type (1) and version (1) are
+    /// checked to reject a coincidental magic.
+    Iso9660,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1513,6 +1524,19 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Squashfs,
         max_size: 16 * GB,
     },
+    Signature {
+        // ISO 9660 disc image: the "CD001" standard identifier appears at
+        // offset 1 of the primary volume descriptor, which lives at byte
+        // offset 0x8000 (logical sector 16). magic_offset 0x8001 rewinds to the
+        // true file start (including the 32 KiB system area).
+        name: "ISO 9660 disc image",
+        ext: "iso",
+        magic: b"CD001",
+        magic_offset: 0x8001,
+        secondary: None,
+        extent: Extent::Iso9660,
+        max_size: 16 * GB,
+    },
 ];
 
 /// Look up signatures relevant to a single source byte, keyed by the first
@@ -1775,7 +1799,9 @@ pub fn category_of(ext: &str) -> Category {
         }
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" => Category::Font,
-        "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" => Category::System,
+        "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" => {
+            Category::System
+        }
         _ => Category::Other,
     }
 }
