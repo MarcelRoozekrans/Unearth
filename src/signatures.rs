@@ -64,6 +64,7 @@
 //! * [`Extent::Au`] — Sun/NeXT `.au` audio: data offset plus data size in header.
 //! * [`Extent::Genesis`] — Sega Mega Drive / Genesis ROM: end address in header.
 //! * [`Extent::Voc`] — Creative Voice audio: walk the block chain to the end.
+//! * [`Extent::Amr`] — AMR audio: walk fixed-size speech frames to the end.
 //! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
 //! * [`Extent::Wim`] — Windows Imaging (WIM): furthest resource-table extent.
 //! * [`Extent::Swf`] — uncompressed Flash movie (`FWS`): `FileLength` at offset 4.
@@ -277,6 +278,12 @@ pub enum Extent {
     /// terminates the file, so the chain is walked to the terminator. The
     /// 20-byte ASCII magic makes a false match effectively impossible.
     Voc,
+    /// AMR (Adaptive Multi-Rate) narrowband audio — mobile-phone voice recordings
+    /// — identified by the `#!AMR\n` magic. The stream is a run of speech frames,
+    /// each a one-byte table-of-contents octet whose frame-type bits select a
+    /// fixed frame size; the frames are walked to the first invalid octet or the
+    /// end. The 6-byte magic makes a false anchor unlikely.
+    Amr,
     /// MP3 anchored directly on an MPEG (Layer III) frame sync, for the many
     /// MP3s that carry only an ID3v1 trailer or no tag at all (the [`Extent::Mp3`]
     /// anchor needs an ID3v2 tag). The frame chain is walked like [`Extent::Mp3`];
@@ -1135,6 +1142,15 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Voc,
         max_size: 2 * GB,
     },
+    Signature {
+        name: "AMR audio",
+        ext: "amr",
+        magic: b"#!AMR\n",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Amr,
+        max_size: 256 * MB,
+    },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.
     Signature {
@@ -1711,7 +1727,7 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" => Category::Image,
-        "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" => {
+        "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr" => {
             Category::Audio
         }
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
