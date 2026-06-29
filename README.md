@@ -398,8 +398,8 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 `--scan` reads the **whole source** and probes for filesystem signatures at
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
-(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, JFS, NILFS2, HFS+, HFS, APFS,
-Btrfs, LVM2, Linux MD/RAID, Linux swap, and LUKS/BitLocker):
+(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, HFS+, HFS,
+APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, and LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -865,6 +865,13 @@ Common to both strategies:
   superblock 1 KiB in, magic `0x3434`). Like the other copy-on-write/log-structured
   filesystems here, it leaves no stale metadata to scavenge, so it is not recovered
   from metadata — use `scan` (carving).
+- **GFS2** (Red Hat's Global File System 2 — a shared-disk cluster filesystem,
+  and the original **GFS**) is *recognised* and its **lock table** (e.g.
+  `cluster:fs`) and **UUID** are reported by `info`/`list_volumes` (from the
+  superblock 64 KiB in, big-endian magic `0x01161970`). Its metadata is
+  cluster-coordinated and a member device is meaningful only as part of the
+  cluster, so it is not recovered from metadata — use `scan` (carving). The
+  superblock records no total size, so the source span is reported.
 - **LVM2** (the Linux Logical Volume Manager) physical volumes are *recognised*
   from their `LABELONE` / `LVM2 001` on-disk label, and the PV's size is reported
   by `info`/`list_volumes`. The logical volumes inside are not mapped, so recover
