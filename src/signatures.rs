@@ -61,6 +61,7 @@
 //! * [`Extent::Nes`] — iNES / NES 2.0 ROM: size from the PRG/CHR bank counts.
 //! * [`Extent::Gameboy`] — Game Boy / Color ROM: size from the header size byte.
 //! * [`Extent::Wad`] — Doom WAD: end from the lump count and directory offset.
+//! * [`Extent::Au`] — Sun/NeXT `.au` audio: data offset plus data size in header.
 //! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
 //! * [`Extent::Wim`] — Windows Imaging (WIM): furthest resource-table extent.
 //! * [`Extent::Swf`] — uncompressed Flash movie (`FWS`): `FileLength` at offset 4.
@@ -254,6 +255,12 @@ pub enum Extent {
     /// (each directory entry is 16 bytes). The lump count and directory offset
     /// are range-checked to reject a coincidental `IWAD`/`PWAD` match.
     Wad,
+    /// Sun/NeXT `.au` (`.snd`) audio: the big-endian header records the byte
+    /// offset of the audio data and its length, so the file ends at
+    /// `data_offset + data_size`. A data size of `0xFFFFFFFF` means the length is
+    /// unknown (streamed), so those are not carved. The data offset and encoding
+    /// code are range-checked to reject a coincidental `.snd` match.
+    Au,
     /// MP3 anchored directly on an MPEG (Layer III) frame sync, for the many
     /// MP3s that carry only an ID3v1 trailer or no tag at all (the [`Extent::Mp3`]
     /// anchor needs an ID3v2 tag). The frame chain is walked like [`Extent::Mp3`];
@@ -1084,6 +1091,15 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Wad,
         max_size: 2 * GB,
     },
+    Signature {
+        name: "Sun/NeXT audio",
+        ext: "au",
+        magic: b".snd",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Au,
+        max_size: 2 * GB,
+    },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.
     Signature {
@@ -1660,7 +1676,7 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" => Category::Image,
-        "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" => Category::Audio,
+        "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
             Category::Video
         }
