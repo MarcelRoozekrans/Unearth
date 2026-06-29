@@ -399,7 +399,8 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
 (FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, Minix,
-HFS+, HFS, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, and LUKS/BitLocker):
+bcachefs, HFS+, HFS, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, and
+LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -883,6 +884,13 @@ Common to both strategies:
   (from the superblock in the second 1 KiB block). Minix has no on-disk label or
   UUID, and the format is long superseded, so it is not recovered from metadata —
   use `scan` (carving).
+- **bcachefs** (the modern copy-on-write Linux filesystem merged into the kernel
+  in 6.7, with built-in multi-device, tiering, and checksumming) is *recognised*
+  and its **label** and **UUID** are reported by `info`/`list_volumes` (from the
+  superblock 4 KiB in, identified by a 16-byte magic). Like the other
+  copy-on-write filesystems here it leaves no stale metadata to scavenge, so it is
+  not recovered from metadata — use `scan` (carving). Its total size spans member
+  devices rather than a single superblock field, so the source span is reported.
 - **LVM2** (the Linux Logical Volume Manager) physical volumes are *recognised*
   from their `LABELONE` / `LVM2 001` on-disk label, and the PV's size is reported
   by `info`/`list_volumes`. The logical volumes inside are not mapped, so recover

@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **bcachefs volumes are recognised** — the modern copy-on-write Linux filesystem
+  (merged into the mainline kernel in 6.7) is now detected from its superblock's
+  16-byte magic, so `info` / `list_volumes` report its label and UUID instead of
+  leaving it unrecognised. Like the other copy-on-write filesystems it leaves no
+  stale metadata to scavenge, so it is not recovered from metadata — use `scan`
+  (carving).
 - **Minix volumes are recognised** — the filesystem the earliest Linux ran on
   (still found on boot floppies and small/embedded media) is now detected from
   its superblock, so `info` / `list_volumes` report its on-disk version (v1/v2/v3)

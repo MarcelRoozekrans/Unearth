@@ -46,6 +46,7 @@
 //! ```
 
 pub mod apfs;
+pub mod bcachefs;
 pub mod btrfs;
 pub mod carver;
 pub mod encrypted;
