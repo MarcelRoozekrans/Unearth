@@ -550,6 +550,7 @@ fn file_length(
         Extent::Wad => Ok(wad_length(source, file_start, limit)?),
         Extent::Au => Ok(au_length(source, file_start, limit)?),
         Extent::Genesis => Ok(genesis_length(source, file_start, limit)?),
+        Extent::Voc => Ok(voc_length(source, file_start, limit)?),
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
         Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
         Extent::Zip => Ok(zip_length(source, file_start, limit)?),
@@ -3767,6 +3768,41 @@ fn genesis_length(source: &Source, file_start: u64, limit: u64) -> Result<Option
     Ok(Some(total))
 }
 
+/// Length of a Creative Voice File. The 20-byte magic is followed by a header
+/// whose size is recorded at offset 0x14 (little-endian u16); from there the
+/// audio is a chain of data blocks — a 1-byte type, then for a non-zero type a
+/// 3-byte little-endian length and that many payload bytes. A type-0 block (one
+/// byte) terminates the file, so the chain is walked to the terminator.
+fn voc_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut hdr = [0u8; 22];
+    if source.read_at(file_start, &mut hdr)? < 22 || &hdr[0..20] != b"Creative Voice File\x1a" {
+        return Ok(None);
+    }
+    let header_size = u16::from_le_bytes(hdr[0x14..0x16].try_into().unwrap()) as u64;
+    // The header is at least the 26-byte v1.10 header; reject an implausible one.
+    if !(0x14..=0x100).contains(&header_size) {
+        return Ok(None);
+    }
+    let mut pos = file_start + header_size;
+    // Walk the block chain; the cap is a runaway guard, not a real limit.
+    for _ in 0..1_000_000 {
+        if pos >= limit {
+            return Ok(None); // ran off the end without a terminator
+        }
+        let mut blk = [0u8; 4];
+        if source.read_at(pos, &mut blk)? < 1 {
+            return Ok(None);
+        }
+        if blk[0] == 0 {
+            // Terminator block: one byte, and the file ends after it.
+            return Ok(Some(pos + 1 - file_start));
+        }
+        let len = u32::from_le_bytes([blk[1], blk[2], blk[3], 0]) as u64;
+        pos = pos.saturating_add(4 + len);
+    }
+    Ok(None)
+}
+
 /// Search forward from `file_start` for `marker`, returning the file length
 /// (marker end + `trailing`, clamped to `limit`).
 fn find_footer(
@@ -4189,5 +4225,42 @@ mod tests {
         // A non-SEGA header is rejected.
         let (_t, src) = source_of(&vec![0u8; 512 * 1024]);
         assert_eq!(genesis_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a `.voc` file: 26-byte header, one data block, then a terminator.
+    fn voc(block_len: u32) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"Creative Voice File\x1a");
+        v.extend_from_slice(&0x1Au16.to_le_bytes()); // header size (offset 0x14)
+        v.extend_from_slice(&0x010Au16.to_le_bytes()); // version 1.10
+        v.extend_from_slice(&0x1129u16.to_le_bytes()); // version check
+                                                       // Data block: type 1, 3-byte length, payload.
+        v.push(1);
+        let l = block_len.to_le_bytes();
+        v.extend_from_slice(&l[0..3]);
+        v.extend(std::iter::repeat(0u8).take(block_len as usize));
+        // Terminator block.
+        v.push(0);
+        v
+    }
+
+    #[test]
+    fn voc_length_walks_the_block_chain() {
+        let bytes = voc(10);
+        let expected = bytes.len() as u64; // header + (4 + 10) + 1 terminator
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(voc_length(&src, 0, src.size).unwrap(), Some(expected));
+    }
+
+    #[test]
+    fn voc_length_rejects_non_voc_and_missing_terminator() {
+        let (_t, src) = source_of(&vec![0u8; 4096]);
+        assert_eq!(voc_length(&src, 0, src.size).unwrap(), None);
+
+        // A block whose length runs past the end with no terminator is rejected.
+        let mut bytes = voc(10);
+        bytes.pop(); // drop the terminator
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(voc_length(&src, 0, src.size).unwrap(), None);
     }
 }

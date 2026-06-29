@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Creative Voice (`.voc`) audio is carved** — `scan` now recovers Sound
+  Blaster / DOS-era `.voc` audio files, walking the data-block chain from the
+  header to the terminator block to find the exact end. The 20-byte ASCII magic
+  makes a false match effectively impossible.
 - **Sega Mega Drive / Genesis ROMs are carved** — `scan` now recovers `.md` ROM
   images, anchored on the `SEGA` cartridge-header signature at 0x100 with the
   exact length taken from the ROM end address in the header. The start address

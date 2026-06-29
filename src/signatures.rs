@@ -63,6 +63,7 @@
 //! * [`Extent::Wad`] — Doom WAD: end from the lump count and directory offset.
 //! * [`Extent::Au`] — Sun/NeXT `.au` audio: data offset plus data size in header.
 //! * [`Extent::Genesis`] — Sega Mega Drive / Genesis ROM: end address in header.
+//! * [`Extent::Voc`] — Creative Voice audio: walk the block chain to the end.
 //! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
 //! * [`Extent::Wim`] — Windows Imaging (WIM): furthest resource-table extent.
 //! * [`Extent::Swf`] — uncompressed Flash movie (`FWS`): `FileLength` at offset 4.
@@ -270,6 +271,12 @@ pub enum Extent {
     /// the plain (non-interleaved) ROM layout; the interleaved `.smd` format
     /// carries a 512-byte header instead and is not matched.
     Genesis,
+    /// Creative Voice File (`.voc`): after the header (whose size is recorded at
+    /// offset 0x14) the audio is a chain of data blocks, each a 1-byte type then
+    /// a 3-byte little-endian length then that many bytes. A type-0 block
+    /// terminates the file, so the chain is walked to the terminator. The
+    /// 20-byte ASCII magic makes a false match effectively impossible.
+    Voc,
     /// MP3 anchored directly on an MPEG (Layer III) frame sync, for the many
     /// MP3s that carry only an ID3v1 trailer or no tag at all (the [`Extent::Mp3`]
     /// anchor needs an ID3v2 tag). The frame chain is walked like [`Extent::Mp3`];
@@ -1119,6 +1126,15 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Genesis,
         max_size: 16 * MB,
     },
+    Signature {
+        name: "Creative Voice",
+        ext: "voc",
+        magic: b"Creative Voice File\x1a",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Voc,
+        max_size: 2 * GB,
+    },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.
     Signature {
@@ -1695,7 +1711,9 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" => Category::Image,
-        "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" => Category::Audio,
+        "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" => {
+            Category::Audio
+        }
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
             Category::Video
         }
