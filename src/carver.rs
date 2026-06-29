@@ -552,6 +552,7 @@ fn file_length(
         Extent::Genesis => Ok(genesis_length(source, file_start, limit)?),
         Extent::Voc => Ok(voc_length(source, file_start, limit)?),
         Extent::Amr => Ok(amr_length(source, file_start, limit)?),
+        Extent::PsxExe => Ok(psxexe_length(source, file_start, limit)?),
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
         Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
         Extent::Zip => Ok(zip_length(source, file_start, limit)?),
@@ -3839,6 +3840,27 @@ fn amr_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(pos))
 }
 
+/// Length of a PlayStation (PS1) executable. The header is a fixed 2 KiB
+/// (0x800), and the text-section size is a little-endian u32 at offset 0x1C, so
+/// the file ends at `0x800 + text_size`. PlayStation sections are 2 KiB-aligned,
+/// so a non-zero, 0x800-aligned text size guards the match.
+fn psxexe_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const HEADER: u64 = 0x800;
+    let mut h = [0u8; 0x20];
+    if source.read_at(file_start, &mut h)? < 0x20 || &h[0..8] != b"PS-X EXE" {
+        return Ok(None);
+    }
+    let text_size = u32::from_le_bytes(h[0x1C..0x20].try_into().unwrap()) as u64;
+    if text_size == 0 || text_size % HEADER != 0 {
+        return Ok(None);
+    }
+    let total = HEADER + text_size;
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// Search forward from `file_start` for `marker`, returning the file length
 /// (marker end + `trailing`, clamped to `limit`).
 fn find_footer(
@@ -4326,5 +4348,34 @@ mod tests {
         // The magic immediately followed by an invalid ToC octet (high bit set).
         let (_t, src) = source_of(b"#!AMR\n\xff\xff");
         assert_eq!(amr_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a PS-X EXE image: 2 KiB header (with text size at 0x1C) + text.
+    fn psxexe(text_size: u32) -> Vec<u8> {
+        let total = 0x800 + text_size as usize;
+        let mut v = vec![0u8; total];
+        v[0..8].copy_from_slice(b"PS-X EXE");
+        v[0x1C..0x20].copy_from_slice(&text_size.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn psxexe_length_is_header_plus_text() {
+        let (_t, src) = source_of(&psxexe(0x4000));
+        assert_eq!(
+            psxexe_length(&src, 0, src.size).unwrap(),
+            Some(0x800 + 0x4000)
+        );
+    }
+
+    #[test]
+    fn psxexe_length_rejects_unaligned_and_non_psx() {
+        // A text size that is not a multiple of 0x800 is rejected.
+        let (_t, src) = source_of(&psxexe(0x1234));
+        assert_eq!(psxexe_length(&src, 0, src.size).unwrap(), None);
+
+        // A non-PS-X header is rejected.
+        let (_t, src) = source_of(&vec![0u8; 0x1000]);
+        assert_eq!(psxexe_length(&src, 0, src.size).unwrap(), None);
     }
 }
