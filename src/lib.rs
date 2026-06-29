@@ -53,6 +53,7 @@ pub mod exfat;
 pub mod ext4;
 pub mod f2fs;
 pub mod fat;
+pub mod gfs2;
 pub mod hash;
 pub mod hfs;
 pub mod hfsplus;

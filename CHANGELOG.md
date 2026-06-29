@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **GFS2 / GFS volumes are recognised** — Red Hat's Global File System 2 (and the
+  original GFS), a shared-disk cluster filesystem, is now detected from its
+  superblock's big-endian `0x01161970` magic, so `info` / `list_volumes` report
+  its lock table and UUID instead of leaving it unrecognised. Its metadata is
+  cluster-coordinated, so it is not recovered from metadata — use `scan`
+  (carving).
 - **NILFS2 volumes are recognised** — the log-structured Linux filesystem with
   continuous snapshotting is now detected from its `0x3434` superblock, so
   `info` / `list_volumes` report its size, label, and UUID instead of leaving it
