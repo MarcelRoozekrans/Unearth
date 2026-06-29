@@ -27,8 +27,8 @@ use anyhow::{bail, Result};
 
 use crate::source::Source;
 use crate::{
-    apfs, bcachefs, befs, btrfs, encrypted, exfat, ext4, f2fs, fat, gfs2, hfs, hfsplus, iso9660,
-    jfs, lvm, mdraid, minix, nilfs2, ntfs, ocfs2, refs, reiserfs, swap, udf, ufs, xfs,
+    apfs, bcachefs, befs, btrfs, encrypted, erofs, exfat, ext4, f2fs, fat, gfs2, hfs, hfsplus,
+    iso9660, jfs, lvm, mdraid, minix, nilfs2, ntfs, ocfs2, refs, reiserfs, swap, udf, ufs, xfs,
 };
 
 /// Options controlling a recovery run.
@@ -209,6 +209,7 @@ pub enum Volume {
     Bcachefs(bcachefs::Volume),
     Befs(befs::Volume),
     Ufs(ufs::Volume),
+    Erofs(erofs::Volume),
     Lvm(lvm::Volume),
     Mdraid(mdraid::Volume),
     HfsStd(hfs::Volume),
@@ -241,6 +242,7 @@ impl Volume {
             Volume::Bcachefs(v) => v.offset,
             Volume::Befs(v) => v.offset,
             Volume::Ufs(v) => v.offset,
+            Volume::Erofs(v) => v.offset,
             Volume::Lvm(v) => v.offset,
             Volume::Mdraid(v) => v.offset,
             Volume::HfsStd(v) => v.offset,
@@ -273,6 +275,7 @@ impl Volume {
             Volume::Bcachefs(v) => v.size(),
             Volume::Befs(v) => v.size(),
             Volume::Ufs(v) => v.size(),
+            Volume::Erofs(v) => v.size(),
             Volume::Lvm(v) => v.size(),
             Volume::Mdraid(v) => v.size(),
             Volume::HfsStd(v) => v.size(),
@@ -305,6 +308,7 @@ impl Volume {
             Volume::Bcachefs(v) => v.fs_label().to_string(),
             Volume::Befs(v) => v.fs_label().to_string(),
             Volume::Ufs(v) => v.fs_label().to_string(),
+            Volume::Erofs(v) => v.fs_label().to_string(),
             Volume::Lvm(v) => v.fs_label().to_string(),
             Volume::Mdraid(v) => v.fs_label(),
             Volume::HfsStd(v) => v.fs_label().to_string(),
@@ -347,6 +351,7 @@ impl Volume {
             Volume::Hfs(v) => v.created_time(),
             Volume::Iso(v) => v.created_time(),
             Volume::Nilfs2(v) => v.created_time(),
+            Volume::Erofs(v) => v.created_time(),
             _ => None,
         }
     }
@@ -406,6 +411,7 @@ impl Volume {
             Volume::Bcachefs(v) => v.block_size(),
             Volume::Befs(v) => v.block_size(),
             Volume::Ufs(v) => v.block_size(),
+            Volume::Erofs(v) => v.block_size(),
             Volume::Iso(v) => v.block_size(),
             _ => return None,
         };
@@ -440,6 +446,7 @@ impl Volume {
             Volume::Reiserfs(v) => v.label(),
             Volume::Jfs(v) => v.label(),
             Volume::Nilfs2(v) => v.label(),
+            Volume::Erofs(v) => v.label(),
             Volume::Gfs2(v) => v.label(),
             Volume::Ocfs2(v) => v.label(),
             Volume::Bcachefs(v) => v.label(),
@@ -471,6 +478,7 @@ impl Volume {
             Volume::Reiserfs(v) => v.uuid(),
             Volume::Jfs(v) => v.uuid(),
             Volume::Nilfs2(v) => v.uuid(),
+            Volume::Erofs(v) => v.uuid(),
             Volume::Gfs2(v) => v.uuid(),
             Volume::Ocfs2(v) => v.uuid(),
             Volume::Bcachefs(v) => v.uuid(),
@@ -570,6 +578,7 @@ impl Volume {
             Volume::Bcachefs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Befs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Ufs(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Erofs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Lvm(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Mdraid(v) => v.recover_deleted(src, out_dir, opts),
             Volume::HfsStd(v) => v.recover_deleted(src, out_dir, opts),
@@ -631,7 +640,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, Minix, bcachefs, BeFS, UFS, HFS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
+        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, Minix, bcachefs, BeFS, UFS, EROFS, HFS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
@@ -789,6 +798,12 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     if ufs::is_ufs(src, offset) {
         if let Ok(v) = ufs::Volume::parse(src, offset) {
             return Ok(Some(Volume::Ufs(v)));
+        }
+    }
+    // EROFS keeps its superblock 1 KiB in, with a 4-byte magic.
+    if erofs::is_erofs(src, offset) {
+        if let Ok(v) = erofs::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Erofs(v)));
         }
     }
     if lvm::is_lvm(src, offset) {
@@ -972,6 +987,11 @@ pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     if ufs::is_ufs(src, offset) {
         if let Ok(v) = ufs::Volume::parse(src, offset) {
             return Ok(Volume::Ufs(v));
+        }
+    }
+    if erofs::is_erofs(src, offset) {
+        if let Ok(v) = erofs::Volume::parse(src, offset) {
+            return Ok(Volume::Erofs(v));
         }
     }
     if lvm::is_lvm(src, offset) {
