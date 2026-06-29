@@ -79,6 +79,8 @@
 //! * [`Extent::Squashfs`] — SquashFS image: `bytes_used` from the superblock.
 //! * [`Extent::Iso9660`] — ISO 9660 disc image: volume space size × logical
 //!   block size from the primary volume descriptor.
+//! * [`Extent::Flic`] — Autodesk FLIC animation: the total size stored in the
+//!   header's first field.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -383,6 +385,14 @@ pub enum Extent {
     /// the exact image length. The descriptor type (1) and version (1) are
     /// checked to reject a coincidental magic.
     Iso9660,
+    /// Autodesk FLIC animation (`.fli`/`.flc`) — the palette-animation format
+    /// from Autodesk Animator and Animator Pro, still seen in old games and
+    /// demos. The 128-byte header opens with the total file size as a
+    /// little-endian u32 at offset 0, followed by the format magic (`0xAF11`
+    /// FLI or `0xAF12` FLC) at offset 4. The size field gives the exact end.
+    /// The colour depth (8 or 0), frame count, and frame dimensions are
+    /// range-checked to reject a coincidental magic.
+    Flic,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1537,6 +1547,28 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Iso9660,
         max_size: 16 * GB,
     },
+    Signature {
+        // Autodesk FLIC animation (FLI variant, 0xAF11): the format magic is a
+        // little-endian u16 at offset 4, so magic_offset rewinds to the file
+        // start where the total-size u32 lives.
+        name: "Autodesk FLIC animation (FLI)",
+        ext: "fli",
+        magic: b"\x11\xaf",
+        magic_offset: 4,
+        secondary: None,
+        extent: Extent::Flic,
+        max_size: 256 * MB,
+    },
+    Signature {
+        // Autodesk FLIC animation (FLC variant, 0xAF12).
+        name: "Autodesk FLIC animation (FLC)",
+        ext: "flc",
+        magic: b"\x12\xaf",
+        magic_offset: 4,
+        secondary: None,
+        extent: Extent::Flic,
+        max_size: 256 * MB,
+    },
 ];
 
 /// Look up signatures relevant to a single source byte, keyed by the first
@@ -1782,7 +1814,7 @@ pub fn category_of(ext: &str) -> Category {
     match ext {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
-        | "ani" | "eps" => Category::Image,
+        | "ani" | "eps" | "fli" | "flc" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr" => {
             Category::Audio
         }

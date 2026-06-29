@@ -566,6 +566,7 @@ fn file_length(
         Extent::Cpio => Ok(cpio_length(source, file_start, limit)?),
         Extent::Squashfs => Ok(squashfs_length(source, file_start, limit)?),
         Extent::Iso9660 => Ok(iso9660_length(source, file_start, limit)?),
+        Extent::Flic => Ok(flic_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3415,6 +3416,41 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// Autodesk FLIC animation (`.fli`/`.flc`) length. The 128-byte header opens
+/// with the total file size as a little-endian u32 at offset 0, the format
+/// magic (`0xAF11` FLI or `0xAF12` FLC) as a u16 at offset 4, the frame count
+/// at offset 6, the width/height at offsets 8 and 10, and the colour depth at
+/// offset 12. The size field gives the exact end. The magic, depth (8 — or 0,
+/// which old writers leave to mean 8), a non-zero frame count, and sane
+/// dimensions are checked to reject a coincidental two-byte magic.
+fn flic_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 16];
+    if source.read_at(file_start, &mut h)? < 16 {
+        return Ok(None);
+    }
+    let magic = u16::from_le_bytes([h[4], h[5]]);
+    if magic != 0xAF11 && magic != 0xAF12 {
+        return Ok(None);
+    }
+    let frames = u16::from_le_bytes([h[6], h[7]]);
+    let width = u16::from_le_bytes([h[8], h[9]]);
+    let height = u16::from_le_bytes([h[10], h[11]]);
+    let depth = u16::from_le_bytes([h[12], h[13]]);
+    if frames == 0
+        || !(1..=10000).contains(&width)
+        || !(1..=10000).contains(&height)
+        || (depth != 8 && depth != 0)
+    {
+        return Ok(None);
+    }
+    let size = u32::from_le_bytes([h[0], h[1], h[2], h[3]]) as u64;
+    // The size must cover the 128-byte header and fit the region.
+    if size < 128 || file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
+}
+
 /// ISO 9660 disc-image length. The primary volume descriptor (PVD) lives at
 /// byte offset 0x8000 (logical sector 16): a type byte (1), the `CD001`
 /// standard identifier, and a version byte (1). It records the volume space
@@ -4552,5 +4588,41 @@ mod tests {
         let img = iso9660_image(24, 2000);
         let (_t, src) = source_of(&img);
         assert_eq!(iso9660_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a FLIC animation of `size` bytes with the given format magic.
+    fn flic_anim(magic: u16, size: u32, depth: u16) -> Vec<u8> {
+        let mut v = vec![0u8; (size as usize).max(128)];
+        v[0..4].copy_from_slice(&size.to_le_bytes());
+        v[4..6].copy_from_slice(&magic.to_le_bytes());
+        v[6..8].copy_from_slice(&3u16.to_le_bytes()); // frames
+        v[8..10].copy_from_slice(&320u16.to_le_bytes()); // width
+        v[10..12].copy_from_slice(&200u16.to_le_bytes()); // height
+        v[12..14].copy_from_slice(&depth.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn flic_length_reads_the_header_size() {
+        // FLI (0xAF11), depth 8.
+        let (_t, src) = source_of(&flic_anim(0xAF11, 4096, 8));
+        assert_eq!(flic_length(&src, 0, src.size).unwrap(), Some(4096));
+        // FLC (0xAF12), depth 0 (legacy "means 8").
+        let (_t, src) = source_of(&flic_anim(0xAF12, 8192, 0));
+        assert_eq!(flic_length(&src, 0, src.size).unwrap(), Some(8192));
+    }
+
+    #[test]
+    fn flic_length_rejects_bad_magic_depth_and_overrun() {
+        // Wrong magic.
+        let (_t, src) = source_of(&flic_anim(0x1234, 4096, 8));
+        assert_eq!(flic_length(&src, 0, src.size).unwrap(), None);
+        // Implausible colour depth.
+        let (_t, src) = source_of(&flic_anim(0xAF11, 4096, 24));
+        assert_eq!(flic_length(&src, 0, src.size).unwrap(), None);
+        // Size runs past the region.
+        let anim = flic_anim(0xAF11, 4096, 8);
+        let (_t, src) = source_of(&anim[..2048]);
+        assert_eq!(flic_length(&src, 0, src.size).unwrap(), None);
     }
 }
