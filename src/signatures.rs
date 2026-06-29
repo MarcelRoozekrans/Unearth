@@ -62,6 +62,7 @@
 //! * [`Extent::Gameboy`] — Game Boy / Color ROM: size from the header size byte.
 //! * [`Extent::Wad`] — Doom WAD: end from the lump count and directory offset.
 //! * [`Extent::Au`] — Sun/NeXT `.au` audio: data offset plus data size in header.
+//! * [`Extent::Genesis`] — Sega Mega Drive / Genesis ROM: end address in header.
 //! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
 //! * [`Extent::Wim`] — Windows Imaging (WIM): furthest resource-table extent.
 //! * [`Extent::Swf`] — uncompressed Flash movie (`FWS`): `FileLength` at offset 4.
@@ -261,6 +262,14 @@ pub enum Extent {
     /// unknown (streamed), so those are not carved. The data offset and encoding
     /// code are range-checked to reject a coincidental `.snd` match.
     Au,
+    /// Sega Mega Drive / Genesis ROM, anchored on the `SEGA` signature in the
+    /// cartridge header at offset 0x100. The header records the ROM's start and
+    /// end addresses (big-endian u32 at 0x1A0 / 0x1A4); a ROM is mapped from
+    /// address 0, so the file ends at `end_address + 1`. The start address (must
+    /// be 0) and a plausible end address guard the short `SEGA` match. This is
+    /// the plain (non-interleaved) ROM layout; the interleaved `.smd` format
+    /// carries a 512-byte header instead and is not matched.
+    Genesis,
     /// MP3 anchored directly on an MPEG (Layer III) frame sync, for the many
     /// MP3s that carry only an ID3v1 trailer or no tag at all (the [`Extent::Mp3`]
     /// anchor needs an ID3v2 tag). The frame chain is walked like [`Extent::Mp3`];
@@ -1099,6 +1108,16 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Au,
         max_size: 2 * GB,
+    },
+    Signature {
+        name: "Sega Mega Drive ROM",
+        ext: "md",
+        magic: b"SEGA",
+        // The console name sits at 0x100; the ROM (and carved file) begins there.
+        magic_offset: 0x100,
+        secondary: None,
+        extent: Extent::Genesis,
+        max_size: 16 * MB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.

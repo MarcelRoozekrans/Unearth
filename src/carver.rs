@@ -549,6 +549,7 @@ fn file_length(
         Extent::Gameboy => Ok(gameboy_length(source, file_start, limit)?),
         Extent::Wad => Ok(wad_length(source, file_start, limit)?),
         Extent::Au => Ok(au_length(source, file_start, limit)?),
+        Extent::Genesis => Ok(genesis_length(source, file_start, limit)?),
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
         Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
         Extent::Zip => Ok(zip_length(source, file_start, limit)?),
@@ -3741,6 +3742,31 @@ fn au_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>
     Ok(Some(total))
 }
 
+/// Length of a Sega Mega Drive / Genesis ROM. The cartridge header at offset
+/// 0x100 begins with `SEGA` and records the ROM's start and end addresses as
+/// big-endian u32 at 0x1A0 / 0x1A4. A cartridge is mapped from address 0, so the
+/// file ends at `end_address + 1`. The start address (which must be 0) and a
+/// plausible end address guard the short `SEGA` match.
+fn genesis_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x1A8];
+    if source.read_at(file_start, &mut h)? < 0x1A8 || &h[0x100..0x104] != b"SEGA" {
+        return Ok(None);
+    }
+    let rom_start = u32::from_be_bytes(h[0x1A0..0x1A4].try_into().unwrap());
+    let rom_end = u32::from_be_bytes(h[0x1A4..0x1A8].try_into().unwrap()) as u64;
+    // A ROM is mapped from address 0; the end address is the last byte, so the
+    // image is one byte longer. The header occupies 0x100..0x200, so a valid ROM
+    // ends at least there.
+    if rom_start != 0 || rom_end < 0x1FF {
+        return Ok(None);
+    }
+    let total = rom_end + 1;
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// Search forward from `file_start` for `marker`, returning the file length
 /// (marker end + `trailing`, clamped to `limit`).
 fn find_footer(
@@ -4132,5 +4158,36 @@ mod tests {
         // An unknown encoding code is rejected.
         let (_t, src) = source_of(&au(24, 100, 99, 2048));
         assert_eq!(au_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a Mega Drive ROM image with the `SEGA` header and an end address.
+    fn genesis(rom_start: u32, rom_end: u32, total: usize) -> Vec<u8> {
+        let mut v = vec![0u8; total];
+        v[0x100..0x104].copy_from_slice(b"SEGA");
+        v[0x1A0..0x1A4].copy_from_slice(&rom_start.to_be_bytes());
+        v[0x1A4..0x1A8].copy_from_slice(&rom_end.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn genesis_length_uses_the_end_address() {
+        // A 512 KiB ROM: end address 0x7FFFF → length 0x80000.
+        let (_t, src) = source_of(&genesis(0, 0x7FFFF, 512 * 1024));
+        assert_eq!(genesis_length(&src, 0, src.size).unwrap(), Some(0x80000));
+    }
+
+    #[test]
+    fn genesis_length_rejects_nonzero_start_and_bad_end() {
+        // A non-zero start address is rejected (ROMs map from 0).
+        let (_t, src) = source_of(&genesis(0x100, 0x7FFFF, 512 * 1024));
+        assert_eq!(genesis_length(&src, 0, src.size).unwrap(), None);
+
+        // An end address inside the header is rejected.
+        let (_t, src) = source_of(&genesis(0, 0x80, 512 * 1024));
+        assert_eq!(genesis_length(&src, 0, src.size).unwrap(), None);
+
+        // A non-SEGA header is rejected.
+        let (_t, src) = source_of(&vec![0u8; 512 * 1024]);
+        assert_eq!(genesis_length(&src, 0, src.size).unwrap(), None);
     }
 }
