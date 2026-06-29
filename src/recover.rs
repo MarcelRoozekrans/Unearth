@@ -27,8 +27,8 @@ use anyhow::{bail, Result};
 
 use crate::source::Source;
 use crate::{
-    apfs, btrfs, encrypted, exfat, ext4, f2fs, fat, hfs, hfsplus, iso9660, jfs, lvm, mdraid, ntfs,
-    refs, reiserfs, swap, udf, xfs,
+    apfs, btrfs, encrypted, exfat, ext4, f2fs, fat, hfs, hfsplus, iso9660, jfs, lvm, mdraid,
+    nilfs2, ntfs, refs, reiserfs, swap, udf, xfs,
 };
 
 /// Options controlling a recovery run.
@@ -202,6 +202,7 @@ pub enum Volume {
     F2fs(f2fs::Volume),
     Reiserfs(reiserfs::Volume),
     Jfs(jfs::Volume),
+    Nilfs2(nilfs2::Volume),
     Lvm(lvm::Volume),
     Mdraid(mdraid::Volume),
     HfsStd(hfs::Volume),
@@ -227,6 +228,7 @@ impl Volume {
             Volume::F2fs(v) => v.offset,
             Volume::Reiserfs(v) => v.offset,
             Volume::Jfs(v) => v.offset,
+            Volume::Nilfs2(v) => v.offset,
             Volume::Lvm(v) => v.offset,
             Volume::Mdraid(v) => v.offset,
             Volume::HfsStd(v) => v.offset,
@@ -252,6 +254,7 @@ impl Volume {
             Volume::F2fs(v) => v.size(),
             Volume::Reiserfs(v) => v.size(),
             Volume::Jfs(v) => v.size(),
+            Volume::Nilfs2(v) => v.size(),
             Volume::Lvm(v) => v.size(),
             Volume::Mdraid(v) => v.size(),
             Volume::HfsStd(v) => v.size(),
@@ -277,6 +280,7 @@ impl Volume {
             Volume::F2fs(v) => v.fs_label().to_string(),
             Volume::Reiserfs(v) => v.fs_label().to_string(),
             Volume::Jfs(v) => v.fs_label().to_string(),
+            Volume::Nilfs2(v) => v.fs_label().to_string(),
             Volume::Lvm(v) => v.fs_label().to_string(),
             Volume::Mdraid(v) => v.fs_label(),
             Volume::HfsStd(v) => v.fs_label().to_string(),
@@ -398,6 +402,7 @@ impl Volume {
             Volume::F2fs(v) => v.label(),
             Volume::Reiserfs(v) => v.label(),
             Volume::Jfs(v) => v.label(),
+            Volume::Nilfs2(v) => v.label(),
             Volume::Mdraid(v) => v.label(),
             Volume::HfsStd(v) => v.label(),
             Volume::Swap(v) => v.label(),
@@ -424,6 +429,7 @@ impl Volume {
             Volume::F2fs(v) => v.uuid(),
             Volume::Reiserfs(v) => v.uuid(),
             Volume::Jfs(v) => v.uuid(),
+            Volume::Nilfs2(v) => v.uuid(),
             Volume::Btrfs(v) => v.uuid(),
             Volume::Fat(v) => v.uuid(),
             Volume::Exfat(v) => v.uuid(),
@@ -507,6 +513,7 @@ impl Volume {
             Volume::F2fs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Reiserfs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Jfs(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Nilfs2(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Lvm(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Mdraid(v) => v.recover_deleted(src, out_dir, opts),
             Volume::HfsStd(v) => v.recover_deleted(src, out_dir, opts),
@@ -568,7 +575,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, ReiserFS, JFS, HFS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
+        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, ReiserFS, JFS, NILFS2, HFS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
@@ -682,6 +689,13 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     if jfs::is_jfs(src, offset) {
         if let Ok(v) = jfs::Volume::parse(src, offset) {
             return Ok(Some(Volume::Jfs(v)));
+        }
+    }
+    // NILFS2 keeps its superblock 1 KiB in (past the boot sector); the 2-byte
+    // magic is guarded by a revision check inside the detector.
+    if nilfs2::is_nilfs2(src, offset) {
+        if let Ok(v) = nilfs2::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Nilfs2(v)));
         }
     }
     if lvm::is_lvm(src, offset) {
@@ -830,6 +844,11 @@ pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     if jfs::is_jfs(src, offset) {
         if let Ok(v) = jfs::Volume::parse(src, offset) {
             return Ok(Volume::Jfs(v));
+        }
+    }
+    if nilfs2::is_nilfs2(src, offset) {
+        if let Ok(v) = nilfs2::Volume::parse(src, offset) {
+            return Ok(Volume::Nilfs2(v));
         }
     }
     if lvm::is_lvm(src, offset) {

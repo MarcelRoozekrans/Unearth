@@ -398,8 +398,8 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 `--scan` reads the **whole source** and probes for filesystem signatures at
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
-(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, JFS, HFS+, HFS, APFS, Btrfs,
-LVM2, Linux MD/RAID, Linux swap, and LUKS/BitLocker):
+(FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, JFS, NILFS2, HFS+, HFS, APFS,
+Btrfs, LVM2, Linux MD/RAID, Linux swap, and LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -858,6 +858,12 @@ Common to both strategies:
   *recognised* and its size, **label**, and **UUID** are reported by
   `info`/`list_volumes` (from the `JFS1` aggregate superblock 32 KiB in). Its
   inode/directory B+tree layout is unlike the ext family, so it is not recovered
+  from metadata — use `scan` (carving).
+- **NILFS2** (the New Implementation of a Log-structured File System — a Linux
+  filesystem with continuous snapshotting) is *recognised* and its size,
+  **label**, and **UUID** are reported by `info`/`list_volumes` (from the
+  superblock 1 KiB in, magic `0x3434`). Like the other copy-on-write/log-structured
+  filesystems here, it leaves no stale metadata to scavenge, so it is not recovered
   from metadata — use `scan` (carving).
 - **LVM2** (the Linux Logical Volume Manager) physical volumes are *recognised*
   from their `LABELONE` / `LVM2 001` on-disk label, and the PV's size is reported

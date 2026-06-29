@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **NILFS2 volumes are recognised** — the log-structured Linux filesystem with
+  continuous snapshotting is now detected from its `0x3434` superblock, so
+  `info` / `list_volumes` report its size, label, and UUID instead of leaving it
+  unrecognised. Like the other log-structured/copy-on-write filesystems, it leaves
+  no stale metadata to scavenge, so it is not recovered from metadata — use `scan`
+  (carving).
 - **JFS volumes are recognised** — IBM's Journaled File System (ported to Linux
   from AIX/OS2) is now detected from its `JFS1` aggregate superblock, so
   `info` / `list_volumes` report its size, label, and UUID instead of leaving it
