@@ -547,6 +547,7 @@ fn file_length(
         Extent::Blend => Ok(blend_length(source, file_start, limit)?),
         Extent::Nes => Ok(nes_length(source, file_start, limit)?),
         Extent::Gameboy => Ok(gameboy_length(source, file_start, limit)?),
+        Extent::Wad => Ok(wad_length(source, file_start, limit)?),
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
         Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
         Extent::Zip => Ok(zip_length(source, file_start, limit)?),
@@ -3686,6 +3687,30 @@ fn gameboy_length(source: &Source, file_start: u64, limit: u64) -> Result<Option
     Ok(Some(total))
 }
 
+/// Length of a Doom WAD archive. The 12-byte header is the 4-byte magic
+/// (`IWAD`/`PWAD`), the lump count, and the byte offset of the lump directory
+/// (both little-endian i32). The Doom engine writes the directory last, so the
+/// file ends at `directory_offset + lumps * 16` (16 bytes per directory entry).
+/// The two fields are range-checked to reject a coincidental magic.
+fn wad_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 12];
+    if source.read_at(file_start, &mut h)? < 12 || (&h[0..4] != b"IWAD" && &h[0..4] != b"PWAD") {
+        return Ok(None);
+    }
+    let num_lumps = i32::from_le_bytes(h[4..8].try_into().unwrap());
+    let dir_offset = i32::from_le_bytes(h[8..12].try_into().unwrap());
+    // Both fields are signed on disk but never negative; the directory cannot
+    // start inside the 12-byte header.
+    if num_lumps < 0 || dir_offset < 12 {
+        return Ok(None);
+    }
+    let total = (dir_offset as u64).saturating_add((num_lumps as u64).saturating_mul(16));
+    if total < 12 || file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// Search forward from `file_start` for `marker`, returning the file length
 /// (marker end + `trailing`, clamped to `limit`).
 fn find_footer(
@@ -4008,5 +4033,42 @@ mod tests {
         // An unofficial size code is rejected.
         let (_t, src) = source_of(&gameboy_rom(0x52, 32 * 1024));
         assert_eq!(gameboy_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a WAD image: header + lump data + directory at the end.
+    fn wad(magic: &[u8; 4], num_lumps: u32, lump_bytes: usize) -> Vec<u8> {
+        let dir_offset = 12 + lump_bytes;
+        let total = dir_offset + num_lumps as usize * 16;
+        let mut v = vec![0u8; total];
+        v[0..4].copy_from_slice(magic);
+        v[4..8].copy_from_slice(&num_lumps.to_le_bytes());
+        v[8..12].copy_from_slice(&(dir_offset as u32).to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn wad_length_uses_the_directory_offset_and_lump_count() {
+        // PWAD with 3 lumps and 64 bytes of lump data: end = (12+64) + 3*16.
+        let (_t, src) = source_of(&wad(b"PWAD", 3, 64));
+        assert_eq!(
+            wad_length(&src, 0, src.size).unwrap(),
+            Some(12 + 64 + 3 * 16)
+        );
+        // IWAD with no lumps: end = 12 (directory at offset 12, empty).
+        let (_t, src) = source_of(&wad(b"IWAD", 0, 0));
+        assert_eq!(wad_length(&src, 0, src.size).unwrap(), Some(12));
+    }
+
+    #[test]
+    fn wad_length_rejects_bad_header() {
+        // A non-WAD magic is rejected.
+        let (_t, src) = source_of(b"XWAD\0\0\0\0\x0c\0\0\0");
+        assert_eq!(wad_length(&src, 0, src.size).unwrap(), None);
+
+        // A directory offset inside the header is rejected.
+        let mut bytes = wad(b"IWAD", 1, 0);
+        bytes[8..12].copy_from_slice(&4u32.to_le_bytes());
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(wad_length(&src, 0, src.size).unwrap(), None);
     }
 }
