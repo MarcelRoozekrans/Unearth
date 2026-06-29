@@ -28,8 +28,8 @@ use anyhow::{bail, Result};
 use crate::source::Source;
 use crate::{
     apfs, bcachefs, befs, btrfs, cramfs, encrypted, erofs, exfat, ext4, f2fs, fat, gfs2, hfs,
-    hfsplus, iso9660, jfs, lvm, mdraid, minix, nilfs2, ntfs, ocfs2, refs, reiserfs, swap, udf, ufs,
-    xfs,
+    hfsplus, iso9660, jfs, lvm, mdraid, minix, nilfs2, ntfs, ocfs2, refs, reiserfs, romfs, swap,
+    udf, ufs, xfs,
 };
 
 /// Options controlling a recovery run.
@@ -212,6 +212,7 @@ pub enum Volume {
     Ufs(ufs::Volume),
     Erofs(erofs::Volume),
     Cramfs(cramfs::Volume),
+    Romfs(romfs::Volume),
     Lvm(lvm::Volume),
     Mdraid(mdraid::Volume),
     HfsStd(hfs::Volume),
@@ -246,6 +247,7 @@ impl Volume {
             Volume::Ufs(v) => v.offset,
             Volume::Erofs(v) => v.offset,
             Volume::Cramfs(v) => v.offset,
+            Volume::Romfs(v) => v.offset,
             Volume::Lvm(v) => v.offset,
             Volume::Mdraid(v) => v.offset,
             Volume::HfsStd(v) => v.offset,
@@ -280,6 +282,7 @@ impl Volume {
             Volume::Ufs(v) => v.size(),
             Volume::Erofs(v) => v.size(),
             Volume::Cramfs(v) => v.size(),
+            Volume::Romfs(v) => v.size(),
             Volume::Lvm(v) => v.size(),
             Volume::Mdraid(v) => v.size(),
             Volume::HfsStd(v) => v.size(),
@@ -314,6 +317,7 @@ impl Volume {
             Volume::Ufs(v) => v.fs_label().to_string(),
             Volume::Erofs(v) => v.fs_label().to_string(),
             Volume::Cramfs(v) => v.fs_label().to_string(),
+            Volume::Romfs(v) => v.fs_label().to_string(),
             Volume::Lvm(v) => v.fs_label().to_string(),
             Volume::Mdraid(v) => v.fs_label(),
             Volume::HfsStd(v) => v.fs_label().to_string(),
@@ -454,6 +458,7 @@ impl Volume {
             Volume::Nilfs2(v) => v.label(),
             Volume::Erofs(v) => v.label(),
             Volume::Cramfs(v) => v.label(),
+            Volume::Romfs(v) => v.label(),
             Volume::Gfs2(v) => v.label(),
             Volume::Ocfs2(v) => v.label(),
             Volume::Bcachefs(v) => v.label(),
@@ -587,6 +592,7 @@ impl Volume {
             Volume::Ufs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Erofs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Cramfs(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Romfs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Lvm(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Mdraid(v) => v.recover_deleted(src, out_dir, opts),
             Volume::HfsStd(v) => v.recover_deleted(src, out_dir, opts),
@@ -648,7 +654,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, Minix, bcachefs, BeFS, UFS, EROFS, cramfs, HFS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
+        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, Minix, bcachefs, BeFS, UFS, EROFS, cramfs, romfs, HFS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
@@ -819,6 +825,12 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     if cramfs::is_cramfs(src, offset) {
         if let Ok(v) = cramfs::Volume::parse(src, offset) {
             return Ok(Some(Volume::Cramfs(v)));
+        }
+    }
+    // romfs has an 8-byte magic at offset 0.
+    if romfs::is_romfs(src, offset) {
+        if let Ok(v) = romfs::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Romfs(v)));
         }
     }
     if lvm::is_lvm(src, offset) {
@@ -1012,6 +1024,11 @@ pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     if cramfs::is_cramfs(src, offset) {
         if let Ok(v) = cramfs::Volume::parse(src, offset) {
             return Ok(Volume::Cramfs(v));
+        }
+    }
+    if romfs::is_romfs(src, offset) {
+        if let Ok(v) = romfs::Volume::parse(src, offset) {
+            return Ok(Volume::Romfs(v));
         }
     }
     if lvm::is_lvm(src, offset) {
