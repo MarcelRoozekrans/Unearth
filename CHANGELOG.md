@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **Allocation unit reported for more filesystems** — `info` / `list_volumes`
+  now show the allocation-unit (block/cluster) size for ReiserFS, JFS, NILFS2,
+  GFS2, OCFS2, Minix, bcachefs, and BeFS, the same as for the filesystems that
+  already exposed it. It documents the volume's geometry and bounds per-file
+  slack when carving within one of these volumes.
 - **PlayStation executables are carved** — `scan` now recovers PS1 `PS-X EXE`
   programs, with the exact length taken from the 2 KiB header plus the
   text-section size at offset 0x1C. A non-zero, 2 KiB-aligned text size guards

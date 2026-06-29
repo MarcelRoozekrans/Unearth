@@ -373,10 +373,11 @@ impl Volume {
     }
 
     /// The volume's allocation-unit size in bytes — the cluster size (FAT,
-    /// exFAT, NTFS, ReFS) or block size (ext, HFS+, APFS, XFS, F2FS, Btrfs, ISO
-    /// 9660) the filesystem allocates space in. Useful for recovery: carving
-    /// aligns to it and it bounds per-file slack. `None` for backends with no
-    /// such unit (LVM/swap/encrypted/UDF) or when the geometry is implausible.
+    /// exFAT, NTFS, ReFS, OCFS2) or block size (ext, HFS+, APFS, XFS, F2FS,
+    /// Btrfs, ISO 9660, ReiserFS, JFS, NILFS2, GFS2, Minix, bcachefs, BeFS) the
+    /// filesystem allocates space in. Useful for recovery: carving aligns to it
+    /// and it bounds per-file slack. `None` for backends with no such unit
+    /// (LVM/swap/encrypted/UDF) or when the geometry is implausible.
     pub fn alloc_unit(&self) -> Option<u64> {
         let unit = match self {
             Volume::Fat(v) => v.cluster_size(),
@@ -389,6 +390,14 @@ impl Volume {
             Volume::Refs(v) => return v.cluster_size(),
             Volume::Xfs(v) => v.block_size() as u64,
             Volume::F2fs(v) => v.block_size() as u64,
+            Volume::Reiserfs(v) => v.block_size(),
+            Volume::Jfs(v) => v.block_size(),
+            Volume::Nilfs2(v) => v.block_size(),
+            Volume::Gfs2(v) => v.block_size(),
+            Volume::Ocfs2(v) => v.block_size(),
+            Volume::Minix(v) => v.block_size(),
+            Volume::Bcachefs(v) => v.block_size(),
+            Volume::Befs(v) => v.block_size(),
             Volume::Iso(v) => v.block_size(),
             _ => return None,
         };

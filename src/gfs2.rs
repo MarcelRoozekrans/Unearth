@@ -34,6 +34,7 @@ const FORMAT_GFS1: u32 = 1309;
 const MAGIC_OFFSET: usize = 0x00; // u32
 const TYPE_OFFSET: usize = 0x04; // u32
 const FS_FORMAT_OFFSET: usize = 0x18; // u32
+const BSIZE_OFFSET: usize = 0x24; // u32: filesystem block size in bytes
 const LOCKTABLE_OFFSET: usize = 0xA0; // 64 bytes, NUL-padded
 const UUID_OFFSET: usize = 0x100; // 16 bytes
 /// We read this much of the superblock to cover every field above.
@@ -44,6 +45,8 @@ pub struct Volume {
     /// Byte offset of the volume within the source.
     pub offset: u64,
     size: u64,
+    /// Filesystem block size in bytes.
+    block_size: u64,
     /// Whether this is GFS2 (`true`) or the original GFS (`false`).
     is_gfs2: bool,
     /// Lock table name (`sb_locktable`, e.g. `cluster:fs`), empty when unset.
@@ -104,6 +107,7 @@ impl Volume {
         Ok(Volume {
             offset,
             size,
+            block_size: be32(&hdr[BSIZE_OFFSET..]) as u64,
             is_gfs2: fmt == FORMAT_GFS2,
             label,
             uuid,
@@ -113,6 +117,11 @@ impl Volume {
     /// Total size of the volume in bytes (the source span; see the module docs).
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    /// Filesystem block size in bytes.
+    pub fn block_size(&self) -> u64 {
+        self.block_size
     }
 
     /// Short filesystem label.
@@ -159,6 +168,7 @@ mod tests {
         v[sb + TYPE_OFFSET..sb + TYPE_OFFSET + 4].copy_from_slice(&METATYPE_SB.to_be_bytes());
         v[sb + FS_FORMAT_OFFSET..sb + FS_FORMAT_OFFSET + 4]
             .copy_from_slice(&fs_format.to_be_bytes());
+        v[sb + BSIZE_OFFSET..sb + BSIZE_OFFSET + 4].copy_from_slice(&4096u32.to_be_bytes());
         let lb = locktable.as_bytes();
         v[sb + LOCKTABLE_OFFSET..sb + LOCKTABLE_OFFSET + lb.len()].copy_from_slice(lb);
         v[sb + UUID_OFFSET..sb + UUID_OFFSET + 16].copy_from_slice(uuid);
@@ -183,6 +193,7 @@ mod tests {
         let v = Volume::parse(&src, 0).unwrap();
         assert_eq!(v.fs_label(), "GFS2");
         assert_eq!(v.size(), 256 * 1024);
+        assert_eq!(v.block_size(), 4096);
         assert_eq!(v.label(), "alpha:data");
         assert_eq!(
             v.uuid().as_deref(),

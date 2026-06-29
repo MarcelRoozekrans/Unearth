@@ -38,6 +38,8 @@ pub struct Volume {
     /// Byte offset of the volume within the source.
     pub offset: u64,
     size: u64,
+    /// Cluster (allocation) size in bytes.
+    block_size: u64,
     /// Volume label (`s_label`), empty when unset.
     label: String,
     /// Filesystem UUID (`s_uuid`), `None` when unset.
@@ -101,6 +103,7 @@ impl Volume {
         Ok(Volume {
             offset,
             size,
+            block_size: 1u64 << bits,
             label,
             uuid,
         })
@@ -109,6 +112,11 @@ impl Volume {
     /// Total size of the volume in bytes.
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    /// Cluster (allocation) size in bytes.
+    pub fn block_size(&self) -> u64 {
+        self.block_size
     }
 
     /// Short filesystem label.
