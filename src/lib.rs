@@ -83,5 +83,6 @@ pub mod swap;
 pub mod times;
 pub mod triage;
 pub mod udf;
+pub mod ufs;
 pub mod validate;
 pub mod xfs;

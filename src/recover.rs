@@ -28,7 +28,7 @@ use anyhow::{bail, Result};
 use crate::source::Source;
 use crate::{
     apfs, bcachefs, befs, btrfs, encrypted, exfat, ext4, f2fs, fat, gfs2, hfs, hfsplus, iso9660,
-    jfs, lvm, mdraid, minix, nilfs2, ntfs, ocfs2, refs, reiserfs, swap, udf, xfs,
+    jfs, lvm, mdraid, minix, nilfs2, ntfs, ocfs2, refs, reiserfs, swap, udf, ufs, xfs,
 };
 
 /// Options controlling a recovery run.
@@ -208,6 +208,7 @@ pub enum Volume {
     Minix(minix::Volume),
     Bcachefs(bcachefs::Volume),
     Befs(befs::Volume),
+    Ufs(ufs::Volume),
     Lvm(lvm::Volume),
     Mdraid(mdraid::Volume),
     HfsStd(hfs::Volume),
@@ -239,6 +240,7 @@ impl Volume {
             Volume::Minix(v) => v.offset,
             Volume::Bcachefs(v) => v.offset,
             Volume::Befs(v) => v.offset,
+            Volume::Ufs(v) => v.offset,
             Volume::Lvm(v) => v.offset,
             Volume::Mdraid(v) => v.offset,
             Volume::HfsStd(v) => v.offset,
@@ -270,6 +272,7 @@ impl Volume {
             Volume::Minix(v) => v.size(),
             Volume::Bcachefs(v) => v.size(),
             Volume::Befs(v) => v.size(),
+            Volume::Ufs(v) => v.size(),
             Volume::Lvm(v) => v.size(),
             Volume::Mdraid(v) => v.size(),
             Volume::HfsStd(v) => v.size(),
@@ -301,6 +304,7 @@ impl Volume {
             Volume::Minix(v) => v.fs_label().to_string(),
             Volume::Bcachefs(v) => v.fs_label().to_string(),
             Volume::Befs(v) => v.fs_label().to_string(),
+            Volume::Ufs(v) => v.fs_label().to_string(),
             Volume::Lvm(v) => v.fs_label().to_string(),
             Volume::Mdraid(v) => v.fs_label(),
             Volume::HfsStd(v) => v.fs_label().to_string(),
@@ -401,6 +405,7 @@ impl Volume {
             Volume::Minix(v) => v.block_size(),
             Volume::Bcachefs(v) => v.block_size(),
             Volume::Befs(v) => v.block_size(),
+            Volume::Ufs(v) => v.block_size(),
             Volume::Iso(v) => v.block_size(),
             _ => return None,
         };
@@ -564,6 +569,7 @@ impl Volume {
             Volume::Minix(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Bcachefs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Befs(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Ufs(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Lvm(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Mdraid(v) => v.recover_deleted(src, out_dir, opts),
             Volume::HfsStd(v) => v.recover_deleted(src, out_dir, opts),
@@ -625,7 +631,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, Minix, bcachefs, BeFS, HFS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
+        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, Minix, bcachefs, BeFS, UFS, HFS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
@@ -777,6 +783,12 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     if befs::is_befs(src, offset) {
         if let Ok(v) = befs::Volume::parse(src, offset) {
             return Ok(Some(Volume::Befs(v)));
+        }
+    }
+    // UFS keeps its superblock 8 KiB (UFS1) or 64 KiB (UFS2) in, magic at 0x55C.
+    if ufs::is_ufs(src, offset) {
+        if let Ok(v) = ufs::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Ufs(v)));
         }
     }
     if lvm::is_lvm(src, offset) {
@@ -955,6 +967,11 @@ pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     if befs::is_befs(src, offset) {
         if let Ok(v) = befs::Volume::parse(src, offset) {
             return Ok(Volume::Befs(v));
+        }
+    }
+    if ufs::is_ufs(src, offset) {
+        if let Ok(v) = ufs::Volume::parse(src, offset) {
+            return Ok(Volume::Ufs(v));
         }
     }
     if lvm::is_lvm(src, offset) {
