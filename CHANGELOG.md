@@ -14,6 +14,9 @@ formats.
 
 ### Added
 
+- **AMR audio is carved** — `scan` now recovers `.amr` (AMR narrowband) audio —
+  the codec mobile phones use for voice recordings and voicemail — by walking the
+  fixed-size speech frames from the `#!AMR\n` header to the end of the stream.
 - **Creative Voice (`.voc`) audio is carved** — `scan` now recovers Sound
   Blaster / DOS-era `.voc` audio files, walking the data-block chain from the
   header to the terminator block to find the exact end. The 20-byte ASCII magic

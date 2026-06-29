@@ -551,6 +551,7 @@ fn file_length(
         Extent::Au => Ok(au_length(source, file_start, limit)?),
         Extent::Genesis => Ok(genesis_length(source, file_start, limit)?),
         Extent::Voc => Ok(voc_length(source, file_start, limit)?),
+        Extent::Amr => Ok(amr_length(source, file_start, limit)?),
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
         Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
         Extent::Zip => Ok(zip_length(source, file_start, limit)?),
@@ -3803,6 +3804,41 @@ fn voc_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(None)
 }
 
+/// Length of an AMR (narrowband) audio file. After the `#!AMR\n` magic the
+/// stream is a run of speech frames, each beginning with a table-of-contents
+/// octet: the frame-type bits (`(octet >> 3) & 0x0F`) select a fixed frame size
+/// (the table below, in bytes, including the octet). The frames are walked until
+/// an octet with the high bit set, a reserved frame type, or the end of the
+/// source, so the file ends at the last whole frame.
+fn amr_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    // Frame size by frame type for AMR-NB (0 marks a reserved/invalid type).
+    const SIZES: [u64; 16] = [13, 14, 16, 18, 20, 21, 27, 32, 6, 0, 0, 0, 0, 0, 0, 1];
+    const MAGIC_LEN: u64 = 6;
+    let avail = limit.saturating_sub(file_start);
+    let mut pos = MAGIC_LEN;
+    let mut frames = 0u64;
+    loop {
+        let mut b = [0u8; 1];
+        if source.read_at(file_start + pos, &mut b)? < 1 {
+            break;
+        }
+        // The top bit of a storage-mode ToC octet is always zero.
+        if b[0] & 0x80 != 0 {
+            break;
+        }
+        let size = SIZES[((b[0] >> 3) & 0x0F) as usize];
+        if size == 0 || pos.saturating_add(size) > avail {
+            break;
+        }
+        pos += size;
+        frames += 1;
+    }
+    if frames == 0 {
+        return Ok(None);
+    }
+    Ok(Some(pos))
+}
+
 /// Search forward from `file_start` for `marker`, returning the file length
 /// (marker end + `trailing`, clamped to `limit`).
 fn find_footer(
@@ -4262,5 +4298,33 @@ mod tests {
         bytes.pop(); // drop the terminator
         let (_t, src) = source_of(&bytes);
         assert_eq!(voc_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build an AMR file: the magic followed by `count` frames of frame-type
+    /// `ft`, then `trailing` bytes of non-AMR data.
+    fn amr(ft: u8, frame_size: usize, count: usize, trailing: usize) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"#!AMR\n");
+        for _ in 0..count {
+            v.push((ft << 3) & 0x7F); // ToC octet: frame-type bits, top bit clear
+            v.extend(std::iter::repeat(0u8).take(frame_size - 1));
+        }
+        // Trailing bytes with the high bit set stop the frame walk.
+        v.extend(std::iter::repeat(0xFFu8).take(trailing));
+        v
+    }
+
+    #[test]
+    fn amr_length_walks_speech_frames() {
+        // Frame type 7 (12.2 kbit/s) is 32 bytes; 5 frames then junk.
+        let (_t, src) = source_of(&amr(7, 32, 5, 16));
+        assert_eq!(amr_length(&src, 0, src.size).unwrap(), Some(6 + 5 * 32));
+    }
+
+    #[test]
+    fn amr_length_rejects_no_frames() {
+        // The magic immediately followed by an invalid ToC octet (high bit set).
+        let (_t, src) = source_of(b"#!AMR\n\xff\xff");
+        assert_eq!(amr_length(&src, 0, src.size).unwrap(), None);
     }
 }
