@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Doom WAD archives are carved** — `scan` now recovers `.wad` files (`IWAD` /
+  `PWAD`), with the exact length computed from the header's lump count and
+  directory offset (the Doom engine writes the lump directory last). The two
+  fields are range-checked to reject a coincidental magic.
 - **Game Boy / Game Boy Color ROMs are carved** — `scan` now recovers `.gb` ROM
   images, anchored on the 48-byte Nintendo logo (an exact, boot-ROM-verified
   magic) with the exact length read from the cartridge header's size code and the

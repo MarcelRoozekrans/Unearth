@@ -729,6 +729,7 @@ alongside the per-file manifest.
 | blend  | Blender file                                     | block chain to ENDB block   |
 | nes    | NES ROM (iNES / NES 2.0)                         | PRG/CHR bank counts         |
 | gb     | Game Boy / Game Boy Color ROM                    | size code in header (0x148) |
+| wad    | Doom WAD (IWAD/PWAD)                              | lump count + directory offset |
 | ole    | Compound File (OLE2) — doc/xls/ppt/msg/msi       | FAT walk to last used sector |
 | pst    | Outlook data file (PST/OST, Unicode)             | ibFileEof field in header   |
 

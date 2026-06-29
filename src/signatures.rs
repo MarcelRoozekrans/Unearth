@@ -60,6 +60,7 @@
 //! * [`Extent::Blend`] — Blender file: walk the block chain to the `ENDB` block.
 //! * [`Extent::Nes`] — iNES / NES 2.0 ROM: size from the PRG/CHR bank counts.
 //! * [`Extent::Gameboy`] — Game Boy / Color ROM: size from the header size byte.
+//! * [`Extent::Wad`] — Doom WAD: end from the lump count and directory offset.
 //! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
 //! * [`Extent::Wim`] — Windows Imaging (WIM): furthest resource-table extent.
 //! * [`Extent::Swf`] — uncompressed Flash movie (`FWS`): `FileLength` at offset 4.
@@ -247,6 +248,12 @@ pub enum Extent {
     /// header checksum at 0x14D is verified to reject a coincidental logo match.
     /// The rare unofficial size codes are not computed and are rejected.
     Gameboy,
+    /// Doom WAD archive (`IWAD`/`PWAD`): the 12-byte header records the lump
+    /// count and the byte offset of the lump directory. The Doom engine writes
+    /// the directory last, so the file ends at `directory_offset + lumps * 16`
+    /// (each directory entry is 16 bytes). The lump count and directory offset
+    /// are range-checked to reject a coincidental `IWAD`/`PWAD` match.
+    Wad,
     /// MP3 anchored directly on an MPEG (Layer III) frame sync, for the many
     /// MP3s that carry only an ID3v1 trailer or no tag at all (the [`Extent::Mp3`]
     /// anchor needs an ID3v2 tag). The frame chain is walked like [`Extent::Mp3`];
@@ -1058,6 +1065,24 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Gameboy,
         max_size: 8 * MB,
+    },
+    Signature {
+        name: "Doom WAD (IWAD)",
+        ext: "wad",
+        magic: b"IWAD",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Wad,
+        max_size: 2 * GB,
+    },
+    Signature {
+        name: "Doom WAD (PWAD)",
+        ext: "wad",
+        magic: b"PWAD",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Wad,
+        max_size: 2 * GB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.
