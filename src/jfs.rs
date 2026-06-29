@@ -25,6 +25,7 @@ const MAGIC: &[u8; 4] = b"JFS1";
 const SIZE_OFFSET: usize = 0x08; // u64: aggregate size in s_pbsize blocks
 const BSIZE_OFFSET: usize = 0x10; // u32: aggregate (allocation) block size in bytes
 const PBSIZE_OFFSET: usize = 0x18; // u32: physical (hardware/LVM) block size in bytes
+const TIME_OFFSET: usize = 0x58; // u32: s_time.tv_sec (last updated, Unix seconds)
 const UUID_OFFSET: usize = 0x88; // 16 bytes
 const LABEL_OFFSET: usize = 0x98; // 16 bytes, NUL-padded
 /// We read this much of the superblock to cover every field above.
@@ -37,6 +38,8 @@ pub struct Volume {
     size: u64,
     /// Aggregate (allocation) block size in bytes.
     block_size: u64,
+    /// Last-updated time (`s_time`) as Unix seconds, `None` when unset.
+    written: Option<u64>,
     /// Filesystem label (`s_label`), empty when unset.
     label: String,
     /// Filesystem UUID (`s_uuid`), `None` when unset.
@@ -80,6 +83,8 @@ impl Volume {
             .unwrap_or(fallback);
         let block_size =
             u32::from_le_bytes(hdr[BSIZE_OFFSET..BSIZE_OFFSET + 4].try_into().unwrap()) as u64;
+        let time = u32::from_le_bytes(hdr[TIME_OFFSET..TIME_OFFSET + 4].try_into().unwrap());
+        let written = (time != 0).then_some(time as u64);
         let uuid = format_uuid(&hdr[UUID_OFFSET..UUID_OFFSET + 16]);
         let raw = &hdr[LABEL_OFFSET..LABEL_OFFSET + 16];
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
@@ -88,6 +93,7 @@ impl Volume {
             offset,
             size,
             block_size,
+            written,
             label,
             uuid,
         })
@@ -101,6 +107,11 @@ impl Volume {
     /// Aggregate (allocation) block size in bytes.
     pub fn block_size(&self) -> u64 {
         self.block_size
+    }
+
+    /// Last-updated time as Unix seconds, `None` when unset.
+    pub fn written_time(&self) -> Option<u64> {
+        self.written
     }
 
     /// Short filesystem label.
@@ -143,6 +154,7 @@ mod tests {
         v[sb + SIZE_OFFSET..sb + SIZE_OFFSET + 8].copy_from_slice(&blocks.to_le_bytes());
         v[sb + BSIZE_OFFSET..sb + BSIZE_OFFSET + 4].copy_from_slice(&4096u32.to_le_bytes());
         v[sb + PBSIZE_OFFSET..sb + PBSIZE_OFFSET + 4].copy_from_slice(&pbsize.to_le_bytes());
+        v[sb + TIME_OFFSET..sb + TIME_OFFSET + 4].copy_from_slice(&1_600_000_000u32.to_le_bytes());
         v[sb + UUID_OFFSET..sb + UUID_OFFSET + 16].copy_from_slice(uuid);
         let lb = label.as_bytes();
         v[sb + LABEL_OFFSET..sb + LABEL_OFFSET + lb.len()].copy_from_slice(lb);
@@ -168,6 +180,7 @@ mod tests {
         assert_eq!(v.fs_label(), "JFS");
         assert_eq!(v.size(), 128 * 512);
         assert_eq!(v.block_size(), 4096);
+        assert_eq!(v.written_time(), Some(1_600_000_000));
         assert_eq!(v.label(), "archive");
         assert_eq!(
             v.uuid().as_deref(),
