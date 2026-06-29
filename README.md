@@ -401,8 +401,8 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
 (FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, Minix,
-bcachefs, BeFS, UFS/UFS2, EROFS, HFS+, HFS, APFS, Btrfs, LVM2, Linux MD/RAID, Linux
-swap, and LUKS/BitLocker):
+bcachefs, BeFS, UFS/UFS2, EROFS, cramfs, HFS+, HFS, APFS, Btrfs, LVM2, Linux
+MD/RAID, Linux swap, and LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -916,6 +916,11 @@ Common to both strategies:
   build time are reported by `info`/`list_volumes` (from the superblock 1 KiB in,
   magic `0xE0F5E1E2`). Being read-only it has no deleted files to undelete, so use
   `scan` (carving) to extract its (compressed) contents.
+- **cramfs** (the Compressed ROM File System — initrds, embedded systems, and
+  router/appliance firmware) is *recognised* and its size and **label** are
+  reported by `info`/`list_volumes` (from the `0x28CD3D45` magic plus the
+  `Compressed ROMFS` signature at offset 0x10, either byte order). Being read-only
+  it has no deleted files to undelete — use `scan` (carving).
 - **LVM2** (the Linux Logical Volume Manager) physical volumes are *recognised*
   from their `LABELONE` / `LVM2 001` on-disk label, and the PV's size is reported
   by `info`/`list_volumes`. The logical volumes inside are not mapped, so recover
