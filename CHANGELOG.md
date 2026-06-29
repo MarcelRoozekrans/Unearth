@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **romfs volumes are recognised** — the minimal ROM File System (small initrds
+  and embedded systems) is now detected from its `-rom1fs-` magic, so `info` /
+  `list_volumes` report its size and volume name instead of leaving it
+  unrecognised. Read-only, so use `scan` (carving) for its contents.
 - **cramfs volumes are recognised** — the Compressed ROM File System (initrds,
   embedded systems, and router/appliance firmware) is now detected from its
   `0x28CD3D45` magic and `Compressed ROMFS` signature, so `info` / `list_volumes`
