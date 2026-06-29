@@ -399,7 +399,7 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
 (FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, Minix,
-bcachefs, HFS+, HFS, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, and
+bcachefs, BeFS, HFS+, HFS, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, and
 LUKS/BitLocker):
 
 ```sh
@@ -891,6 +891,11 @@ Common to both strategies:
   copy-on-write filesystems here it leaves no stale metadata to scavenge, so it is
   not recovered from metadata — use `scan` (carving). Its total size spans member
   devices rather than a single superblock field, so the source span is reported.
+- **BeFS** (the Be File System — the native filesystem of BeOS and of **Haiku**,
+  its modern open-source successor) is *recognised* and its **volume name** and
+  size are reported by `info`/`list_volumes` (from the superblock 512 bytes in,
+  identified by dual magics, big- or little-endian). Its B+tree metadata is
+  specialised, so it is not recovered from metadata — use `scan` (carving).
 - **LVM2** (the Linux Logical Volume Manager) physical volumes are *recognised*
   from their `LABELONE` / `LVM2 001` on-disk label, and the PV's size is reported
   by `info`/`list_volumes`. The logical volumes inside are not mapped, so recover

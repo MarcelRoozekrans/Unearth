@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **BeFS volumes are recognised** — the Be File System (the native filesystem of
+  BeOS and of Haiku, its modern successor) is now detected from its superblock's
+  dual magics, in either byte order, so `info` / `list_volumes` report its volume
+  name and size instead of leaving it unrecognised. Its B+tree metadata is
+  specialised, so it is not recovered from metadata — use `scan` (carving).
 - **bcachefs volumes are recognised** — the modern copy-on-write Linux filesystem
   (merged into the mainline kernel in 6.7) is now detected from its superblock's
   16-byte magic, so `info` / `list_volumes` report its label and UUID instead of
