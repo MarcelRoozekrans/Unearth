@@ -515,7 +515,8 @@ impl Volume {
 
     /// Total free (unallocated) bytes in the volume, for reporting. Uses the
     /// allocation map (the sum of [`Self::free_extents`]) when available, and
-    /// otherwise the free/used counts recorded in the superblock (XFS, Btrfs).
+    /// otherwise the free/used counts recorded in the superblock (XFS, Btrfs,
+    /// ReiserFS, NILFS2, BeFS).
     /// Unlike `free_extents`, this is just a count — it does not enable
     /// free-space (`--unallocated`) carving. `None` when unknown.
     pub fn free_space(&self, src: &Source) -> Option<u64> {
@@ -525,6 +526,9 @@ impl Volume {
         match self {
             Volume::Xfs(v) => Some(v.free_bytes()),
             Volume::Btrfs(v) => Some(v.free_bytes()),
+            Volume::Reiserfs(v) => Some(v.free_bytes()),
+            Volume::Nilfs2(v) => Some(v.free_bytes()),
+            Volume::Befs(v) => Some(v.free_bytes()),
             _ => None,
         }
     }

@@ -14,6 +14,9 @@ formats.
 
 ### Added
 
+- **Free space reported for ReiserFS, NILFS2, and BeFS** — `info` /
+  `list_volumes` now show how much of these volumes is unallocated, read from the
+  superblock's free/used-block counts (the same as XFS and Btrfs already do).
 - **Allocation unit reported for more filesystems** — `info` / `list_volumes`
   now show the allocation-unit (block/cluster) size for ReiserFS, JFS, NILFS2,
   GFS2, OCFS2, Minix, bcachefs, and BeFS, the same as for the filesystems that

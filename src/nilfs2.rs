@@ -29,6 +29,7 @@ const REV_LEVEL_OFFSET: usize = 0x00; // u32
 const MAGIC_OFFSET: usize = 0x06; // u16
 const LOG_BLOCK_SIZE_OFFSET: usize = 0x14; // u32: block size = 1024 << this
 const DEV_SIZE_OFFSET: usize = 0x20; // u64: block device size in bytes
+const FREE_BLOCKS_OFFSET: usize = 0x50; // u64: free blocks count
 const UUID_OFFSET: usize = 0x98; // 16 bytes
 const VOLUME_NAME_OFFSET: usize = 0xA8; // 80 bytes, NUL-padded
 /// We read this much of the superblock to cover every field above.
@@ -41,6 +42,8 @@ pub struct Volume {
     size: u64,
     /// Block size in bytes.
     block_size: u64,
+    /// Free (unallocated) bytes (`s_free_blocks_count` × block size).
+    free_bytes: u64,
     /// Filesystem label (`s_volume_name`), empty when unset.
     label: String,
     /// Filesystem UUID (`s_uuid`), `None` when unset.
@@ -106,6 +109,11 @@ impl Volume {
         );
         // Block size = 1024 << s_log_block_size; clamp the shift defensively.
         let block_size = 1024u64 << (log_bs & 0x1F);
+        let free_blocks = u64::from_le_bytes(
+            hdr[FREE_BLOCKS_OFFSET..FREE_BLOCKS_OFFSET + 8]
+                .try_into()
+                .unwrap(),
+        );
         let uuid = format_uuid(&hdr[UUID_OFFSET..UUID_OFFSET + 16]);
         let raw = &hdr[VOLUME_NAME_OFFSET..VOLUME_NAME_OFFSET + 80];
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
@@ -114,6 +122,7 @@ impl Volume {
             offset,
             size,
             block_size,
+            free_bytes: free_blocks.saturating_mul(block_size),
             label,
             uuid,
         })
@@ -127,6 +136,11 @@ impl Volume {
     /// Block size in bytes.
     pub fn block_size(&self) -> u64 {
         self.block_size
+    }
+
+    /// Free (unallocated) bytes in the volume.
+    pub fn free_bytes(&self) -> u64 {
+        self.free_bytes
     }
 
     /// Short filesystem label.
@@ -169,6 +183,9 @@ mod tests {
             .copy_from_slice(&CURRENT_REV.to_le_bytes());
         v[sb + MAGIC_OFFSET..sb + MAGIC_OFFSET + 2].copy_from_slice(&MAGIC.to_le_bytes());
         v[sb + DEV_SIZE_OFFSET..sb + DEV_SIZE_OFFSET + 8].copy_from_slice(&dev_size.to_le_bytes());
+        // 50 free blocks of 1 KiB (the default block size in this builder).
+        v[sb + FREE_BLOCKS_OFFSET..sb + FREE_BLOCKS_OFFSET + 8]
+            .copy_from_slice(&50u64.to_le_bytes());
         v[sb + UUID_OFFSET..sb + UUID_OFFSET + 16].copy_from_slice(uuid);
         let lb = label.as_bytes();
         v[sb + VOLUME_NAME_OFFSET..sb + VOLUME_NAME_OFFSET + lb.len()].copy_from_slice(lb);
@@ -193,6 +210,7 @@ mod tests {
         let v = Volume::parse(&src, 0).unwrap();
         assert_eq!(v.fs_label(), "NILFS2");
         assert_eq!(v.size(), 192 * 1024);
+        assert_eq!(v.free_bytes(), 50 * 1024);
         assert_eq!(v.label(), "snaps");
         assert_eq!(
             v.uuid().as_deref(),

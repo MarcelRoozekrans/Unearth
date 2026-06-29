@@ -24,6 +24,7 @@ use crate::source::Source;
 const SB_OFFSETS: [u64; 2] = [65536, 8192];
 /// Byte offsets within the superblock.
 const BLOCK_COUNT_OFFSET: usize = 0x00; // u32
+const FREE_BLOCKS_OFFSET: usize = 0x04; // u32
 const BLOCKSIZE_OFFSET: usize = 0x2C; // u16
 const MAGIC_OFFSET: usize = 0x34; // char[10]
 const UUID_OFFSET: usize = 0x54; // 16 bytes (3.6 only)
@@ -38,6 +39,8 @@ pub struct Volume {
     size: u64,
     /// Allocation block size in bytes.
     block_size: u64,
+    /// Free (unallocated) bytes (`s_free_blocks` × block size).
+    free_bytes: u64,
     /// Filesystem label (`s_label`), empty when unset or on a 3.5 volume.
     label: String,
     /// Filesystem UUID (`s_uuid`), `None` when unset or on a 3.5 volume.
@@ -121,10 +124,16 @@ impl Volume {
         } else {
             (None, String::new())
         };
+        let free_blocks = u32::from_le_bytes(
+            hdr[FREE_BLOCKS_OFFSET..FREE_BLOCKS_OFFSET + 4]
+                .try_into()
+                .unwrap(),
+        ) as u64;
         Ok(Volume {
             offset,
             size,
             block_size: blocksize,
+            free_bytes: free_blocks.saturating_mul(blocksize),
             label,
             uuid,
         })
@@ -138,6 +147,11 @@ impl Volume {
     /// Allocation block size in bytes.
     pub fn block_size(&self) -> u64 {
         self.block_size
+    }
+
+    /// Free (unallocated) bytes in the volume.
+    pub fn free_bytes(&self) -> u64 {
+        self.free_bytes
     }
 
     /// Short filesystem label.
@@ -185,6 +199,9 @@ mod tests {
         let mut v = vec![0u8; total];
         v[sb + BLOCK_COUNT_OFFSET..sb + BLOCK_COUNT_OFFSET + 4]
             .copy_from_slice(&block_count.to_le_bytes());
+        // Mark half the blocks free, for the free-space report.
+        v[sb + FREE_BLOCKS_OFFSET..sb + FREE_BLOCKS_OFFSET + 4]
+            .copy_from_slice(&(block_count / 2).to_le_bytes());
         v[sb + BLOCKSIZE_OFFSET..sb + BLOCKSIZE_OFFSET + 2]
             .copy_from_slice(&blocksize.to_le_bytes());
         v[sb + MAGIC_OFFSET..sb + MAGIC_OFFSET + magic.len()].copy_from_slice(magic);
@@ -220,6 +237,7 @@ mod tests {
         let v = Volume::parse(&src, 0).unwrap();
         assert_eq!(v.fs_label(), "ReiserFS");
         assert_eq!(v.size(), 64 * 4096);
+        assert_eq!(v.free_bytes(), 32 * 4096);
         assert_eq!(v.label(), "backup");
         assert_eq!(
             v.uuid().as_deref(),
