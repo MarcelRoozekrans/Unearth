@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **UFS / UFS2 volumes are recognised** — the BSD Fast File System (also Solaris
+  and historical Unix) is now detected from its superblock magic (8 KiB in for
+  UFS1, 64 KiB for UFS2), in either byte order, so `info` / `list_volumes` report
+  its version, size, and block size instead of leaving it unrecognised. Its
+  cylinder-group layout is unlike the filesystems recovered from metadata, so use
+  `scan` (carving).
 - **BSD disklabels are read** — `info` / `list_volumes` now recognise a BSD
   disklabel (FreeBSD/OpenBSD/NetBSD on a whole-disk "dangerously dedicated"
   layout) as a fourth partition scheme alongside GPT, MBR, and APM, listing each
