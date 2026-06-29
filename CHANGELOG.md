@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **Minix volumes are recognised** — the filesystem the earliest Linux ran on
+  (still found on boot floppies and small/embedded media) is now detected from
+  its superblock, so `info` / `list_volumes` report its on-disk version (v1/v2/v3)
+  and size instead of leaving it unrecognised. All three versions are handled.
+  Minix has no on-disk label or UUID, and the format is long superseded, so it is
+  not recovered from metadata — use `scan` (carving).
 - **OCFS2 volumes are recognised** — the Oracle Cluster File System 2, a
   shared-disk Linux cluster filesystem, is now detected from its `OCFSV2`
   superblock inode (probed across the supported block sizes), so `info` /

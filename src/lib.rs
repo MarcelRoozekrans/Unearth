@@ -67,6 +67,7 @@ pub mod lvm;
 pub mod manifest;
 pub mod mcp;
 pub mod mdraid;
+pub mod minix;
 pub mod nilfs2;
 pub mod ntfs;
 pub mod ocfs2;

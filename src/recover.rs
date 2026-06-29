@@ -28,7 +28,7 @@ use anyhow::{bail, Result};
 use crate::source::Source;
 use crate::{
     apfs, btrfs, encrypted, exfat, ext4, f2fs, fat, gfs2, hfs, hfsplus, iso9660, jfs, lvm, mdraid,
-    nilfs2, ntfs, ocfs2, refs, reiserfs, swap, udf, xfs,
+    minix, nilfs2, ntfs, ocfs2, refs, reiserfs, swap, udf, xfs,
 };
 
 /// Options controlling a recovery run.
@@ -205,6 +205,7 @@ pub enum Volume {
     Nilfs2(nilfs2::Volume),
     Gfs2(gfs2::Volume),
     Ocfs2(ocfs2::Volume),
+    Minix(minix::Volume),
     Lvm(lvm::Volume),
     Mdraid(mdraid::Volume),
     HfsStd(hfs::Volume),
@@ -233,6 +234,7 @@ impl Volume {
             Volume::Nilfs2(v) => v.offset,
             Volume::Gfs2(v) => v.offset,
             Volume::Ocfs2(v) => v.offset,
+            Volume::Minix(v) => v.offset,
             Volume::Lvm(v) => v.offset,
             Volume::Mdraid(v) => v.offset,
             Volume::HfsStd(v) => v.offset,
@@ -261,6 +263,7 @@ impl Volume {
             Volume::Nilfs2(v) => v.size(),
             Volume::Gfs2(v) => v.size(),
             Volume::Ocfs2(v) => v.size(),
+            Volume::Minix(v) => v.size(),
             Volume::Lvm(v) => v.size(),
             Volume::Mdraid(v) => v.size(),
             Volume::HfsStd(v) => v.size(),
@@ -289,6 +292,7 @@ impl Volume {
             Volume::Nilfs2(v) => v.fs_label().to_string(),
             Volume::Gfs2(v) => v.fs_label().to_string(),
             Volume::Ocfs2(v) => v.fs_label().to_string(),
+            Volume::Minix(v) => v.fs_label().to_string(),
             Volume::Lvm(v) => v.fs_label().to_string(),
             Volume::Mdraid(v) => v.fs_label(),
             Volume::HfsStd(v) => v.fs_label().to_string(),
@@ -528,6 +532,7 @@ impl Volume {
             Volume::Nilfs2(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Gfs2(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Ocfs2(v) => v.recover_deleted(src, out_dir, opts),
+            Volume::Minix(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Lvm(v) => v.recover_deleted(src, out_dir, opts),
             Volume::Mdraid(v) => v.recover_deleted(src, out_dir, opts),
             Volume::HfsStd(v) => v.recover_deleted(src, out_dir, opts),
@@ -589,7 +594,7 @@ pub fn detect(src: &Source) -> Result<Vec<Volume>> {
     }
 
     if volumes.is_empty() {
-        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, HFS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
+        bail!("no FAT, exFAT, NTFS, ReFS, ext2/3/4, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, Minix, HFS, HFS+, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap, APM, UDF, ISO 9660, or encrypted (LUKS/BitLocker) volume found");
     }
     Ok(volumes)
 }
@@ -723,6 +728,12 @@ fn try_parse_volume(src: &Source, offset: u64) -> Result<Option<Volume>> {
     if ocfs2::is_ocfs2(src, offset) {
         if let Ok(v) = ocfs2::Volume::parse(src, offset) {
             return Ok(Some(Volume::Ocfs2(v)));
+        }
+    }
+    // Minix keeps its superblock in the second 1 KiB block (past the boot sector).
+    if minix::is_minix(src, offset) {
+        if let Ok(v) = minix::Volume::parse(src, offset) {
+            return Ok(Some(Volume::Minix(v)));
         }
     }
     if lvm::is_lvm(src, offset) {
@@ -886,6 +897,11 @@ pub fn parse_at(src: &Source, offset: u64) -> Result<Volume> {
     if ocfs2::is_ocfs2(src, offset) {
         if let Ok(v) = ocfs2::Volume::parse(src, offset) {
             return Ok(Volume::Ocfs2(v));
+        }
+    }
+    if minix::is_minix(src, offset) {
+        if let Ok(v) = minix::Volume::parse(src, offset) {
+            return Ok(Volume::Minix(v));
         }
     }
     if lvm::is_lvm(src, offset) {
