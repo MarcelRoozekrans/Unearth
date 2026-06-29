@@ -553,6 +553,7 @@ fn file_length(
         Extent::Voc => Ok(voc_length(source, file_start, limit)?),
         Extent::Amr => Ok(amr_length(source, file_start, limit)?),
         Extent::PsxExe => Ok(psxexe_length(source, file_start, limit)?),
+        Extent::AndroidSparse => Ok(android_sparse_length(source, file_start, limit)?),
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
         Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
         Extent::Zip => Ok(zip_length(source, file_start, limit)?),
@@ -3861,6 +3862,46 @@ fn psxexe_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<
     Ok(Some(total))
 }
 
+/// Length of an Android sparse image. After the file header (whose size is at
+/// 0x08) come `total_chunks` (0x14) chunks, each beginning with a chunk header
+/// whose `total_sz` field (at chunk offset 0x08) is the chunk's on-disk size
+/// *including* its header. Summing those from the header end gives the exact
+/// file length. The header sizes and chunk count are range-checked to reject a
+/// coincidental magic.
+fn android_sparse_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 28];
+    if source.read_at(file_start, &mut h)? < 28 || h[0..4] != [0x3a, 0xff, 0x26, 0xed] {
+        return Ok(None);
+    }
+    let file_hdr_sz = u16::from_le_bytes(h[0x08..0x0A].try_into().unwrap()) as u64;
+    let chunk_hdr_sz = u16::from_le_bytes(h[0x0A..0x0C].try_into().unwrap()) as u64;
+    let total_chunks = u32::from_le_bytes(h[0x14..0x18].try_into().unwrap()) as u64;
+    // The standard headers are 28 and 12 bytes; bound them and the chunk count.
+    if !(28..=256).contains(&file_hdr_sz) || !(12..=64).contains(&chunk_hdr_sz) {
+        return Ok(None);
+    }
+    let mut pos = file_start.saturating_add(file_hdr_sz);
+    for _ in 0..total_chunks {
+        if pos.saturating_add(chunk_hdr_sz) > limit {
+            return Ok(None);
+        }
+        let mut c = [0u8; 12];
+        if source.read_at(pos, &mut c)? < 12 {
+            return Ok(None);
+        }
+        // `total_sz` is the chunk's whole on-disk size, header included.
+        let total_sz = u32::from_le_bytes(c[0x08..0x0C].try_into().unwrap()) as u64;
+        if total_sz < chunk_hdr_sz {
+            return Ok(None); // a chunk must at least contain its header
+        }
+        pos = pos.saturating_add(total_sz);
+    }
+    if pos > limit {
+        return Ok(None);
+    }
+    Ok(Some(pos - file_start))
+}
+
 /// Search forward from `file_start` for `marker`, returning the file length
 /// (marker end + `trailing`, clamped to `limit`).
 fn find_footer(
@@ -4377,5 +4418,55 @@ mod tests {
         // A non-PS-X header is rejected.
         let (_t, src) = source_of(&vec![0u8; 0x1000]);
         assert_eq!(psxexe_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build an Android sparse image: a 28-byte file header plus `chunks`
+    /// chunks, each a 12-byte header recording the given on-disk `total_sz`.
+    fn android_sparse(chunks: &[u32]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(&[0x3a, 0xff, 0x26, 0xed]); // magic
+        v.extend_from_slice(&1u16.to_le_bytes()); // major
+        v.extend_from_slice(&0u16.to_le_bytes()); // minor
+        v.extend_from_slice(&28u16.to_le_bytes()); // file_hdr_sz
+        v.extend_from_slice(&12u16.to_le_bytes()); // chunk_hdr_sz
+        v.extend_from_slice(&4096u32.to_le_bytes()); // blk_sz
+        v.extend_from_slice(&0u32.to_le_bytes()); // total_blks
+        v.extend_from_slice(&(chunks.len() as u32).to_le_bytes()); // total_chunks
+        v.extend_from_slice(&0u32.to_le_bytes()); // checksum
+        for &total_sz in chunks {
+            v.extend_from_slice(&0xCAC1u16.to_le_bytes()); // raw chunk
+            v.extend_from_slice(&0u16.to_le_bytes());
+            v.extend_from_slice(&1u32.to_le_bytes()); // chunk_sz (blocks)
+            v.extend_from_slice(&total_sz.to_le_bytes());
+            // Pad out to total_sz (header included); saturating for the
+            // intentionally-too-small case the rejection test uses.
+            v.resize(v.len() + (total_sz as usize).saturating_sub(12), 0);
+        }
+        v
+    }
+
+    #[test]
+    fn android_sparse_length_sums_chunk_sizes() {
+        // Two chunks of 100 and 200 on-disk bytes: 28 + 100 + 200.
+        let bytes = android_sparse(&[100, 200]);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(
+            android_sparse_length(&src, 0, src.size).unwrap(),
+            Some(total)
+        );
+        assert_eq!(total, 28 + 100 + 200);
+    }
+
+    #[test]
+    fn android_sparse_length_rejects_bad_header_and_overrun() {
+        // Not a sparse image.
+        let (_t, src) = source_of(&vec![0u8; 4096]);
+        assert_eq!(android_sparse_length(&src, 0, src.size).unwrap(), None);
+
+        // A chunk total_sz smaller than the chunk header is rejected.
+        let bytes = android_sparse(&[8]);
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(android_sparse_length(&src, 0, src.size).unwrap(), None);
     }
 }
