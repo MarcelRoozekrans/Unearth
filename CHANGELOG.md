@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **Sega Mega Drive / Genesis ROMs are carved** — `scan` now recovers `.md` ROM
+  images, anchored on the `SEGA` cartridge-header signature at 0x100 with the
+  exact length taken from the ROM end address in the header. The start address
+  and a plausible end address are checked to reject a coincidental match. (This
+  is the plain, non-interleaved ROM layout.)
 - **Sun/NeXT `.au` audio is carved** — `scan` now recovers `.au` / `.snd` audio
   files (the default sound format in Java and classic Unix), with the exact length
   taken from the header's data offset and data size. Streamed files with an
