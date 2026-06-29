@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **BSD disklabels are read** — `info` / `list_volumes` now recognise a BSD
+  disklabel (FreeBSD/OpenBSD/NetBSD on a whole-disk "dangerously dedicated"
+  layout) as a fourth partition scheme alongside GPT, MBR, and APM, listing each
+  partition's filesystem type, letter, and byte range. Both byte orders are
+  handled, and the dual `d_magic` is required to avoid false matches.
 - **Volume timestamps reported for NILFS2 and JFS** — `info` now shows NILFS2's
   creation (`s_ctime`) and last-write (`s_wtime`) times and JFS's last-updated
   time (`s_time`), the same way the ext / NTFS / HFS+ / ISO 9660 backends already

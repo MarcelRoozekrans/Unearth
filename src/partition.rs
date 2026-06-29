@@ -2,7 +2,8 @@
 //!
 //! [`recover::detect`](crate::recover::detect) walks the partition table to find
 //! *filesystems*; this module instead reports the **table itself** — the scheme
-//! (GPT or MBR) and each entry's type, name, and byte range — so a user can see
+//! (GPT, MBR, Apple Partition Map, or BSD disklabel) and each entry's type, name,
+//! and byte range — so a user can see
 //! the on-disk layout even for partitions whose filesystem isn't recovered
 //! (e.g. an EFI System Partition, a swap partition, or an empty slot).
 //!
@@ -23,6 +24,9 @@ pub enum Scheme {
     Mbr,
     /// Apple Partition Map (PowerPC-era Macs, older Mac disks, hybrid CDs).
     Apm,
+    /// BSD disklabel (FreeBSD/OpenBSD/NetBSD, on a whole-disk "dangerously
+    /// dedicated" layout).
+    Bsd,
     /// No partition table (a bare filesystem, or an unrecognised source).
     None,
 }
@@ -103,6 +107,14 @@ pub fn read(src: &Source) -> Table {
             disk_guid: None,
         };
     }
+    if let Some(partitions) = read_bsd(src) {
+        return Table {
+            scheme: Scheme::Bsd,
+            partitions,
+            from_backup: false,
+            disk_guid: None,
+        };
+    }
     Table {
         scheme: Scheme::None,
         partitions: Vec::new(),
@@ -171,6 +183,103 @@ pub(crate) fn read_apm(src: &Source) -> Option<Vec<Partition>> {
 fn apm_string(raw: &[u8]) -> String {
     let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
     String::from_utf8_lossy(&raw[..end]).trim().to_string()
+}
+
+/// The BSD disklabel sits in the second sector (512 bytes in) on a whole-disk
+/// layout.
+const BSD_LABEL_OFFSET: u64 = 512;
+/// `d_magic` / `d_magic2` (`0x82564557`), required at both offsets to identify
+/// the label and reject a coincidental 4-byte match.
+const BSD_MAGIC: u32 = 0x8256_4557;
+
+/// Map a BSD `p_fstype` byte to a human-readable type. Only the widely-agreed
+/// values are named; anything else is shown as its raw code.
+fn bsd_fstype(t: u8) -> String {
+    match t {
+        1 => "BSD swap".to_string(),
+        7 => "4.2BSD (FFS)".to_string(),
+        8 => "MS-DOS".to_string(),
+        9 => "4.4LFS".to_string(),
+        11 => "HPFS".to_string(),
+        12 => "ISO9660".to_string(),
+        13 => "boot".to_string(),
+        14 => "Vinum".to_string(),
+        15 => "RAID".to_string(),
+        17 => "ext2fs".to_string(),
+        18 => "NTFS".to_string(),
+        other => format!("0x{other:02x}"),
+    }
+}
+
+/// Parse a BSD disklabel (FreeBSD/OpenBSD/NetBSD). The label sits 512 bytes in
+/// and carries `d_magic` at offset 0 and again at 0x84 — both are required, so a
+/// coincidental 4-byte match is rejected. Partition entries (each 16 bytes, from
+/// offset 0x94) give a sector offset, sector count, and filesystem type; the
+/// sector size is `d_secsize`. The label may be big- or little-endian (BSD ran on
+/// both); the byte order is taken from `d_magic`. Returns `None` when absent.
+pub(crate) fn read_bsd(src: &Source) -> Option<Vec<Partition>> {
+    let mut lbl = [0u8; 512];
+    if src.read_at(BSD_LABEL_OFFSET, &mut lbl).ok()? < 512 {
+        return None;
+    }
+    let big = if u32::from_le_bytes(lbl[0..4].try_into().unwrap()) == BSD_MAGIC {
+        false
+    } else if u32::from_be_bytes(lbl[0..4].try_into().unwrap()) == BSD_MAGIC {
+        true
+    } else {
+        return None;
+    };
+    let rd32 = |o: usize| {
+        let a = lbl[o..o + 4].try_into().unwrap();
+        if big {
+            u32::from_be_bytes(a)
+        } else {
+            u32::from_le_bytes(a)
+        }
+    };
+    let rd16 = |o: usize| {
+        let a = lbl[o..o + 2].try_into().unwrap();
+        if big {
+            u16::from_be_bytes(a)
+        } else {
+            u16::from_le_bytes(a)
+        }
+    };
+    // The second magic confirms this is really a disklabel.
+    if rd32(0x84) != BSD_MAGIC {
+        return None;
+    }
+    let secsize = match rd32(0x28) as u64 {
+        s if (256..=65536).contains(&s) => s,
+        _ => 512,
+    };
+    // Partition entries start at 0x94; the array fits within the 512-byte label
+    // for the usual 8/16 partitions (and the documented maximum of 22).
+    let npart = (rd16(0x8A) as usize).min(22);
+    let mut partitions = Vec::new();
+    for i in 0..npart {
+        let base = 0x94 + i * 16;
+        let p_size = rd32(base) as u64;
+        let p_offset = rd32(base + 4) as u64;
+        let fstype = lbl[base + 0xC];
+        if p_size == 0 || fstype == 0 {
+            continue; // empty or unused slot (e.g. the whole-disk `c` partition)
+        }
+        partitions.push(Partition {
+            kind: bsd_fstype(fstype),
+            // BSD partitions are identified by a letter, `a` first.
+            name: Some(((b'a' + i as u8) as char).to_string()),
+            uuid: None,
+            start: p_offset.checked_mul(secsize)?,
+            size: p_size.checked_mul(secsize)?,
+            attributes: Vec::new(),
+        });
+    }
+    if partitions.is_empty() {
+        None
+    } else {
+        Some(partitions)
+    }
 }
 
 /// Read a GPT, preferring the primary header at LBA 1 but falling back to the
@@ -675,5 +784,34 @@ mod tests {
         assert_eq!(table.partitions[0].size, 100 * 512);
         assert_eq!(table.partitions[1].kind, "Apple_Free");
         assert_eq!(table.partitions[1].name, None);
+    }
+
+    #[test]
+    fn reads_a_bsd_disklabel() {
+        let mut disk = vec![0u8; 16 * 512];
+        let lbl = BSD_LABEL_OFFSET as usize;
+        disk[lbl..lbl + 4].copy_from_slice(&BSD_MAGIC.to_le_bytes());
+        disk[lbl + 0x28..lbl + 0x2C].copy_from_slice(&512u32.to_le_bytes()); // d_secsize
+        disk[lbl + 0x84..lbl + 0x88].copy_from_slice(&BSD_MAGIC.to_le_bytes()); // d_magic2
+        disk[lbl + 0x8A..lbl + 0x8C].copy_from_slice(&3u16.to_le_bytes()); // d_npartitions
+        let mut put = |i: usize, size: u32, off: u32, fstype: u8| {
+            let b = lbl + 0x94 + i * 16;
+            disk[b..b + 4].copy_from_slice(&size.to_le_bytes());
+            disk[b + 4..b + 8].copy_from_slice(&off.to_le_bytes());
+            disk[b + 0xC] = fstype;
+        };
+        put(0, 100, 16, 7); // 'a' = 4.2BSD (FFS)
+        put(1, 20, 116, 1); // 'b' = swap
+        put(2, 136, 0, 0); // 'c' = whole disk, unused → skipped
+        let (_t, src) = source_of(&disk);
+        let table = read(&src);
+        assert_eq!(table.scheme, Scheme::Bsd);
+        assert_eq!(table.partitions.len(), 2);
+        assert_eq!(table.partitions[0].kind, "4.2BSD (FFS)");
+        assert_eq!(table.partitions[0].name.as_deref(), Some("a"));
+        assert_eq!(table.partitions[0].start, 16 * 512);
+        assert_eq!(table.partitions[0].size, 100 * 512);
+        assert_eq!(table.partitions[1].kind, "BSD swap");
+        assert_eq!(table.partitions[1].name.as_deref(), Some("b"));
     }
 }
