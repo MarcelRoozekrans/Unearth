@@ -546,6 +546,7 @@ fn file_length(
         Extent::Shp => Ok(shp_length(source, file_start, limit)?),
         Extent::Blend => Ok(blend_length(source, file_start, limit)?),
         Extent::Nes => Ok(nes_length(source, file_start, limit)?),
+        Extent::Gameboy => Ok(gameboy_length(source, file_start, limit)?),
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
         Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
         Extent::Zip => Ok(zip_length(source, file_start, limit)?),
@@ -3652,6 +3653,39 @@ fn nes_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(total))
 }
 
+/// Length of a Game Boy / Game Boy Color ROM. The cartridge header begins at
+/// offset 0x100; the ROM size at 0x148 encodes the total size as `32 KiB <<
+/// code` for codes 0–8. The header checksum at 0x14D (over bytes 0x134–0x14C) is
+/// verified to reject a coincidental match of the 48-byte logo, and the rare
+/// unofficial size codes are rejected (their size is not header-encoded here).
+fn gameboy_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x150];
+    if source.read_at(file_start, &mut h)? < 0x150 {
+        return Ok(None);
+    }
+    // The boot ROM verifies this logo, so a real ROM reproduces it exactly.
+    if h[0x104..0x134] != crate::signatures::gameboy_logo()[..] {
+        return Ok(None);
+    }
+    // Header checksum: x = 0; for b in 0x134..=0x14C { x = x - b - 1 }.
+    let mut checksum = 0u8;
+    for &b in &h[0x134..=0x14C] {
+        checksum = checksum.wrapping_sub(b).wrapping_sub(1);
+    }
+    if checksum != h[0x14D] {
+        return Ok(None);
+    }
+    let code = h[0x148];
+    if code > 8 {
+        return Ok(None); // unofficial / unknown size code
+    }
+    let total = (32 * 1024u64) << code;
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// Search forward from `file_start` for `marker`, returning the file length
 /// (marker end + `trailing`, clamped to `limit`).
 fn find_footer(
@@ -3923,5 +3957,56 @@ mod tests {
         assert_eq!(find_subsequence(b"hello world", b"wor"), Some(6));
         assert_eq!(find_subsequence(b"hello", b"xyz"), None);
         assert_eq!(find_subsequence(b"abc", b""), None);
+    }
+
+    /// Build a Game Boy ROM image of `total` bytes with the size `code` at 0x148
+    /// and a correct header checksum.
+    fn gameboy_rom(code: u8, total: usize) -> Vec<u8> {
+        let mut v = vec![0u8; total];
+        v[0x104..0x134].copy_from_slice(&crate::signatures::gameboy_logo());
+        v[0x148] = code;
+        // Header checksum over bytes 0x134..=0x14C.
+        let mut checksum = 0u8;
+        for &b in &v[0x134..=0x14C] {
+            checksum = checksum.wrapping_sub(b).wrapping_sub(1);
+        }
+        v[0x14D] = checksum;
+        v
+    }
+
+    fn source_of(bytes: &[u8]) -> (tempfile::TempDir, Source) {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("rom.gb");
+        std::fs::write(&p, bytes).unwrap();
+        (tmp, Source::open(&p).unwrap())
+    }
+
+    #[test]
+    fn gameboy_length_reads_the_size_code() {
+        // Code 0 → 32 KiB.
+        let (_t, src) = source_of(&gameboy_rom(0, 32 * 1024));
+        assert_eq!(gameboy_length(&src, 0, src.size).unwrap(), Some(32 * 1024));
+        // Code 2 → 128 KiB.
+        let (_t, src) = source_of(&gameboy_rom(2, 128 * 1024));
+        assert_eq!(gameboy_length(&src, 0, src.size).unwrap(), Some(128 * 1024));
+    }
+
+    #[test]
+    fn gameboy_length_rejects_bad_checksum_logo_and_size() {
+        // A corrupt header checksum is rejected even with a valid logo.
+        let mut rom = gameboy_rom(0, 32 * 1024);
+        rom[0x14D] ^= 0xFF;
+        let (_t, src) = source_of(&rom);
+        assert_eq!(gameboy_length(&src, 0, src.size).unwrap(), None);
+
+        // A wrong logo is rejected.
+        let mut rom = gameboy_rom(0, 32 * 1024);
+        rom[0x104] ^= 0xFF;
+        let (_t, src) = source_of(&rom);
+        assert_eq!(gameboy_length(&src, 0, src.size).unwrap(), None);
+
+        // An unofficial size code is rejected.
+        let (_t, src) = source_of(&gameboy_rom(0x52, 32 * 1024));
+        assert_eq!(gameboy_length(&src, 0, src.size).unwrap(), None);
     }
 }

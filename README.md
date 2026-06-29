@@ -728,6 +728,7 @@ alongside the per-file manifest.
 | shp    | ESRI Shapefile                                   | length field in header (BE)  |
 | blend  | Blender file                                     | block chain to ENDB block   |
 | nes    | NES ROM (iNES / NES 2.0)                         | PRG/CHR bank counts         |
+| gb     | Game Boy / Game Boy Color ROM                    | size code in header (0x148) |
 | ole    | Compound File (OLE2) — doc/xls/ppt/msg/msi       | FAT walk to last used sector |
 | pst    | Outlook data file (PST/OST, Unicode)             | ibFileEof field in header   |
 
