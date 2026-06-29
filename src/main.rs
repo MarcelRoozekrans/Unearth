@@ -735,6 +735,7 @@ fn partition_scheme_str(scheme: filerecovery::partition::Scheme) -> &'static str
         Scheme::Gpt => "gpt",
         Scheme::Mbr => "mbr",
         Scheme::Apm => "apm",
+        Scheme::Bsd => "bsd",
         Scheme::None => "none",
     }
 }

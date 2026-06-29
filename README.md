@@ -23,7 +23,7 @@ its partition table is gone.
 
 ### `undelete` — filesystem-aware recovery (FAT12/16/32, exFAT, NTFS, ext2/3/4, HFS+)
 
-The filesystem type is auto-detected (bare volume, or a GPT, MBR, or APM partition
+The filesystem type is auto-detected (bare volume, or a GPT, MBR, APM, or BSD partition
 table), and FAT, exFAT, NTFS, ext2/3/4, and HFS+/HFSX are all handled by the
 same `undelete` command.
 
@@ -266,11 +266,13 @@ filerecovery info disk.img --json      # machine-readable layout for scripting
 filerecovery info disk.img --scan      # find lost partitions (whole-disk signature scan)
 ```
 
-The **partition table** is shown first when present: the scheme (GPT, MBR, or
+The **partition table** is shown first when present: the scheme (GPT, MBR,
 **APM** — the Apple Partition Map used by PowerPC-era Macs, older Mac disks, and
-hybrid CDs) and each entry's type (a friendly name for known GPT type GUIDs / MBR
-type bytes, the APM type string such as `Apple_HFS`, or the raw GUID/`0xNN`
-otherwise), its name, and its byte range. This surfaces the on-disk layout even
+hybrid CDs — or a **BSD disklabel**, used by FreeBSD/OpenBSD/NetBSD on a
+whole-disk layout) and each entry's type (a friendly name for known GPT type
+GUIDs / MBR type bytes, the APM type string such as `Apple_HFS`, the BSD
+filesystem type such as `4.2BSD (FFS)`, or the raw GUID/`0xNN` otherwise), its
+name, and its byte range. This surfaces the on-disk layout even
 for partitions whose filesystem isn't recovered (an EFI System Partition, a swap
 partition, an empty slot). `--json` adds `partition_scheme` and a `partitions`
 array. For MBR disks, the **logical partitions** inside an extended partition are
@@ -473,8 +475,8 @@ filerecovery undelete card.img -o recovered
 sudo filerecovery undelete /dev/mmcblk0 -o recovered   # SD card, needs root
 ```
 
-The filesystem and volume are auto-detected (bare volume, or a GPT, MBR, or APM
-partition table). Override the location with `--offset <BYTES>` if needed.
+The filesystem and volume are auto-detected (bare volume, or a GPT, MBR, APM, or
+BSD partition table). Override the location with `--offset <BYTES>` if needed.
 
 `undelete` options:
 

@@ -622,6 +622,7 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                 crate::partition::Scheme::Gpt => "gpt",
                 crate::partition::Scheme::Mbr => "mbr",
                 crate::partition::Scheme::Apm => "apm",
+                crate::partition::Scheme::Bsd => "bsd",
                 crate::partition::Scheme::None => "none",
             };
             let parts: Vec<Json> = table
