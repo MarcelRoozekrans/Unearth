@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **Sun/NeXT `.au` audio is carved** — `scan` now recovers `.au` / `.snd` audio
+  files (the default sound format in Java and classic Unix), with the exact length
+  taken from the header's data offset and data size. Streamed files with an
+  unknown size are skipped, and the data offset and encoding code are
+  range-checked to reject a coincidental `.snd` match.
 - **Doom WAD archives are carved** — `scan` now recovers `.wad` files (`IWAD` /
   `PWAD`), with the exact length computed from the header's lump count and
   directory offset (the Doom engine writes the lump directory last). The two

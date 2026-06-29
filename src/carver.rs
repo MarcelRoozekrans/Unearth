@@ -548,6 +548,7 @@ fn file_length(
         Extent::Nes => Ok(nes_length(source, file_start, limit)?),
         Extent::Gameboy => Ok(gameboy_length(source, file_start, limit)?),
         Extent::Wad => Ok(wad_length(source, file_start, limit)?),
+        Extent::Au => Ok(au_length(source, file_start, limit)?),
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
         Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
         Extent::Zip => Ok(zip_length(source, file_start, limit)?),
@@ -3711,6 +3712,35 @@ fn wad_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(total))
 }
 
+/// Length of a Sun/NeXT `.au` audio file. The big-endian header gives the byte
+/// offset of the audio data (>= 24) and its size, so the file ends at
+/// `data_offset + data_size`. A size of `0xFFFFFFFF` marks an unknown (streamed)
+/// length, which cannot be carved. The data offset and encoding code are
+/// range-checked to reject a coincidental `.snd` match.
+fn au_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 16];
+    if source.read_at(file_start, &mut h)? < 16 || &h[0..4] != b".snd" {
+        return Ok(None);
+    }
+    let data_offset = u32::from_be_bytes(h[4..8].try_into().unwrap()) as u64;
+    let data_size = u32::from_be_bytes(h[8..12].try_into().unwrap());
+    let encoding = u32::from_be_bytes(h[12..16].try_into().unwrap());
+    // The data starts after the 24-byte fixed header; a known encoding code
+    // (1..=27) and a bounded annotation area guard the 4-byte magic.
+    if !(24..=1024 * 1024).contains(&data_offset) || !(1..=27).contains(&encoding) {
+        return Ok(None);
+    }
+    // An unknown/streamed size has no on-disk end to carve to.
+    if data_size == u32::MAX {
+        return Ok(None);
+    }
+    let total = data_offset.saturating_add(data_size as u64);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// Search forward from `file_start` for `marker`, returning the file length
 /// (marker end + `trailing`, clamped to `limit`).
 fn find_footer(
@@ -4070,5 +4100,37 @@ mod tests {
         bytes[8..12].copy_from_slice(&4u32.to_le_bytes());
         let (_t, src) = source_of(&bytes);
         assert_eq!(wad_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a `.au` audio file: 24-byte header + `data_size` bytes of data.
+    fn au(data_offset: u32, data_size: u32, encoding: u32, total: usize) -> Vec<u8> {
+        let mut v = vec![0u8; total];
+        v[0..4].copy_from_slice(b".snd");
+        v[4..8].copy_from_slice(&data_offset.to_be_bytes());
+        v[8..12].copy_from_slice(&data_size.to_be_bytes());
+        v[12..16].copy_from_slice(&encoding.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn au_length_adds_data_offset_and_size() {
+        // 24-byte header + 1000 bytes of 16-bit PCM (encoding 3).
+        let (_t, src) = source_of(&au(24, 1000, 3, 2048));
+        assert_eq!(au_length(&src, 0, src.size).unwrap(), Some(24 + 1000));
+    }
+
+    #[test]
+    fn au_length_rejects_unknown_size_and_bad_fields() {
+        // An unknown (streamed) size cannot be carved.
+        let (_t, src) = source_of(&au(24, u32::MAX, 1, 2048));
+        assert_eq!(au_length(&src, 0, src.size).unwrap(), None);
+
+        // A data offset inside the fixed header is rejected.
+        let (_t, src) = source_of(&au(8, 100, 1, 2048));
+        assert_eq!(au_length(&src, 0, src.size).unwrap(), None);
+
+        // An unknown encoding code is rejected.
+        let (_t, src) = source_of(&au(24, 100, 99, 2048));
+        assert_eq!(au_length(&src, 0, src.size).unwrap(), None);
     }
 }
