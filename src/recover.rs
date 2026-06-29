@@ -334,28 +334,31 @@ impl Volume {
 
     /// The filesystem's creation time as Unix seconds, when the backend records
     /// one — ext's `s_mkfs_time`, NTFS's `$Volume` `$STANDARD_INFORMATION`
-    /// creation time, HFS+'s `createDate`, or an ISO 9660 PVD creation date.
-    /// `None` otherwise.
+    /// creation time, HFS+'s `createDate`, an ISO 9660 PVD creation date, or
+    /// NILFS2's `s_ctime`. `None` otherwise.
     pub fn created_time(&self) -> Option<u64> {
         match self {
             Volume::Ext(v) => v.created_time(),
             Volume::Ntfs(v) => v.created_time(),
             Volume::Hfs(v) => v.created_time(),
             Volume::Iso(v) => v.created_time(),
+            Volume::Nilfs2(v) => v.created_time(),
             _ => None,
         }
     }
 
     /// The filesystem's last-write time as Unix seconds, when the backend records
     /// one — ext's `s_wtime`, NTFS's `$Volume` `$STANDARD_INFORMATION`
-    /// modification time, HFS+'s `modifyDate`, or an ISO 9660 PVD modification
-    /// date. `None` otherwise.
+    /// modification time, HFS+'s `modifyDate`, an ISO 9660 PVD modification
+    /// date, NILFS2's `s_wtime`, or JFS's `s_time`. `None` otherwise.
     pub fn written_time(&self) -> Option<u64> {
         match self {
             Volume::Ext(v) => v.written_time(),
             Volume::Ntfs(v) => v.written_time(),
             Volume::Hfs(v) => v.written_time(),
             Volume::Iso(v) => v.written_time(),
+            Volume::Nilfs2(v) => v.written_time(),
+            Volume::Jfs(v) => v.written_time(),
             _ => None,
         }
     }

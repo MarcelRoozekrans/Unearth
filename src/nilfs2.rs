@@ -30,6 +30,8 @@ const MAGIC_OFFSET: usize = 0x06; // u16
 const LOG_BLOCK_SIZE_OFFSET: usize = 0x14; // u32: block size = 1024 << this
 const DEV_SIZE_OFFSET: usize = 0x20; // u64: block device size in bytes
 const FREE_BLOCKS_OFFSET: usize = 0x50; // u64: free blocks count
+const CTIME_OFFSET: usize = 0x58; // u64: s_ctime (creation, Unix seconds)
+const WTIME_OFFSET: usize = 0x68; // u64: s_wtime (last write, Unix seconds)
 const STATE_OFFSET: usize = 0x74; // u16: s_state (valid / error bits)
 /// `s_state` bits: the filesystem is valid, and not flagged with errors.
 const STATE_VALID_FS: u16 = 0x0001;
@@ -50,6 +52,10 @@ pub struct Volume {
     free_bytes: u64,
     /// Whether the volume is marked valid and free of errors (`s_state`).
     clean: bool,
+    /// Creation time (`s_ctime`) as Unix seconds, `None` when unset.
+    created: Option<u64>,
+    /// Last-write time (`s_wtime`) as Unix seconds, `None` when unset.
+    written: Option<u64>,
     /// Filesystem label (`s_volume_name`), empty when unset.
     label: String,
     /// Filesystem UUID (`s_uuid`), `None` when unset.
@@ -122,6 +128,12 @@ impl Volume {
         );
         let state = u16::from_le_bytes(hdr[STATE_OFFSET..STATE_OFFSET + 2].try_into().unwrap());
         let clean = state & STATE_VALID_FS != 0 && state & STATE_ERROR_FS == 0;
+        let read_time = |off: usize| {
+            let t = u64::from_le_bytes(hdr[off..off + 8].try_into().unwrap());
+            (t != 0).then_some(t)
+        };
+        let created = read_time(CTIME_OFFSET);
+        let written = read_time(WTIME_OFFSET);
         let uuid = format_uuid(&hdr[UUID_OFFSET..UUID_OFFSET + 16]);
         let raw = &hdr[VOLUME_NAME_OFFSET..VOLUME_NAME_OFFSET + 80];
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
@@ -132,6 +144,8 @@ impl Volume {
             block_size,
             free_bytes: free_blocks.saturating_mul(block_size),
             clean,
+            created,
+            written,
             label,
             uuid,
         })
@@ -155,6 +169,16 @@ impl Volume {
     /// Whether the volume is marked valid and free of errors.
     pub fn is_clean(&self) -> bool {
         self.clean
+    }
+
+    /// Creation time as Unix seconds, `None` when unset.
+    pub fn created_time(&self) -> Option<u64> {
+        self.created
+    }
+
+    /// Last-write time as Unix seconds, `None` when unset.
+    pub fn written_time(&self) -> Option<u64> {
+        self.written
     }
 
     /// Short filesystem label.
@@ -202,6 +226,10 @@ mod tests {
             .copy_from_slice(&50u64.to_le_bytes());
         // Valid filesystem, no errors.
         v[sb + STATE_OFFSET..sb + STATE_OFFSET + 2].copy_from_slice(&STATE_VALID_FS.to_le_bytes());
+        v[sb + CTIME_OFFSET..sb + CTIME_OFFSET + 8]
+            .copy_from_slice(&1_600_000_000u64.to_le_bytes());
+        v[sb + WTIME_OFFSET..sb + WTIME_OFFSET + 8]
+            .copy_from_slice(&1_600_000_500u64.to_le_bytes());
         v[sb + UUID_OFFSET..sb + UUID_OFFSET + 16].copy_from_slice(uuid);
         let lb = label.as_bytes();
         v[sb + VOLUME_NAME_OFFSET..sb + VOLUME_NAME_OFFSET + lb.len()].copy_from_slice(lb);
@@ -228,6 +256,8 @@ mod tests {
         assert_eq!(v.size(), 192 * 1024);
         assert_eq!(v.free_bytes(), 50 * 1024);
         assert!(v.is_clean());
+        assert_eq!(v.created_time(), Some(1_600_000_000));
+        assert_eq!(v.written_time(), Some(1_600_000_500));
         assert_eq!(v.label(), "snaps");
         assert_eq!(
             v.uuid().as_deref(),

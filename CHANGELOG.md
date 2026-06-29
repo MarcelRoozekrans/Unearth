@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Volume timestamps reported for NILFS2 and JFS** — `info` now shows NILFS2's
+  creation (`s_ctime`) and last-write (`s_wtime`) times and JFS's last-updated
+  time (`s_time`), the same way the ext / NTFS / HFS+ / ISO 9660 backends already
+  report volume timestamps.
 - **Clean/dirty state reported for ReiserFS and NILFS2** — `info` now flags
   whether these volumes were cleanly unmounted (a dirty volume is a sign the
   filesystem may need a check and that recovery may be less reliable), the same
