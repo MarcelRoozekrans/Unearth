@@ -69,6 +69,7 @@ pub mod mcp;
 pub mod mdraid;
 pub mod nilfs2;
 pub mod ntfs;
+pub mod ocfs2;
 pub mod partition;
 pub mod recover;
 pub mod refs;

@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **OCFS2 volumes are recognised** — the Oracle Cluster File System 2, a
+  shared-disk Linux cluster filesystem, is now detected from its `OCFSV2`
+  superblock inode (probed across the supported block sizes), so `info` /
+  `list_volumes` report its size, label, and UUID instead of leaving it
+  unrecognised. Its metadata is cluster-managed, so it is not recovered from
+  metadata — use `scan` (carving).
 - **GFS2 / GFS volumes are recognised** — Red Hat's Global File System 2 (and the
   original GFS), a shared-disk cluster filesystem, is now detected from its
   superblock's big-endian `0x01161970` magic, so `info` / `list_volumes` report
