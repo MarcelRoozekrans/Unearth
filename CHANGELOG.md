@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **ISO 9660 disc images are carved** — `scan` now recovers `.iso` images
+  (CD/DVD filesystems, distro installers, optical-media backups). The exact
+  length comes from the primary volume descriptor at sector 16: the volume
+  space size multiplied by the logical block size. The descriptor type/version
+  and the both-endian halves of each field must agree, rejecting a coincidental
+  `CD001` match. This complements the existing ISO 9660 filesystem reader.
 - **Android sparse images are carved** — `scan` now recovers `.simg` sparse
   images (the format `fastboot` and Android factory images use), with the exact
   length summed from each chunk header's on-disk size. The header sizes and chunk
