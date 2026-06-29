@@ -65,6 +65,7 @@
 //! * [`Extent::Genesis`] — Sega Mega Drive / Genesis ROM: end address in header.
 //! * [`Extent::Voc`] — Creative Voice audio: walk the block chain to the end.
 //! * [`Extent::Amr`] — AMR audio: walk fixed-size speech frames to the end.
+//! * [`Extent::PsxExe`] — PlayStation executable: 2 KiB header plus text size.
 //! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
 //! * [`Extent::Wim`] — Windows Imaging (WIM): furthest resource-table extent.
 //! * [`Extent::Swf`] — uncompressed Flash movie (`FWS`): `FileLength` at offset 4.
@@ -284,6 +285,12 @@ pub enum Extent {
     /// fixed frame size; the frames are walked to the first invalid octet or the
     /// end. The 6-byte magic makes a false anchor unlikely.
     Amr,
+    /// PlayStation (PS1) executable (`PS-X EXE`): a fixed 2 KiB (0x800) header
+    /// followed by the program text. The text-section size is a little-endian u32
+    /// at offset 0x1C, so the file ends at `0x800 + text_size`. PlayStation
+    /// sections are 2 KiB-aligned, so a non-zero, 0x800-aligned text size guards
+    /// the match alongside the 8-byte magic.
+    PsxExe,
     /// MP3 anchored directly on an MPEG (Layer III) frame sync, for the many
     /// MP3s that carry only an ID3v1 trailer or no tag at all (the [`Extent::Mp3`]
     /// anchor needs an ID3v2 tag). The frame chain is walked like [`Extent::Mp3`];
@@ -1150,6 +1157,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Amr,
         max_size: 256 * MB,
+    },
+    Signature {
+        name: "PlayStation executable",
+        ext: "psexe",
+        magic: b"PS-X EXE",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::PsxExe,
+        max_size: 8 * MB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.

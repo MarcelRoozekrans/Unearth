@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **PlayStation executables are carved** — `scan` now recovers PS1 `PS-X EXE`
+  programs, with the exact length taken from the 2 KiB header plus the
+  text-section size at offset 0x1C. A non-zero, 2 KiB-aligned text size guards
+  the match alongside the 8-byte magic.
 - **AMR audio is carved** — `scan` now recovers `.amr` (AMR narrowband) audio —
   the codec mobile phones use for voice recordings and voicemail — by walking the
   fixed-size speech frames from the `#!AMR\n` header to the end of the stream.
