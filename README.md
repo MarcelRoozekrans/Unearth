@@ -737,6 +737,7 @@ alongside the per-file manifest.
 | voc    | Creative Voice audio (.voc)                      | block chain to terminator   |
 | amr    | AMR audio (mobile voice, .amr)                   | fixed-size frame walk       |
 | psexe  | PlayStation executable (PS-X EXE)                | 2 KiB header + text size     |
+| simg   | Android sparse image (fastboot/factory)          | sum of chunk sizes          |
 | ole    | Compound File (OLE2) — doc/xls/ppt/msg/msi       | FAT walk to last used sector |
 | pst    | Outlook data file (PST/OST, Unicode)             | ibFileEof field in header   |
 

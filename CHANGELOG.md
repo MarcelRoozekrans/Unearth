@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Android sparse images are carved** — `scan` now recovers `.simg` sparse
+  images (the format `fastboot` and Android factory images use), with the exact
+  length summed from each chunk header's on-disk size. The header sizes and chunk
+  count are range-checked to reject a coincidental magic.
 - **romfs volumes are recognised** — the minimal ROM File System (small initrds
   and embedded systems) is now detected from its `-rom1fs-` magic, so `info` /
   `list_volumes` report its size and volume name instead of leaving it

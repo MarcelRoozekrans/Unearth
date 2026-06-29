@@ -66,6 +66,7 @@
 //! * [`Extent::Voc`] — Creative Voice audio: walk the block chain to the end.
 //! * [`Extent::Amr`] — AMR audio: walk fixed-size speech frames to the end.
 //! * [`Extent::PsxExe`] — PlayStation executable: 2 KiB header plus text size.
+//! * [`Extent::AndroidSparse`] — Android sparse image: sum the chunk sizes.
 //! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
 //! * [`Extent::Wim`] — Windows Imaging (WIM): furthest resource-table extent.
 //! * [`Extent::Swf`] — uncompressed Flash movie (`FWS`): `FileLength` at offset 4.
@@ -291,6 +292,12 @@ pub enum Extent {
     /// sections are 2 KiB-aligned, so a non-zero, 0x800-aligned text size guards
     /// the match alongside the 8-byte magic.
     PsxExe,
+    /// Android sparse image (`.simg`, the format `fastboot` and factory images
+    /// use): a file header followed by `total_chunks` chunks, each chunk header
+    /// recording its own whole on-disk size (`total_sz`). Summing those from the
+    /// header end gives the file length. The header sizes and chunk count are
+    /// range-checked to reject a coincidental magic.
+    AndroidSparse,
     /// MP3 anchored directly on an MPEG (Layer III) frame sync, for the many
     /// MP3s that carry only an ID3v1 trailer or no tag at all (the [`Extent::Mp3`]
     /// anchor needs an ID3v2 tag). The frame chain is walked like [`Extent::Mp3`];
@@ -1166,6 +1173,15 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::PsxExe,
         max_size: 8 * MB,
+    },
+    Signature {
+        name: "Android sparse image",
+        ext: "simg",
+        magic: b"\x3a\xff\x26\xed",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::AndroidSparse,
+        max_size: 16 * GB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.
