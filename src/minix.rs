@@ -50,6 +50,8 @@ pub struct Volume {
     /// Byte offset of the volume within the source.
     pub offset: u64,
     size: u64,
+    /// Block size in bytes.
+    block_size: u64,
     version: Version,
 }
 
@@ -136,9 +138,26 @@ impl Volume {
         } else {
             fallback
         };
+        // v1/v2 use a fixed 1 KiB block; v3 records its own block size.
+        let block_size = match version {
+            Version::V1 | Version::V2 => BLOCK_SIZE,
+            Version::V3 => {
+                let bs = u16::from_le_bytes(
+                    hdr[BLOCKSIZE_V3_OFFSET..BLOCKSIZE_V3_OFFSET + 2]
+                        .try_into()
+                        .unwrap(),
+                ) as u64;
+                if bs == 0 {
+                    BLOCK_SIZE
+                } else {
+                    bs
+                }
+            }
+        };
         Ok(Volume {
             offset,
             size,
+            block_size,
             version,
         })
     }
@@ -146,6 +165,11 @@ impl Volume {
     /// Total size of the volume in bytes.
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    /// Block size in bytes.
+    pub fn block_size(&self) -> u64 {
+        self.block_size
     }
 
     /// Short filesystem label, including the on-disk version.

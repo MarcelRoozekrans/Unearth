@@ -23,6 +23,7 @@ const SB_OFFSET: u64 = 32768;
 const MAGIC: &[u8; 4] = b"JFS1";
 /// Byte offsets within the superblock (matching `libblkid`'s `jfs_super_block`).
 const SIZE_OFFSET: usize = 0x08; // u64: aggregate size in s_pbsize blocks
+const BSIZE_OFFSET: usize = 0x10; // u32: aggregate (allocation) block size in bytes
 const PBSIZE_OFFSET: usize = 0x18; // u32: physical (hardware/LVM) block size in bytes
 const UUID_OFFSET: usize = 0x88; // 16 bytes
 const LABEL_OFFSET: usize = 0x98; // 16 bytes, NUL-padded
@@ -34,6 +35,8 @@ pub struct Volume {
     /// Byte offset of the volume within the source.
     pub offset: u64,
     size: u64,
+    /// Aggregate (allocation) block size in bytes.
+    block_size: u64,
     /// Filesystem label (`s_label`), empty when unset.
     label: String,
     /// Filesystem UUID (`s_uuid`), `None` when unset.
@@ -75,6 +78,8 @@ impl Volume {
             .checked_mul(pbsize)
             .filter(|&b| b <= fallback.max(pbsize))
             .unwrap_or(fallback);
+        let block_size =
+            u32::from_le_bytes(hdr[BSIZE_OFFSET..BSIZE_OFFSET + 4].try_into().unwrap()) as u64;
         let uuid = format_uuid(&hdr[UUID_OFFSET..UUID_OFFSET + 16]);
         let raw = &hdr[LABEL_OFFSET..LABEL_OFFSET + 16];
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
@@ -82,6 +87,7 @@ impl Volume {
         Ok(Volume {
             offset,
             size,
+            block_size,
             label,
             uuid,
         })
@@ -90,6 +96,11 @@ impl Volume {
     /// Total size of the volume in bytes.
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    /// Aggregate (allocation) block size in bytes.
+    pub fn block_size(&self) -> u64 {
+        self.block_size
     }
 
     /// Short filesystem label.
@@ -130,6 +141,7 @@ mod tests {
         let sb = SB_OFFSET as usize;
         v[sb..sb + 4].copy_from_slice(MAGIC);
         v[sb + SIZE_OFFSET..sb + SIZE_OFFSET + 8].copy_from_slice(&blocks.to_le_bytes());
+        v[sb + BSIZE_OFFSET..sb + BSIZE_OFFSET + 4].copy_from_slice(&4096u32.to_le_bytes());
         v[sb + PBSIZE_OFFSET..sb + PBSIZE_OFFSET + 4].copy_from_slice(&pbsize.to_le_bytes());
         v[sb + UUID_OFFSET..sb + UUID_OFFSET + 16].copy_from_slice(uuid);
         let lb = label.as_bytes();
@@ -155,6 +167,7 @@ mod tests {
         let v = Volume::parse(&src, 0).unwrap();
         assert_eq!(v.fs_label(), "JFS");
         assert_eq!(v.size(), 128 * 512);
+        assert_eq!(v.block_size(), 4096);
         assert_eq!(v.label(), "archive");
         assert_eq!(
             v.uuid().as_deref(),

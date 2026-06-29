@@ -29,14 +29,17 @@ const MAGIC: [u8; 16] = [
 const MAGIC_OFFSET: usize = 0x18; // 16 bytes
 const USER_UUID_OFFSET: usize = 0x38; // 16 bytes: the external (reported) UUID
 const LABEL_OFFSET: usize = 0x48; // 32 bytes, NUL-padded
+const BLOCK_SIZE_OFFSET: usize = 0x78; // u16: block size in 512-byte sectors
 /// We read this much of the superblock to cover every field above.
-const HEADER_LEN: usize = LABEL_OFFSET + 32;
+const HEADER_LEN: usize = BLOCK_SIZE_OFFSET + 2;
 
 /// A recognised bcachefs volume (detection only; no metadata undelete).
 pub struct Volume {
     /// Byte offset of the volume within the source.
     pub offset: u64,
     size: u64,
+    /// Block size in bytes.
+    block_size: u64,
     /// Filesystem label (`bch_sb.label`), empty when unset.
     label: String,
     /// External filesystem UUID (`bch_sb.user_uuid`), `None` when unset.
@@ -67,6 +70,13 @@ impl Volume {
         }
         // Total size spans member devices; report the source span.
         let size = src.size.saturating_sub(offset);
+        // `block_size` is recorded in 512-byte sectors.
+        let block_size = u16::from_le_bytes(
+            hdr[BLOCK_SIZE_OFFSET..BLOCK_SIZE_OFFSET + 2]
+                .try_into()
+                .unwrap(),
+        ) as u64
+            * 512;
         let uuid = format_uuid(&hdr[USER_UUID_OFFSET..USER_UUID_OFFSET + 16]);
         let raw = &hdr[LABEL_OFFSET..LABEL_OFFSET + 32];
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
@@ -74,6 +84,7 @@ impl Volume {
         Ok(Volume {
             offset,
             size,
+            block_size,
             label,
             uuid,
         })
@@ -82,6 +93,11 @@ impl Volume {
     /// Total size of the volume in bytes (the source span; see the module docs).
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    /// Block size in bytes.
+    pub fn block_size(&self) -> u64 {
+        self.block_size
     }
 
     /// Short filesystem label.
@@ -121,6 +137,8 @@ mod tests {
         let mut v = vec![0u8; total];
         let sb = SB_OFFSET as usize;
         v[sb + MAGIC_OFFSET..sb + MAGIC_OFFSET + 16].copy_from_slice(&MAGIC);
+        // block_size = 8 sectors = 4096 bytes.
+        v[sb + BLOCK_SIZE_OFFSET..sb + BLOCK_SIZE_OFFSET + 2].copy_from_slice(&8u16.to_le_bytes());
         v[sb + USER_UUID_OFFSET..sb + USER_UUID_OFFSET + 16].copy_from_slice(uuid);
         let lb = label.as_bytes();
         v[sb + LABEL_OFFSET..sb + LABEL_OFFSET + lb.len()].copy_from_slice(lb);
@@ -145,6 +163,7 @@ mod tests {
         let v = Volume::parse(&src, 0).unwrap();
         assert_eq!(v.fs_label(), "bcachefs");
         assert_eq!(v.size(), 256 * 1024);
+        assert_eq!(v.block_size(), 4096);
         assert_eq!(v.label(), "pool");
         assert_eq!(
             v.uuid().as_deref(),

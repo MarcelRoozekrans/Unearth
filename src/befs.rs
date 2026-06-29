@@ -38,6 +38,8 @@ pub struct Volume {
     /// Byte offset of the volume within the source.
     pub offset: u64,
     size: u64,
+    /// Allocation block size in bytes.
+    block_size: u64,
     /// Volume name, empty when unset.
     label: String,
 }
@@ -113,6 +115,7 @@ impl Volume {
         Ok(Volume {
             offset,
             size,
+            block_size,
             label,
         })
     }
@@ -120,6 +123,11 @@ impl Volume {
     /// Total size of the volume in bytes.
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    /// Allocation block size in bytes.
+    pub fn block_size(&self) -> u64 {
+        self.block_size
     }
 
     /// Short filesystem label.

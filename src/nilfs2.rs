@@ -27,6 +27,7 @@ const CURRENT_REV: u32 = 2;
 /// Byte offsets within the superblock (matching `libblkid`'s `nilfs_super_block`).
 const REV_LEVEL_OFFSET: usize = 0x00; // u32
 const MAGIC_OFFSET: usize = 0x06; // u16
+const LOG_BLOCK_SIZE_OFFSET: usize = 0x14; // u32: block size = 1024 << this
 const DEV_SIZE_OFFSET: usize = 0x20; // u64: block device size in bytes
 const UUID_OFFSET: usize = 0x98; // 16 bytes
 const VOLUME_NAME_OFFSET: usize = 0xA8; // 80 bytes, NUL-padded
@@ -38,6 +39,8 @@ pub struct Volume {
     /// Byte offset of the volume within the source.
     pub offset: u64,
     size: u64,
+    /// Block size in bytes.
+    block_size: u64,
     /// Filesystem label (`s_volume_name`), empty when unset.
     label: String,
     /// Filesystem UUID (`s_uuid`), `None` when unset.
@@ -96,6 +99,13 @@ impl Volume {
         } else {
             fallback
         };
+        let log_bs = u32::from_le_bytes(
+            hdr[LOG_BLOCK_SIZE_OFFSET..LOG_BLOCK_SIZE_OFFSET + 4]
+                .try_into()
+                .unwrap(),
+        );
+        // Block size = 1024 << s_log_block_size; clamp the shift defensively.
+        let block_size = 1024u64 << (log_bs & 0x1F);
         let uuid = format_uuid(&hdr[UUID_OFFSET..UUID_OFFSET + 16]);
         let raw = &hdr[VOLUME_NAME_OFFSET..VOLUME_NAME_OFFSET + 80];
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
@@ -103,6 +113,7 @@ impl Volume {
         Ok(Volume {
             offset,
             size,
+            block_size,
             label,
             uuid,
         })
@@ -111,6 +122,11 @@ impl Volume {
     /// Total size of the volume in bytes.
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    /// Block size in bytes.
+    pub fn block_size(&self) -> u64 {
+        self.block_size
     }
 
     /// Short filesystem label.
