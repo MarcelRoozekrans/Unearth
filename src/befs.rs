@@ -29,6 +29,7 @@ const NAME_OFFSET: usize = 0x00; // 32 bytes, NUL-padded
 const MAGIC1_OFFSET: usize = 0x20; // u32
 const BLOCK_SIZE_OFFSET: usize = 0x28; // u32
 const NUM_BLOCKS_OFFSET: usize = 0x30; // u64
+const USED_BLOCKS_OFFSET: usize = 0x38; // u64
 const MAGIC2_OFFSET: usize = 0x44; // u32
 /// We read this much of the superblock to cover every field above.
 const HEADER_LEN: usize = MAGIC2_OFFSET + 4;
@@ -40,6 +41,8 @@ pub struct Volume {
     size: u64,
     /// Allocation block size in bytes.
     block_size: u64,
+    /// Free (unallocated) bytes (`num_blocks − used_blocks` × block size).
+    free_bytes: u64,
     /// Volume name, empty when unset.
     label: String,
 }
@@ -102,6 +105,19 @@ impl Volume {
         if block_size == 0 {
             bail!("implausible BeFS geometry");
         }
+        let used_blocks = {
+            let a = hdr[USED_BLOCKS_OFFSET..USED_BLOCKS_OFFSET + 8]
+                .try_into()
+                .unwrap();
+            if big {
+                u64::from_be_bytes(a)
+            } else {
+                u64::from_le_bytes(a)
+            }
+        };
+        let free_bytes = num_blocks
+            .saturating_sub(used_blocks)
+            .saturating_mul(block_size);
         // Fall back to the source span when the recorded size overflows or exceeds
         // what the source can hold.
         let fallback = src.size.saturating_sub(offset);
@@ -116,6 +132,7 @@ impl Volume {
             offset,
             size,
             block_size,
+            free_bytes,
             label,
         })
     }
@@ -128,6 +145,11 @@ impl Volume {
     /// Allocation block size in bytes.
     pub fn block_size(&self) -> u64 {
         self.block_size
+    }
+
+    /// Free (unallocated) bytes in the volume.
+    pub fn free_bytes(&self) -> u64 {
+        self.free_bytes
     }
 
     /// Short filesystem label.
@@ -188,6 +210,14 @@ mod tests {
         v[sb + MAGIC2_OFFSET..sb + MAGIC2_OFFSET + 4].copy_from_slice(&m2);
         v[sb + BLOCK_SIZE_OFFSET..sb + BLOCK_SIZE_OFFSET + 4].copy_from_slice(&bs);
         v[sb + NUM_BLOCKS_OFFSET..sb + NUM_BLOCKS_OFFSET + 8].copy_from_slice(&n);
+        // Mark a quarter of the blocks used, for the free-space report.
+        let used = num_blocks / 4;
+        let u = if big {
+            used.to_be_bytes()
+        } else {
+            used.to_le_bytes()
+        };
+        v[sb + USED_BLOCKS_OFFSET..sb + USED_BLOCKS_OFFSET + 8].copy_from_slice(&u);
         v
     }
 
@@ -207,6 +237,8 @@ mod tests {
         assert_eq!(v.fs_label(), "BeFS");
         assert_eq!(v.label(), "Haiku");
         assert_eq!(v.size(), 256 * 1024);
+        // 256 blocks, a quarter (64) used → 192 free blocks of 1 KiB.
+        assert_eq!(v.free_bytes(), 192 * 1024);
     }
 
     #[test]
