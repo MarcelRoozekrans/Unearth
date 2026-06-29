@@ -59,6 +59,7 @@
 //! * [`Extent::Shp`] — ESRI Shapefile: total length (in 16-bit words) in header.
 //! * [`Extent::Blend`] — Blender file: walk the block chain to the `ENDB` block.
 //! * [`Extent::Nes`] — iNES / NES 2.0 ROM: size from the PRG/CHR bank counts.
+//! * [`Extent::Gameboy`] — Game Boy / Color ROM: size from the header size byte.
 //! * [`Extent::Mp3Raw`] — MP3 anchored on a frame sync (no ID3v2 tag).
 //! * [`Extent::Wim`] — Windows Imaging (WIM): furthest resource-table extent.
 //! * [`Extent::Swf`] — uncompressed Flash movie (`FWS`): `FileLength` at offset 4.
@@ -240,6 +241,12 @@ pub enum Extent {
     /// bank counts with high bits; ROMs using the exponent bank form or carrying
     /// an indeterminate miscellaneous-ROM area are rejected.
     Nes,
+    /// Game Boy / Game Boy Color ROM, anchored on the 48-byte Nintendo logo at
+    /// offset 0x104 (which the boot ROM verifies, so it is an exact magic). The
+    /// ROM size is encoded at offset 0x148 as `32 KiB << code` (codes 0–8); the
+    /// header checksum at 0x14D is verified to reject a coincidental logo match.
+    /// The rare unofficial size codes are not computed and are rejected.
+    Gameboy,
     /// MP3 anchored directly on an MPEG (Layer III) frame sync, for the many
     /// MP3s that carry only an ID3v1 trailer or no tag at all (the [`Extent::Mp3`]
     /// anchor needs an ID3v2 tag). The frame chain is walked like [`Extent::Mp3`];
@@ -377,6 +384,20 @@ pub struct Signature {
 const KB: u64 = 1024;
 const MB: u64 = 1024 * KB;
 const GB: u64 = 1024 * MB;
+
+/// The 48-byte Nintendo logo every Game Boy cartridge carries at offset 0x104.
+/// The boot ROM bitmap-compares these bytes before running the cartridge, so a
+/// bootable ROM reproduces them exactly — making this an unusually strong magic.
+const GAMEBOY_LOGO: [u8; 48] = [
+    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
+    0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
+    0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+];
+
+/// The 48-byte Game Boy logo, for the carver's length check to re-verify a match.
+pub(crate) fn gameboy_logo() -> [u8; 48] {
+    GAMEBOY_LOGO
+}
 
 /// The built-in signature table.
 ///
@@ -1027,6 +1048,16 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Nes,
         max_size: 64 * MB,
+    },
+    Signature {
+        name: "Game Boy ROM",
+        ext: "gb",
+        magic: &GAMEBOY_LOGO,
+        // The logo sits at 0x104; the ROM (and carved file) begins 0x104 earlier.
+        magic_offset: 0x104,
+        secondary: None,
+        extent: Extent::Gameboy,
+        max_size: 8 * MB,
     },
     // Canon CR2 raw shares the little-endian TIFF magic, but carries a "CR" tag
     // at offset 8, so it must precede the generic TIFF entry.

@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Game Boy / Game Boy Color ROMs are carved** — `scan` now recovers `.gb` ROM
+  images, anchored on the 48-byte Nintendo logo (an exact, boot-ROM-verified
+  magic) with the exact length read from the cartridge header's size code and the
+  header checksum verified to reject false matches.
 - **BeFS volumes are recognised** — the Be File System (the native filesystem of
   BeOS and of Haiku, its modern successor) is now detected from its superblock's
   dual magics, in either byte order, so `info` / `list_volumes` report its volume
