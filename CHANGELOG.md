@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **EROFS volumes are recognised** — the Enhanced Read-Only File System (used for
+  Android system/vendor images and ChromeOS) is now detected from its
+  `0xE0F5E1E2` superblock, so `info` / `list_volumes` report its size, label,
+  UUID, and build time instead of leaving it unrecognised. Being read-only it has
+  no deleted files to undelete — use `scan` (carving) for its contents.
 - **UFS / UFS2 volumes are recognised** — the BSD Fast File System (also Solaris
   and historical Unix) is now detected from its superblock magic (8 KiB in for
   UFS1, 64 KiB for UFS2), in either byte order, so `info` / `list_volumes` report

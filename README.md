@@ -401,8 +401,8 @@ If the partition table is missing or damaged, the normal layout shows nothing.
 aligned offsets (1 MiB by default, set with `--scan-step`), finding volumes that
 have no partition-table entry — the same detectors used for normal detection
 (FAT, exFAT, NTFS, ReFS, ext, XFS, F2FS, ReiserFS, JFS, NILFS2, GFS2, OCFS2, Minix,
-bcachefs, BeFS, UFS/UFS2, HFS+, HFS, APFS, Btrfs, LVM2, Linux MD/RAID, Linux swap,
-and LUKS/BitLocker):
+bcachefs, BeFS, UFS/UFS2, EROFS, HFS+, HFS, APFS, Btrfs, LVM2, Linux MD/RAID, Linux
+swap, and LUKS/BitLocker):
 
 ```sh
 filerecovery info disk.img --scan
@@ -911,6 +911,11 @@ Common to both strategies:
   for UFS1 or 64 KiB in for UFS2, magic at 0x55C, either byte order). Its
   cylinder-group layout is unlike the ext family, so it is not recovered from
   metadata — use `scan` (carving).
+- **EROFS** (the Enhanced Read-Only File System — used for Android system/vendor
+  images and ChromeOS) is *recognised* and its size, **label**, **UUID**, and
+  build time are reported by `info`/`list_volumes` (from the superblock 1 KiB in,
+  magic `0xE0F5E1E2`). Being read-only it has no deleted files to undelete, so use
+  `scan` (carving) to extract its (compressed) contents.
 - **LVM2** (the Linux Logical Volume Manager) physical volumes are *recognised*
   from their `LABELONE` / `LVM2 001` on-disk label, and the PV's size is reported
   by `info`/`list_volumes`. The logical volumes inside are not mapped, so recover

@@ -51,6 +51,7 @@ pub mod befs;
 pub mod btrfs;
 pub mod carver;
 pub mod encrypted;
+pub mod erofs;
 pub mod exfat;
 pub mod ext4;
 pub mod f2fs;
