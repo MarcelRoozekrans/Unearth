@@ -494,6 +494,8 @@ impl Volume {
             Volume::Ext(v) => Some(v.is_clean()),
             Volume::Exfat(v) => Some(v.is_clean()),
             Volume::Ntfs(v) => v.is_clean(),
+            Volume::Reiserfs(v) => Some(v.is_clean()),
+            Volume::Nilfs2(v) => Some(v.is_clean()),
             _ => None,
         }
     }

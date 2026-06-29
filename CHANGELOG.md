@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Clean/dirty state reported for ReiserFS and NILFS2** — `info` now flags
+  whether these volumes were cleanly unmounted (a dirty volume is a sign the
+  filesystem may need a check and that recovery may be less reliable), the same
+  as for ext / exFAT / NTFS.
 - **Free space reported for ReiserFS, NILFS2, and BeFS** — `info` /
   `list_volumes` now show how much of these volumes is unallocated, read from the
   superblock's free/used-block counts (the same as XFS and Btrfs already do).

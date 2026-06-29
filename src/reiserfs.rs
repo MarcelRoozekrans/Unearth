@@ -26,6 +26,9 @@ const SB_OFFSETS: [u64; 2] = [65536, 8192];
 const BLOCK_COUNT_OFFSET: usize = 0x00; // u32
 const FREE_BLOCKS_OFFSET: usize = 0x04; // u32
 const BLOCKSIZE_OFFSET: usize = 0x2C; // u16
+const UMOUNT_STATE_OFFSET: usize = 0x32; // u16: 1 = cleanly unmounted
+/// `s_umount_state` value for a cleanly unmounted volume.
+const UMOUNT_CLEAN: u16 = 1;
 const MAGIC_OFFSET: usize = 0x34; // char[10]
 const UUID_OFFSET: usize = 0x54; // 16 bytes (3.6 only)
 const LABEL_OFFSET: usize = 0x64; // 16 bytes, NUL-padded (3.6 only)
@@ -41,6 +44,8 @@ pub struct Volume {
     block_size: u64,
     /// Free (unallocated) bytes (`s_free_blocks` × block size).
     free_bytes: u64,
+    /// Whether the volume was cleanly unmounted (`s_umount_state` == 1).
+    clean: bool,
     /// Filesystem label (`s_label`), empty when unset or on a 3.5 volume.
     label: String,
     /// Filesystem UUID (`s_uuid`), `None` when unset or on a 3.5 volume.
@@ -129,11 +134,17 @@ impl Volume {
                 .try_into()
                 .unwrap(),
         ) as u64;
+        let umount_state = u16::from_le_bytes(
+            hdr[UMOUNT_STATE_OFFSET..UMOUNT_STATE_OFFSET + 2]
+                .try_into()
+                .unwrap(),
+        );
         Ok(Volume {
             offset,
             size,
             block_size: blocksize,
             free_bytes: free_blocks.saturating_mul(blocksize),
+            clean: umount_state == UMOUNT_CLEAN,
             label,
             uuid,
         })
@@ -152,6 +163,11 @@ impl Volume {
     /// Free (unallocated) bytes in the volume.
     pub fn free_bytes(&self) -> u64 {
         self.free_bytes
+    }
+
+    /// Whether the volume was cleanly unmounted.
+    pub fn is_clean(&self) -> bool {
+        self.clean
     }
 
     /// Short filesystem label.
@@ -202,6 +218,9 @@ mod tests {
         // Mark half the blocks free, for the free-space report.
         v[sb + FREE_BLOCKS_OFFSET..sb + FREE_BLOCKS_OFFSET + 4]
             .copy_from_slice(&(block_count / 2).to_le_bytes());
+        // Cleanly unmounted.
+        v[sb + UMOUNT_STATE_OFFSET..sb + UMOUNT_STATE_OFFSET + 2]
+            .copy_from_slice(&UMOUNT_CLEAN.to_le_bytes());
         v[sb + BLOCKSIZE_OFFSET..sb + BLOCKSIZE_OFFSET + 2]
             .copy_from_slice(&blocksize.to_le_bytes());
         v[sb + MAGIC_OFFSET..sb + MAGIC_OFFSET + magic.len()].copy_from_slice(magic);
@@ -238,6 +257,7 @@ mod tests {
         assert_eq!(v.fs_label(), "ReiserFS");
         assert_eq!(v.size(), 64 * 4096);
         assert_eq!(v.free_bytes(), 32 * 4096);
+        assert!(v.is_clean());
         assert_eq!(v.label(), "backup");
         assert_eq!(
             v.uuid().as_deref(),
