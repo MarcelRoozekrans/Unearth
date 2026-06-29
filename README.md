@@ -732,6 +732,7 @@ alongside the per-file manifest.
 | wad    | Doom WAD (IWAD/PWAD)                              | lump count + directory offset |
 | au     | Sun/NeXT audio (.au/.snd)                        | data offset + size in header |
 | md     | Sega Mega Drive / Genesis ROM                    | ROM end address in header    |
+| voc    | Creative Voice audio (.voc)                      | block chain to terminator   |
 | ole    | Compound File (OLE2) — doc/xls/ppt/msg/msi       | FAT walk to last used sector |
 | pst    | Outlook data file (PST/OST, Unicode)             | ibFileEof field in header   |
 
