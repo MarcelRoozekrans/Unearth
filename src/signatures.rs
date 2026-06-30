@@ -95,6 +95,8 @@
 //!   chunk.
 //! * [`Extent::Dsdiff`] — DSDIFF (DSD audio): the FRM8 form size plus its
 //!   12-byte header.
+//! * [`Extent::Pcf`] — PCF bitmap font: the largest table offset-plus-size in
+//!   the table of contents.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -455,6 +457,14 @@ pub enum Extent {
     /// it, so the file is `12 + size` bytes. The `DSD ` form type required at
     /// offset 0x0C rejects a coincidental `FRM8` match.
     Dsdiff,
+    /// PCF bitmap font (`.pcf`) — the X11 Portable Compiled Font used for the
+    /// classic console/terminal bitmap fonts on Linux/Unix. A `\x01fcp` magic is
+    /// followed by a little-endian u32 table count and that many 16-byte table
+    /// entries (type, format, size at offset 8, data offset at offset 12). The
+    /// file ends at the largest data offset-plus-size. The magic, a bounded
+    /// table count, and offsets that fall past the table of contents reject a
+    /// coincidental magic.
+    Pcf,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1735,6 +1745,16 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 4 * GB,
     },
     Signature {
+        // PCF bitmap font (X11): "\x01fcp" magic, size from the table of contents.
+        name: "PCF bitmap font",
+        ext: "pcf",
+        magic: b"\x01fcp",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Pcf,
+        max_size: 64 * MB,
+    },
+    Signature {
         // DPX film frame (SMPTE ST 268), big-endian ("SDPX"): the generic file
         // header stores the total file size as a big-endian u32 at offset 0x10.
         name: "DPX image (big-endian)",
@@ -2028,7 +2048,7 @@ pub fn category_of(ext: &str) -> Category {
             Category::Archive
         }
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
-        "ttf" | "otf" | "woff" | "woff2" | "ttc" => Category::Font,
+        "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" => {
             Category::System
         }

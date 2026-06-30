@@ -721,6 +721,7 @@ alongside the per-file manifest.
 | ttc    | TrueType Collection                              | per-font table-directory walk|
 | woff   | WOFF web font                                    | size field in header (BE)    |
 | woff2  | WOFF2 web font                                   | size field in header (BE)    |
+| pcf    | PCF bitmap font (X11)                            | max table offset + size     |
 | emf    | Enhanced Metafile (vector)                       | size field in header         |
 | wmf    | Windows Metafile (vector, placeable too)         | mtSize words in header       |
 | mid    | Standard MIDI file                               | MThd / MTrk chunk walk       |
