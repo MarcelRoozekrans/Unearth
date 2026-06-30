@@ -4772,6 +4772,30 @@ mod tests {
         v
     }
 
+    #[test]
+    fn mng_length_ends_at_mend_chunk() {
+        use crate::signatures::SIGNATURES;
+        let mut v = Vec::new();
+        v.extend_from_slice(&[0x8A, 0x4D, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]); // signature
+                                                                                // An MHDR chunk: length(28) + "MHDR" + 28 zero bytes + a dummy CRC.
+        v.extend_from_slice(&28u32.to_be_bytes());
+        v.extend_from_slice(b"MHDR");
+        v.extend(std::iter::repeat(0u8).take(28));
+        v.extend_from_slice(&[0, 0, 0, 0]);
+        // The terminating MEND chunk: length(0) + "MEND" + its constant CRC.
+        v.extend_from_slice(&[0, 0, 0, 0]);
+        v.extend_from_slice(b"MEND");
+        v.extend_from_slice(&0x2120F7D5u32.to_be_bytes());
+        let end = v.len() as u64;
+        v.extend_from_slice(b"trailing bytes after the animation");
+        let (_t, src) = source_of(&v);
+        let sig = SIGNATURES.iter().find(|s| s.ext == "mng").unwrap();
+        assert_eq!(
+            file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(end)
+        );
+    }
+
     /// Build a Monkey's Audio file (3.98+ descriptor) with `frame_bytes` of APE
     /// frame data; the total length is the sum of all segment sizes.
     fn ape_descriptor(frame_bytes: u32) -> Vec<u8> {

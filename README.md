@@ -657,6 +657,7 @@ alongside the per-file manifest.
 |--------|-------------------------------------------------|-----------------------------|
 | jpg    | JPEG image                                       | `FF D9`, nesting-aware      |
 | png    | PNG image                                        | `IEND` chunk                |
+| mng    | MNG animation (PNG-family)                       | `MEND` chunk                |
 | gif    | GIF image (87a/89a)                              | block walk to trailer       |
 | bmp    | BMP image                                        | size field in header        |
 | psd    | Photoshop document (PSD/PSB)                      | header + sections + image   |
