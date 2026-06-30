@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **U-Boot uImages are carved** — `scan` now recovers `.uimage` boot images
+  (the `mkimage` wrapper ubiquitous in router/IoT firmware). The exact length
+  is the 64-byte header plus the image-data size field at offset 0x0C, with the
+  distinctive `0x27051956` magic and a non-zero size rejecting a coincidental
+  match.
 - **PCF bitmap fonts are carved** — `scan` now recovers `.pcf` fonts (the X11
   Portable Compiled Font behind classic Linux/Unix console and terminal
   bitmap fonts). The exact length is the largest data offset-plus-size across

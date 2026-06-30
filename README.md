@@ -691,6 +691,7 @@ alongside the per-file manifest.
 | tar    | tar archive (POSIX / GNU ustar)                 | 512-byte member-chain walk  |
 | cpio   | cpio archive (newc; initramfs / RPM)            | entry-chain walk to TRAILER |
 | squashfs | SquashFS image (Snap / AppImage / firmware)   | bytes_used in superblock    |
+| uimage | U-Boot uImage (router/IoT firmware)             | 64-byte header + data size  |
 | sqlite | SQLite database                                 | page size × page count      |
 | wav    | WAV audio                                        | RIFF size field             |
 | mp3    | MP3 audio                                        | ID3v2 tag or frame-sync walk |

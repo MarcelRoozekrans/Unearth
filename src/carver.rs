@@ -574,6 +574,7 @@ fn file_length(
         Extent::Dsf => Ok(dsf_length(source, file_start, limit)?),
         Extent::Dsdiff => Ok(dsdiff_length(source, file_start, limit)?),
         Extent::Pcf => Ok(pcf_length(source, file_start, limit)?),
+        Extent::UImage => Ok(uimage_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3423,6 +3424,29 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// U-Boot legacy image (`.uimage`) length. The 64-byte big-endian header opens
+/// with the magic `0x27051956` and records the image-data size as a u32 at
+/// offset 0x0C, so the file is `64 + size` bytes. The distinctive magic and a
+/// non-zero size reject a coincidental match.
+fn uimage_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 64];
+    if source.read_at(file_start, &mut h)? < 64 {
+        return Ok(None);
+    }
+    if u32::from_be_bytes(h[0..4].try_into().unwrap()) != 0x2705_1956 {
+        return Ok(None);
+    }
+    let data_size = u32::from_be_bytes(h[0x0C..0x10].try_into().unwrap()) as u64;
+    if data_size == 0 {
+        return Ok(None);
+    }
+    let total = 64u64.saturating_add(data_size);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// PCF bitmap font (`.pcf`) length. The X11 Portable Compiled Font opens with a
 /// `\x01fcp` magic, a little-endian u32 table count, and that many 16-byte table
 /// entries (type, format, a u32 size at offset 8, and a u32 data offset at
@@ -4987,6 +5011,36 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a U-Boot uImage with `data_size` bytes of image data; the total
+    /// length is `64 + data_size`.
+    fn uimage(data_size: u32) -> Vec<u8> {
+        let total = 64 + data_size as usize;
+        let mut v = vec![0u8; total];
+        v[0..4].copy_from_slice(&0x2705_1956u32.to_be_bytes());
+        v[0x0C..0x10].copy_from_slice(&data_size.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn uimage_length_adds_header_to_data_size() {
+        let bytes = uimage(1000);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(uimage_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 64 + 1000);
+    }
+
+    #[test]
+    fn uimage_length_rejects_non_uimage_and_zero_size() {
+        // Not a uImage.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(uimage_length(&src, 0, src.size).unwrap(), None);
+        // Right magic but zero image-data size.
+        let bytes = uimage(0);
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(uimage_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a PCF font with the given `(size, offset)` table entries; the total
