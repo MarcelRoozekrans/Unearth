@@ -539,6 +539,21 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 200 * MB,
     },
     Signature {
+        // JNG (JPEG Network Graphics): a PNG-family wrapper around JPEG data;
+        // like PNG, a standalone datastream ends with an empty IEND chunk.
+        name: "JNG image",
+        ext: "jng",
+        magic: &[0x8B, 0x4A, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Footer {
+            // IEND chunk: length(0) + "IEND" + CRC
+            marker: &[0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82],
+            trailing: 0,
+        },
+        max_size: 100 * MB,
+    },
+    Signature {
         name: "GIF image (89a)",
         ext: "gif",
         magic: b"GIF89a",
@@ -1909,7 +1924,7 @@ pub fn category_of(ext: &str) -> Category {
     match ext {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
-        | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" => Category::Image,
+        | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
@@ -2002,6 +2017,14 @@ mod tests {
         assert_eq!(
             ext_of(&[0x8A, 0x4D, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
             Some("mng")
+        );
+    }
+
+    #[test]
+    fn jng_magic_matches() {
+        assert_eq!(
+            ext_of(&[0x8B, 0x4A, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+            Some("jng")
         );
     }
 

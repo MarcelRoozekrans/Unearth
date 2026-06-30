@@ -4796,6 +4796,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn jng_length_ends_at_iend_chunk() {
+        use crate::signatures::SIGNATURES;
+        let mut v = Vec::new();
+        v.extend_from_slice(&[0x8B, 0x4A, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]); // signature
+                                                                                // A JHDR chunk: length(16) + "JHDR" + 16 zero bytes + a dummy CRC.
+        v.extend_from_slice(&16u32.to_be_bytes());
+        v.extend_from_slice(b"JHDR");
+        v.extend(std::iter::repeat(0u8).take(16));
+        v.extend_from_slice(&[0, 0, 0, 0]);
+        // The terminating IEND chunk: length(0) + "IEND" + its constant CRC.
+        v.extend_from_slice(&[0, 0, 0, 0]);
+        v.extend_from_slice(b"IEND");
+        v.extend_from_slice(&0xAE426082u32.to_be_bytes());
+        let end = v.len() as u64;
+        v.extend_from_slice(b"trailing bytes after the image");
+        let (_t, src) = source_of(&v);
+        let sig = SIGNATURES.iter().find(|s| s.ext == "jng").unwrap();
+        assert_eq!(
+            file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(end)
+        );
+    }
+
     /// Build a Monkey's Audio file (3.98+ descriptor) with `frame_bytes` of APE
     /// frame data; the total length is the sum of all segment sizes.
     fn ape_descriptor(frame_bytes: u32) -> Vec<u8> {
