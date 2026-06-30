@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Device tree blobs are carved** — `scan` now recovers `.dtb` flattened
+  device trees (FDT), the hardware-description blobs used throughout embedded
+  Linux and Android boot. The exact length is the `totalsize` field at offset 4
+  of the header, behind the distinctive `0xD00DFEED` magic.
 - **U-Boot uImages are carved** — `scan` now recovers `.uimage` boot images
   (the `mkimage` wrapper ubiquitous in router/IoT firmware). The exact length
   is the 64-byte header plus the image-data size field at offset 0x0C, with the
