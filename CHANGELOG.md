@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **Sun raster images are carved** — `scan` now recovers `.ras`/`.sun` images,
+  the classic SunOS raster format. The exact length is the 32-byte header plus
+  the colormap length and image-data length recorded in the header, with the
+  depth, image type, colormap type, and geometry checked to reject a
+  coincidental magic.
 - **AppleSingle/AppleDouble containers are carved** — `scan` now recovers the
   RFC 1740 containers macOS uses for resource forks and metadata on non-Apple
   filesystems (the `._name` sidecar files inside ZIP/tar archives and on

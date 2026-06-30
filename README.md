@@ -659,6 +659,7 @@ alongside the per-file manifest.
 | png    | PNG image                                        | `IEND` chunk                |
 | mng    | MNG animation (PNG-family)                       | `MEND` chunk                |
 | jng    | JNG image (PNG-family JPEG)                       | `IEND` chunk                |
+| ras    | Sun raster image (.ras/.sun)                     | header + colormap + data    |
 | gif    | GIF image (87a/89a)                              | block walk to trailer       |
 | bmp    | BMP image                                        | size field in header        |
 | psd    | Photoshop document (PSD/PSB)                      | header + sections + image   |
