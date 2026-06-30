@@ -91,6 +91,8 @@
 //!   offset-plus-length in the entry table.
 //! * [`Extent::SunRaster`] — Sun raster image: 32-byte header + colormap length
 //!   + image-data length.
+//! * [`Extent::Dsf`] — DSF (DSD audio): the total file size stored in the DSD
+//!   chunk.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -438,6 +440,13 @@ pub enum Extent {
     /// (≤ 5), colormap type (≤ 2), and non-zero geometry are checked to reject a
     /// coincidental magic.
     SunRaster,
+    /// DSF (`.dsf`) — the Sony DSD Stream File format used for high-resolution
+    /// 1-bit (SACD-style) audio. The file opens with a DSD chunk: the `DSD `
+    /// magic, a little-endian u64 chunk size (always 28) at offset 4, the total
+    /// file size as a little-endian u64 at offset 0x0C, and a metadata pointer.
+    /// The total-size field gives the exact end. The chunk size (28) and the
+    /// `fmt ` chunk that must follow at offset 28 reject a coincidental magic.
+    Dsf,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1698,6 +1707,16 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * MB,
     },
     Signature {
+        // DSF (DSD Stream File): "DSD " chunk magic, total size from the header.
+        name: "DSF audio (DSD)",
+        ext: "dsf",
+        magic: b"DSD ",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Dsf,
+        max_size: 4 * GB,
+    },
+    Signature {
         // DPX film frame (SMPTE ST 268), big-endian ("SDPX"): the generic file
         // header stores the total file size as a big-endian u32 at offset 0x10.
         name: "DPX image (big-endian)",
@@ -1978,7 +1997,7 @@ pub fn category_of(ext: &str) -> Category {
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
-        | "wv" | "ape" => Category::Audio,
+        | "wv" | "ape" | "dsf" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
             Category::Video
         }

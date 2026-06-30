@@ -571,6 +571,7 @@ fn file_length(
         Extent::Ape => Ok(ape_length(source, file_start, limit)?),
         Extent::AppleSingle => Ok(applesingle_length(source, file_start, limit)?),
         Extent::SunRaster => Ok(sun_raster_length(source, file_start, limit)?),
+        Extent::Dsf => Ok(dsf_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3420,6 +3421,29 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// DSF (`.dsf`) length. The DSD Stream File opens with a DSD chunk: the `DSD `
+/// magic, a little-endian u64 chunk size (always 28) at offset 4, the total
+/// file size as a little-endian u64 at offset 0x0C, and a metadata pointer. The
+/// total-size field gives the exact end. The chunk size (28) and the `fmt `
+/// chunk that must follow it at offset 28 reject a coincidental magic.
+fn dsf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x20];
+    if source.read_at(file_start, &mut h)? < 0x20 || &h[0..4] != b"DSD " {
+        return Ok(None);
+    }
+    let dsd_chunk = u64::from_le_bytes(h[4..12].try_into().unwrap());
+    // The DSD chunk is always 28 bytes, immediately followed by the fmt chunk.
+    if dsd_chunk != 28 || &h[0x1C..0x20] != b"fmt " {
+        return Ok(None);
+    }
+    let total = u64::from_le_bytes(h[0x0C..0x14].try_into().unwrap());
+    // A real DSF spans at least the DSD (28), fmt (52), and data-chunk header.
+    if total < 92 || file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// Sun raster image (`.ras`) length. The 32-byte big-endian header (magic
 /// `0x59A66A95`) records the image-data length at offset 0x10 and the colormap
 /// length at offset 0x1C, so the file is `32 + maplength + length` bytes. The
@@ -4899,6 +4923,38 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a DSF (DSD) file with `data_len` bytes of sample data; the total
+    /// length is DSD(28) + fmt(52) + data-header(12) + data.
+    fn dsf(data_len: u64) -> Vec<u8> {
+        let total = 28 + 52 + 12 + data_len;
+        let mut v = vec![0u8; total as usize];
+        v[0..4].copy_from_slice(b"DSD ");
+        v[4..12].copy_from_slice(&28u64.to_le_bytes());
+        v[12..20].copy_from_slice(&total.to_le_bytes());
+        v[28..32].copy_from_slice(b"fmt "); // fmt chunk follows the DSD chunk
+        v
+    }
+
+    #[test]
+    fn dsf_length_reads_total_file_size() {
+        let bytes = dsf(1000);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(dsf_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn dsf_length_rejects_bad_chunk_and_missing_fmt() {
+        // Not DSF.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(dsf_length(&src, 0, src.size).unwrap(), None);
+        // Right magic but the DSD chunk size isn't 28.
+        let mut bytes = dsf(1000);
+        bytes[4..12].copy_from_slice(&20u64.to_le_bytes());
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(dsf_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a Sun raster image with `length` bytes of image data and a
