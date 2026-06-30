@@ -524,6 +524,21 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 100 * MB,
     },
     Signature {
+        // MNG (Multiple-image Network Graphics): a PNG-family animation with the
+        // same chunk structure, terminated by an empty MEND chunk.
+        name: "MNG animation",
+        ext: "mng",
+        magic: &[0x8A, 0x4D, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Footer {
+            // MEND chunk: length(0) + "MEND" + CRC (of the bytes "MEND")
+            marker: &[0x4D, 0x45, 0x4E, 0x44, 0x21, 0x20, 0xF7, 0xD5],
+            trailing: 0,
+        },
+        max_size: 200 * MB,
+    },
+    Signature {
         name: "GIF image (89a)",
         ext: "gif",
         magic: b"GIF89a",
@@ -1894,7 +1909,7 @@ pub fn category_of(ext: &str) -> Category {
     match ext {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
-        | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" => Category::Image,
+        | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
@@ -1980,6 +1995,14 @@ mod tests {
     #[test]
     fn cineon_magic_matches() {
         assert_eq!(ext_of(&[0x80, 0x2A, 0x5F, 0xD7, 0, 0, 0, 0]), Some("cin"));
+    }
+
+    #[test]
+    fn mng_magic_matches() {
+        assert_eq!(
+            ext_of(&[0x8A, 0x4D, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+            Some("mng")
+        );
     }
 
     #[test]

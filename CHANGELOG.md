@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **MNG animations are carved** — `scan` now recovers `.mng` images (Multiple-
+  image Network Graphics), a PNG-family animation that shares PNG's chunk
+  structure. The file ends at the empty `MEND` chunk, found by its constant
+  type-and-CRC marker.
 - **Monkey's Audio is carved** — `scan` now recovers `.ape` lossless-audio
   files (version 3.98 and later). The exact length is the sum of the segment
   byte counts in the file's descriptor (descriptor, header, seek table, WAV
