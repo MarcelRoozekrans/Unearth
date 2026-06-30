@@ -5024,6 +5024,21 @@ mod tests {
     }
 
     #[test]
+    fn dtb_length_reads_total_size_field() {
+        use crate::signatures::SIGNATURES;
+        // Device tree blob: totalsize is a big-endian u32 at offset 4.
+        let mut img = vec![0u8; 2048];
+        img[0..4].copy_from_slice(&[0xD0, 0x0D, 0xFE, 0xED]);
+        img[4..8].copy_from_slice(&2048u32.to_be_bytes());
+        let (_t, src) = source_of(&img);
+        let sig = SIGNATURES.iter().find(|s| s.ext == "dtb").unwrap();
+        assert_eq!(
+            file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(2048)
+        );
+    }
+
+    #[test]
     fn uimage_length_adds_header_to_data_size() {
         let bytes = uimage(1000);
         let total = bytes.len() as u64;

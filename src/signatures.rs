@@ -32,7 +32,7 @@
 //! * [`Extent::IcoCur`] — take the furthest `offset + size` across an ICO/CUR
 //!   image directory.
 //! * [`Extent::HeaderSizeBe32`] — read a big-endian u32 size field (WOFF fonts,
-//!   big-endian DPX, Cineon).
+//!   big-endian DPX, Cineon, device-tree blobs).
 //! * [`Extent::Sfnt`] — walk a TrueType/OpenType font's table directory.
 //! * [`Extent::Midi`] — walk a Standard MIDI file's `MThd`/`MTrk` chunks.
 //! * [`Extent::Flv`] — walk a Flash Video tag chain.
@@ -1774,6 +1774,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * MB,
     },
     Signature {
+        // Flattened device tree (`.dtb`/FDT): 0xD00DFEED magic, with the total
+        // block size as a big-endian u32 at offset 4 (the exact file length).
+        name: "Device Tree Blob",
+        ext: "dtb",
+        magic: &[0xD0, 0x0D, 0xFE, 0xED],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::HeaderSizeBe32 { offset: 4 },
+        max_size: 256 * MB,
+    },
+    Signature {
         // DPX film frame (SMPTE ST 268), big-endian ("SDPX"): the generic file
         // header stores the total file size as a big-endian u32 at offset 0x10.
         name: "DPX image (big-endian)",
@@ -2068,9 +2079,8 @@ pub fn category_of(ext: &str) -> Category {
         }
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
-        "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage" => {
-            Category::System
-        }
+        "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
+        | "dtb" => Category::System,
         _ => Category::Other,
     }
 }
@@ -2138,6 +2148,11 @@ mod tests {
     #[test]
     fn cineon_magic_matches() {
         assert_eq!(ext_of(&[0x80, 0x2A, 0x5F, 0xD7, 0, 0, 0, 0]), Some("cin"));
+    }
+
+    #[test]
+    fn dtb_magic_matches() {
+        assert_eq!(ext_of(&[0xD0, 0x0D, 0xFE, 0xED, 0, 0, 0, 0]), Some("dtb"));
     }
 
     #[test]
