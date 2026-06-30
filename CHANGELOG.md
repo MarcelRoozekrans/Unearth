@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **DSF (DSD) audio is carved** — `scan` now recovers `.dsf` files, the Sony
+  DSD Stream File format used for high-resolution 1-bit audio. The exact length
+  is the total-file-size field in the opening DSD chunk, with the chunk size
+  (28) and the following `fmt ` chunk checked to reject a coincidental magic.
 - **Sun raster images are carved** — `scan` now recovers `.ras`/`.sun` images,
   the classic SunOS raster format. The exact length is the 32-byte header plus
   the colormap length and image-data length recorded in the header, with the
