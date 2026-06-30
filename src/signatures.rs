@@ -87,6 +87,8 @@
 //!   to the last whole block.
 //! * [`Extent::Ape`] — Monkey's Audio: sum the segment byte counts in the
 //!   descriptor.
+//! * [`Extent::AppleSingle`] — AppleSingle/AppleDouble: the largest entry
+//!   offset-plus-length in the entry table.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -417,6 +419,16 @@ pub enum Extent {
     /// (≥ 3980) and a sane descriptor size are checked to reject a coincidental
     /// magic; pre-3.98 files, which lack the descriptor, are not carved.
     Ape,
+    /// AppleSingle / AppleDouble container (RFC 1740) — the format macOS uses to
+    /// store a file's resource fork and metadata on non-Apple filesystems (the
+    /// familiar `._name` files inside ZIP/tar archives and on FAT/SMB volumes).
+    /// A big-endian header carries a magic (`0x00051600` AppleSingle or
+    /// `0x00051607` AppleDouble), a version (`0x00010000`/`0x00020000`), 16
+    /// filler bytes, and a u16 entry count at offset 0x18. Each 12-byte entry
+    /// that follows holds an id, a u32 offset, and a u32 length; the file ends at
+    /// the largest offset-plus-length. The magic, version, and a bounded entry
+    /// count reject a coincidental match.
+    AppleSingle,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1643,6 +1655,27 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::Ape,
+        max_size: 2 * GB,
+    },
+    Signature {
+        // AppleSingle container: 0x00051600 magic, size from the entry table.
+        name: "AppleSingle container",
+        ext: "applesingle",
+        magic: &[0x00, 0x05, 0x16, 0x00],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::AppleSingle,
+        max_size: 2 * GB,
+    },
+    Signature {
+        // AppleDouble container (the "._name" resource-fork sidecar files):
+        // 0x00051607 magic, same entry-table layout as AppleSingle.
+        name: "AppleDouble container",
+        ext: "appledouble",
+        magic: &[0x00, 0x05, 0x16, 0x07],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::AppleSingle,
         max_size: 2 * GB,
     },
     Signature {

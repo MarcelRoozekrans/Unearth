@@ -746,6 +746,8 @@ alongside the per-file manifest.
 | fli    | Autodesk FLIC animation (FLI/FLC)                | total size in header field  |
 | dpx    | DPX film frame (SMPTE ST 268, VFX)               | total size in header field  |
 | cin    | Cineon film frame (Kodak, film scanning)         | total size in header field  |
+| applesingle | AppleSingle container (RFC 1740)            | max entry offset + length   |
+| appledouble | AppleDouble sidecar (`._` resource fork)    | max entry offset + length   |
 | ole    | Compound File (OLE2) — doc/xls/ppt/msg/msi       | FAT walk to last used sector |
 | pst    | Outlook data file (PST/OST, Unicode)             | ibFileEof field in header   |
 

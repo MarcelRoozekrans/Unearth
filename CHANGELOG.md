@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **AppleSingle/AppleDouble containers are carved** — `scan` now recovers the
+  RFC 1740 containers macOS uses for resource forks and metadata on non-Apple
+  filesystems (the `._name` sidecar files inside ZIP/tar archives and on
+  FAT/SMB volumes). The exact length is the largest offset-plus-length across
+  the entries in the header's entry table, with the magic, version, and a
+  bounded entry count checked to reject a coincidental match.
 - **JNG images are carved** — `scan` now recovers `.jng` images (JPEG Network
   Graphics), a PNG-family wrapper around JPEG data. Like PNG, a standalone
   datastream ends with an empty `IEND` chunk, so the same footer marker locates

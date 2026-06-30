@@ -569,6 +569,7 @@ fn file_length(
         Extent::Flic => Ok(flic_length(source, file_start, limit)?),
         Extent::WavPack => Ok(wavpack_length(source, file_start, limit)?),
         Extent::Ape => Ok(ape_length(source, file_start, limit)?),
+        Extent::AppleSingle => Ok(applesingle_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3418,6 +3419,51 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// AppleSingle / AppleDouble (RFC 1740) length. The big-endian header holds a
+/// magic (`0x00051600` AppleSingle or `0x00051607` AppleDouble), a version, 16
+/// filler bytes, and a u16 entry count at offset 0x18. Each 12-byte entry that
+/// follows is an id (0x00), a u32 offset (0x04), and a u32 length (0x08); the
+/// file ends at the largest offset-plus-length. The magic, version
+/// (`0x00010000`/`0x00020000`), and a bounded entry count reject a coincidental
+/// magic.
+fn applesingle_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x1A];
+    if source.read_at(file_start, &mut h)? < 0x1A {
+        return Ok(None);
+    }
+    let magic = u32::from_be_bytes(h[0..4].try_into().unwrap());
+    if magic != 0x0005_1600 && magic != 0x0005_1607 {
+        return Ok(None);
+    }
+    let version = u32::from_be_bytes(h[4..8].try_into().unwrap());
+    if version != 0x0001_0000 && version != 0x0002_0000 {
+        return Ok(None);
+    }
+    let entries = u16::from_be_bytes(h[0x18..0x1A].try_into().unwrap()) as u64;
+    // A real container has at least one entry; cap the count to bound the read.
+    if entries == 0 || entries > 256 {
+        return Ok(None);
+    }
+    // The file spans at least the header and the entry table; data follows.
+    let mut end = 0x1A + entries * 12;
+    if file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    for i in 0..entries {
+        let mut e = [0u8; 12];
+        if source.read_at(file_start + 0x1A + i * 12, &mut e)? < 12 {
+            return Ok(None);
+        }
+        let offset = u32::from_be_bytes(e[4..8].try_into().unwrap()) as u64;
+        let length = u32::from_be_bytes(e[8..12].try_into().unwrap()) as u64;
+        end = end.max(offset.saturating_add(length));
+    }
+    if file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
+}
+
 /// Monkey's Audio (`.ape`) length. Files from version 3.98 onward open with an
 /// `APE_DESCRIPTOR`: the `MAC ` magic, a little-endian u16 version (×1000) at
 /// offset 4, then little-endian u32 byte counts for the descriptor (0x08),
@@ -4818,6 +4864,48 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build an AppleSingle/AppleDouble container with the given magic and a
+    /// single entry of `data_len` bytes placed right after the entry table.
+    fn apple_forked(magic: u32, data_len: u32) -> Vec<u8> {
+        let table_end = 0x1A + 12; // header + one 12-byte entry
+        let total = table_end + data_len as usize;
+        let mut v = vec![0u8; total];
+        v[0..4].copy_from_slice(&magic.to_be_bytes());
+        v[4..8].copy_from_slice(&0x0002_0000u32.to_be_bytes()); // version 2
+        v[0x18..0x1A].copy_from_slice(&1u16.to_be_bytes()); // one entry
+                                                            // Entry: id=1 (data fork), offset just past the table, length=data_len.
+        v[0x1A..0x1E].copy_from_slice(&1u32.to_be_bytes());
+        v[0x1E..0x22].copy_from_slice(&(table_end as u32).to_be_bytes());
+        v[0x22..0x26].copy_from_slice(&data_len.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn applesingle_length_uses_max_entry_extent() {
+        // AppleSingle magic, 100-byte data fork.
+        let bytes = apple_forked(0x0005_1600, 100);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(applesingle_length(&src, 0, src.size).unwrap(), Some(total));
+        // AppleDouble magic is recognised too.
+        let bytes = apple_forked(0x0005_1607, 50);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(applesingle_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn applesingle_length_rejects_bad_magic_and_version() {
+        // Wrong magic.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(applesingle_length(&src, 0, src.size).unwrap(), None);
+        // Right magic, unsupported version.
+        let mut bytes = apple_forked(0x0005_1600, 100);
+        bytes[4..8].copy_from_slice(&0x0009_0000u32.to_be_bytes());
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(applesingle_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a Monkey's Audio file (3.98+ descriptor) with `frame_bytes` of APE
