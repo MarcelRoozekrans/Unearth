@@ -742,6 +742,7 @@ alongside the per-file manifest.
 | wv     | WavPack lossless audio (.wv)                     | wvpk block-chain walk       |
 | ape    | Monkey's Audio lossless (.ape)                   | sum of descriptor segments  |
 | dsf    | DSF DSD audio (.dsf, SACD-style)                 | total size in header field  |
+| dff    | DSDIFF DSD audio (.dff)                          | FRM8 form size + 12         |
 | psexe  | PlayStation executable (PS-X EXE)                | 2 KiB header + text size     |
 | simg   | Android sparse image (fastboot/factory)          | sum of chunk sizes          |
 | iso    | ISO 9660 disc image (CD/DVD, installers)         | volume size × block size    |

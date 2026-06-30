@@ -93,6 +93,8 @@
 //!   + image-data length.
 //! * [`Extent::Dsf`] — DSF (DSD audio): the total file size stored in the DSD
 //!   chunk.
+//! * [`Extent::Dsdiff`] — DSDIFF (DSD audio): the FRM8 form size plus its
+//!   12-byte header.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -447,6 +449,12 @@ pub enum Extent {
     /// The total-size field gives the exact end. The chunk size (28) and the
     /// `fmt ` chunk that must follow at offset 28 reject a coincidental magic.
     Dsf,
+    /// DSDIFF (`.dff`) — the Philips "DSD Interchange File Format" for 1-bit
+    /// audio, an IFF-style container with 64-bit sizes. The outer chunk is a
+    /// `FRM8` whose big-endian u64 data size at offset 4 covers everything after
+    /// it, so the file is `12 + size` bytes. The `DSD ` form type required at
+    /// offset 0x0C rejects a coincidental `FRM8` match.
+    Dsdiff,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1717,6 +1725,16 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 4 * GB,
     },
     Signature {
+        // DSDIFF: "FRM8" outer chunk with a "DSD " form type at offset 0x0C.
+        name: "DSDIFF audio (DSD)",
+        ext: "dff",
+        magic: b"FRM8",
+        magic_offset: 0,
+        secondary: Some((12, b"DSD ")),
+        extent: Extent::Dsdiff,
+        max_size: 4 * GB,
+    },
+    Signature {
         // DPX film frame (SMPTE ST 268), big-endian ("SDPX"): the generic file
         // header stores the total file size as a big-endian u32 at offset 0x10.
         name: "DPX image (big-endian)",
@@ -1997,7 +2015,7 @@ pub fn category_of(ext: &str) -> Category {
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
-        | "wv" | "ape" | "dsf" => Category::Audio,
+        | "wv" | "ape" | "dsf" | "dff" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
             Category::Video
         }
