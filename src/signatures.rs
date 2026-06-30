@@ -32,7 +32,7 @@
 //! * [`Extent::IcoCur`] — take the furthest `offset + size` across an ICO/CUR
 //!   image directory.
 //! * [`Extent::HeaderSizeBe32`] — read a big-endian u32 size field (WOFF fonts,
-//!   big-endian DPX).
+//!   big-endian DPX, Cineon).
 //! * [`Extent::Sfnt`] — walk a TrueType/OpenType font's table directory.
 //! * [`Extent::Midi`] — walk a Standard MIDI file's `MThd`/`MTrk` chunks.
 //! * [`Extent::Flv`] — walk a Flash Video tag chain.
@@ -1593,6 +1593,18 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::HeaderSizeLe32 { offset: 0x10 },
         max_size: 2 * GB,
     },
+    Signature {
+        // Cineon film frame (the Kodak format DPX descends from), big-endian
+        // only: magic 0x802A5FD7 at offset 0, total file size as a big-endian
+        // u32 at offset 0x14 of the file-information header.
+        name: "Cineon image",
+        ext: "cin",
+        magic: b"\x80\x2a\x5f\xd7",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::HeaderSizeBe32 { offset: 0x14 },
+        max_size: 2 * GB,
+    },
 ];
 
 /// Look up signatures relevant to a single source byte, keyed by the first
@@ -1838,7 +1850,7 @@ pub fn category_of(ext: &str) -> Category {
     match ext {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
-        | "ani" | "eps" | "fli" | "flc" | "dpx" => Category::Image,
+        | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr" => {
             Category::Audio
         }
@@ -1920,6 +1932,11 @@ mod tests {
         // resolve to the dpx type.
         assert_eq!(ext_of(b"SDPX\0\0\0\0"), Some("dpx"));
         assert_eq!(ext_of(b"XPDS\0\0\0\0"), Some("dpx"));
+    }
+
+    #[test]
+    fn cineon_magic_matches() {
+        assert_eq!(ext_of(&[0x80, 0x2A, 0x5F, 0xD7, 0, 0, 0, 0]), Some("cin"));
     }
 
     #[test]
