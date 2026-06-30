@@ -5,7 +5,8 @@
 //! device, then determining the file's length with one of a few strategies:
 //!
 //! * [`Extent::Footer`] — scan forward for a trailing marker (JPEG, PNG, ...).
-//! * [`Extent::HeaderSizeLe32`] — read a little-endian u32 size field (BMP, CAB).
+//! * [`Extent::HeaderSizeLe32`] — read a little-endian u32 size field (BMP, CAB,
+//!   little-endian DPX).
 //! * [`Extent::RiffSize`] — RIFF container size at offset 4, plus the 8-byte
 //!   chunk header (WAV, AVI, WEBP).
 //! * [`Extent::FormSize`] — IFF "FORM" container size (big-endian) at offset 4,
@@ -30,7 +31,8 @@
 //!   the end of the module.
 //! * [`Extent::IcoCur`] — take the furthest `offset + size` across an ICO/CUR
 //!   image directory.
-//! * [`Extent::HeaderSizeBe32`] — read a big-endian u32 size field (WOFF fonts).
+//! * [`Extent::HeaderSizeBe32`] — read a big-endian u32 size field (WOFF fonts,
+//!   big-endian DPX).
 //! * [`Extent::Sfnt`] — walk a TrueType/OpenType font's table directory.
 //! * [`Extent::Midi`] — walk a Standard MIDI file's `MThd`/`MTrk` chunks.
 //! * [`Extent::Flv`] — walk a Flash Video tag chain.
@@ -1569,6 +1571,28 @@ pub static SIGNATURES: &[Signature] = &[
         extent: Extent::Flic,
         max_size: 256 * MB,
     },
+    Signature {
+        // DPX film frame (SMPTE ST 268), big-endian ("SDPX"): the generic file
+        // header stores the total file size as a big-endian u32 at offset 0x10.
+        name: "DPX image (big-endian)",
+        ext: "dpx",
+        magic: b"SDPX",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::HeaderSizeBe32 { offset: 0x10 },
+        max_size: 2 * GB,
+    },
+    Signature {
+        // DPX film frame, little-endian ("XPDS"): same layout, total file size
+        // is a little-endian u32 at offset 0x10.
+        name: "DPX image (little-endian)",
+        ext: "dpx",
+        magic: b"XPDS",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::HeaderSizeLe32 { offset: 0x10 },
+        max_size: 2 * GB,
+    },
 ];
 
 /// Look up signatures relevant to a single source byte, keyed by the first
@@ -1814,7 +1838,7 @@ pub fn category_of(ext: &str) -> Category {
     match ext {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
-        | "ani" | "eps" | "fli" | "flc" => Category::Image,
+        | "ani" | "eps" | "fli" | "flc" | "dpx" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr" => {
             Category::Audio
         }
@@ -1888,6 +1912,14 @@ mod tests {
         assert_eq!(ext_of(b"SQLite format 3\0"), Some("sqlite"));
         assert_eq!(ext_of(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]), Some("7z"));
         assert_eq!(ext_of(b"not a magic"), None);
+    }
+
+    #[test]
+    fn dpx_both_byte_orders_match() {
+        // Both the big-endian ("SDPX") and little-endian ("XPDS") DPX magics
+        // resolve to the dpx type.
+        assert_eq!(ext_of(b"SDPX\0\0\0\0"), Some("dpx"));
+        assert_eq!(ext_of(b"XPDS\0\0\0\0"), Some("dpx"));
     }
 
     #[test]
