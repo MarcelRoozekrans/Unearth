@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **WavPack audio is carved** — `scan` now recovers `.wv` lossless-audio files.
+  The exact length is found by walking the `wvpk` block chain to the last whole
+  block, with the first block's format version checked to reject a coincidental
+  magic.
 - **Cineon film frames are carved** — `scan` now recovers `.cin` images, the
   Kodak film-scan format DPX descends from. The exact length comes from the
   total-file-size field at offset 0x14 of the big-endian file-information

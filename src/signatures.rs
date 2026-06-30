@@ -83,6 +83,8 @@
 //!   block size from the primary volume descriptor.
 //! * [`Extent::Flic`] — Autodesk FLIC animation: the total size stored in the
 //!   header's first field.
+//! * [`Extent::WavPack`] — WavPack lossless audio: walk the `wvpk` block chain
+//!   to the last whole block.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -395,6 +397,15 @@ pub enum Extent {
     /// The colour depth (8 or 0), frame count, and frame dimensions are
     /// range-checked to reject a coincidental magic.
     Flic,
+    /// WavPack lossless audio (`.wv`) — the open-source hybrid lossless codec.
+    /// The stream is a chain of blocks, each opening with a 32-byte header: the
+    /// `wvpk` magic, a little-endian u32 `ckSize` at offset 4 (the block size in
+    /// bytes minus 8), and a little-endian u16 format version at offset 8. The
+    /// chain is walked — each block advances `ckSize + 8` bytes — until the next
+    /// position no longer begins with `wvpk`, so the file ends at the last whole
+    /// block. The first block's version (a 4.x bitstream) is checked to reject a
+    /// coincidental magic.
+    WavPack,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1572,6 +1583,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 256 * MB,
     },
     Signature {
+        // WavPack lossless audio: "wvpk" block magic, size walked over the
+        // block chain.
+        name: "WavPack audio",
+        ext: "wv",
+        magic: b"wvpk",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::WavPack,
+        max_size: 2 * GB,
+    },
+    Signature {
         // DPX film frame (SMPTE ST 268), big-endian ("SDPX"): the generic file
         // header stores the total file size as a big-endian u32 at offset 0x10.
         name: "DPX image (big-endian)",
@@ -1851,9 +1873,8 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" => Category::Image,
-        "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr" => {
-            Category::Audio
-        }
+        "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
+        | "wv" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
             Category::Video
         }

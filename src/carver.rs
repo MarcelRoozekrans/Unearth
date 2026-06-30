@@ -567,6 +567,7 @@ fn file_length(
         Extent::Squashfs => Ok(squashfs_length(source, file_start, limit)?),
         Extent::Iso9660 => Ok(iso9660_length(source, file_start, limit)?),
         Extent::Flic => Ok(flic_length(source, file_start, limit)?),
+        Extent::WavPack => Ok(wavpack_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3416,6 +3417,47 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// WavPack (`.wv`) lossless-audio length. The stream is a chain of blocks, each
+/// opening with a 32-byte header: the `wvpk` magic, a little-endian u32 `ckSize`
+/// at offset 4 (the block size in bytes minus 8), and a little-endian u16 format
+/// version at offset 8. Blocks are walked — each advances `ckSize + 8` bytes —
+/// until the next position no longer begins with `wvpk`, so the file ends at the
+/// last whole block. The first block's version (a 4.x bitstream, in
+/// `0x0402..=0x0410`) is checked to reject a coincidental magic.
+fn wavpack_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut pos = file_start;
+    let mut blocks = 0u64;
+    // Each block advances by at least 32 bytes, so `pos` strictly increases and
+    // the walk terminates at `limit`.
+    loop {
+        let mut hdr = [0u8; 12];
+        if pos >= limit || source.read_at(pos, &mut hdr)? < 12 || &hdr[0..4] != b"wvpk" {
+            break;
+        }
+        let ck_size = u32::from_le_bytes(hdr[4..8].try_into().unwrap()) as u64;
+        let version = u16::from_le_bytes(hdr[8..10].try_into().unwrap());
+        // The first block validates the format version; reject a stray magic.
+        if blocks == 0 && !(0x0402..=0x0410).contains(&version) {
+            return Ok(None);
+        }
+        // `ckSize` counts the block minus its 8-byte ckID+ckSize prefix, so the
+        // whole block is `ckSize + 8` and must hold at least the 32-byte header.
+        if ck_size < 24 {
+            break;
+        }
+        let block_size = ck_size + 8;
+        if pos.saturating_add(block_size) > limit {
+            break;
+        }
+        pos += block_size;
+        blocks += 1;
+    }
+    if blocks == 0 {
+        return Ok(None);
+    }
+    Ok(Some(pos - file_start))
+}
+
 /// Autodesk FLIC animation (`.fli`/`.flc`) length. The 128-byte header opens
 /// with the total file size as a little-endian u32 at offset 0, the format
 /// magic (`0xAF11` FLI or `0xAF12` FLC) as a u16 at offset 4, the frame count
@@ -4671,5 +4713,40 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(4096)
         );
+    }
+
+    /// Build `count` WavPack blocks of `block_size` bytes each (>= 32),
+    /// followed by `trailing` bytes of non-WavPack data.
+    fn wavpack(count: usize, block_size: u32, trailing: usize) -> Vec<u8> {
+        let mut v = Vec::new();
+        for _ in 0..count {
+            let mut blk = vec![0u8; block_size as usize];
+            blk[0..4].copy_from_slice(b"wvpk");
+            blk[4..8].copy_from_slice(&(block_size - 8).to_le_bytes());
+            blk[8..10].copy_from_slice(&0x0410u16.to_le_bytes());
+            v.extend_from_slice(&blk);
+        }
+        v.extend(std::iter::repeat(0xABu8).take(trailing));
+        v
+    }
+
+    #[test]
+    fn wavpack_length_walks_the_block_chain() {
+        // Three 64-byte blocks then junk: the file ends after the last block.
+        let (_t, src) = source_of(&wavpack(3, 64, 20));
+        assert_eq!(wavpack_length(&src, 0, src.size).unwrap(), Some(3 * 64));
+    }
+
+    #[test]
+    fn wavpack_length_rejects_bad_version_and_non_wavpack() {
+        // Not WavPack at all.
+        let (_t, src) = source_of(&vec![0u8; 256]);
+        assert_eq!(wavpack_length(&src, 0, src.size).unwrap(), None);
+
+        // A wvpk magic with an out-of-range format version is rejected.
+        let mut bytes = wavpack(1, 64, 0);
+        bytes[8..10].copy_from_slice(&0x0299u16.to_le_bytes());
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(wavpack_length(&src, 0, src.size).unwrap(), None);
     }
 }

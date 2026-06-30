@@ -736,6 +736,7 @@ alongside the per-file manifest.
 | md     | Sega Mega Drive / Genesis ROM                    | ROM end address in header    |
 | voc    | Creative Voice audio (.voc)                      | block chain to terminator   |
 | amr    | AMR audio (mobile voice, .amr)                   | fixed-size frame walk       |
+| wv     | WavPack lossless audio (.wv)                     | wvpk block-chain walk       |
 | psexe  | PlayStation executable (PS-X EXE)                | 2 KiB header + text size     |
 | simg   | Android sparse image (fastboot/factory)          | sum of chunk sizes          |
 | iso    | ISO 9660 disc image (CD/DVD, installers)         | volume size × block size    |
