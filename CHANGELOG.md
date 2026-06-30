@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **Monkey's Audio is carved** — `scan` now recovers `.ape` lossless-audio
+  files (version 3.98 and later). The exact length is the sum of the segment
+  byte counts in the file's descriptor (descriptor, header, seek table, WAV
+  header, APE frame data, and terminating data). The version and descriptor
+  size are checked to reject a coincidental magic.
 - **WavPack audio is carved** — `scan` now recovers `.wv` lossless-audio files.
   The exact length is found by walking the `wvpk` block chain to the last whole
   block, with the first block's format version checked to reject a coincidental

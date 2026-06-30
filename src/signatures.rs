@@ -85,6 +85,8 @@
 //!   header's first field.
 //! * [`Extent::WavPack`] — WavPack lossless audio: walk the `wvpk` block chain
 //!   to the last whole block.
+//! * [`Extent::Ape`] — Monkey's Audio: sum the segment byte counts in the
+//!   descriptor.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -406,6 +408,15 @@ pub enum Extent {
     /// block. The first block's version (a 4.x bitstream) is checked to reject a
     /// coincidental magic.
     WavPack,
+    /// Monkey's Audio (`.ape`) — a popular lossless codec. Files from version
+    /// 3.98 onward open with an `APE_DESCRIPTOR`: the `MAC ` magic, a u16
+    /// version (×1000) at offset 4, then a run of little-endian u32 byte counts
+    /// for each segment — the descriptor, header, seek table, WAV header, APE
+    /// frame data (a 64-bit value split low at offset 0x18 and high at 0x1C),
+    /// and terminating data. Their sum is the exact file length. The version
+    /// (≥ 3980) and a sane descriptor size are checked to reject a coincidental
+    /// magic; pre-3.98 files, which lack the descriptor, are not carved.
+    Ape,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1594,6 +1605,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 2 * GB,
     },
     Signature {
+        // Monkey's Audio: "MAC " descriptor magic, size summed from the
+        // descriptor's segment byte counts.
+        name: "Monkey's Audio",
+        ext: "ape",
+        magic: b"MAC ",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Ape,
+        max_size: 2 * GB,
+    },
+    Signature {
         // DPX film frame (SMPTE ST 268), big-endian ("SDPX"): the generic file
         // header stores the total file size as a big-endian u32 at offset 0x10.
         name: "DPX image (big-endian)",
@@ -1874,7 +1896,7 @@ pub fn category_of(ext: &str) -> Category {
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
-        | "wv" => Category::Audio,
+        | "wv" | "ape" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
             Category::Video
         }

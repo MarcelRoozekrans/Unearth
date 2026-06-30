@@ -568,6 +568,7 @@ fn file_length(
         Extent::Iso9660 => Ok(iso9660_length(source, file_start, limit)?),
         Extent::Flic => Ok(flic_length(source, file_start, limit)?),
         Extent::WavPack => Ok(wavpack_length(source, file_start, limit)?),
+        Extent::Ape => Ok(ape_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3417,6 +3418,47 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// Monkey's Audio (`.ape`) length. Files from version 3.98 onward open with an
+/// `APE_DESCRIPTOR`: the `MAC ` magic, a little-endian u16 version (×1000) at
+/// offset 4, then little-endian u32 byte counts for the descriptor (0x08),
+/// header (0x0C), seek table (0x10), WAV header (0x14), APE frame data (low at
+/// 0x18, high at 0x1C), and terminating data (0x20). The file length is their
+/// sum. The version (≥ 3980) and a sane descriptor size are checked, and the
+/// frame data must be non-zero, to reject a coincidental magic. Pre-3.98 files
+/// lack the descriptor and are not carved.
+fn ape_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut d = [0u8; 0x24];
+    if source.read_at(file_start, &mut d)? < 0x24 || &d[0..4] != b"MAC " {
+        return Ok(None);
+    }
+    let version = u16::from_le_bytes([d[4], d[5]]);
+    if version < 3980 {
+        return Ok(None);
+    }
+    let u32_at = |o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap()) as u64;
+    let descriptor = u32_at(0x08);
+    let header = u32_at(0x0C);
+    let seek_table = u32_at(0x10);
+    let wav_header = u32_at(0x14);
+    let frame = (u32_at(0x1C) << 32) | u32_at(0x18);
+    let terminating = u32_at(0x20);
+    // The descriptor must be a sane size, an APE_HEADER must follow it, and a
+    // real file has frame data.
+    if !(52..=4096).contains(&descriptor) || header < 24 || frame == 0 {
+        return Ok(None);
+    }
+    let size = descriptor
+        .saturating_add(header)
+        .saturating_add(seek_table)
+        .saturating_add(wav_header)
+        .saturating_add(frame)
+        .saturating_add(terminating);
+    if file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
+}
+
 /// WavPack (`.wv`) lossless-audio length. The stream is a chain of blocks, each
 /// opening with a 32-byte header: the `wvpk` magic, a little-endian u32 `ckSize`
 /// at offset 4 (the block size in bytes minus 8), and a little-endian u16 format
@@ -4728,6 +4770,44 @@ mod tests {
         }
         v.extend(std::iter::repeat(0xABu8).take(trailing));
         v
+    }
+
+    /// Build a Monkey's Audio file (3.98+ descriptor) with `frame_bytes` of APE
+    /// frame data; the total length is the sum of all segment sizes.
+    fn ape_descriptor(frame_bytes: u32) -> Vec<u8> {
+        let (descriptor, header, seek, wav, term) = (52u32, 24u32, 16u32, 44u32, 8u32);
+        let total = descriptor + header + seek + wav + frame_bytes + term;
+        let mut v = vec![0u8; total as usize];
+        v[0..4].copy_from_slice(b"MAC ");
+        v[4..6].copy_from_slice(&3990u16.to_le_bytes()); // version 3.99
+        v[8..12].copy_from_slice(&descriptor.to_le_bytes());
+        v[12..16].copy_from_slice(&header.to_le_bytes());
+        v[16..20].copy_from_slice(&seek.to_le_bytes());
+        v[20..24].copy_from_slice(&wav.to_le_bytes());
+        v[24..28].copy_from_slice(&frame_bytes.to_le_bytes()); // frame data (low)
+        v[32..36].copy_from_slice(&term.to_le_bytes()); // terminating data
+        v
+    }
+
+    #[test]
+    fn ape_length_sums_descriptor_segments() {
+        let bytes = ape_descriptor(1000);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(ape_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 52 + 24 + 16 + 44 + 1000 + 8);
+    }
+
+    #[test]
+    fn ape_length_rejects_old_version_and_non_ape() {
+        // Not Monkey's Audio.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(ape_length(&src, 0, src.size).unwrap(), None);
+        // A pre-3.98 file has no descriptor to sum.
+        let mut bytes = ape_descriptor(1000);
+        bytes[4..6].copy_from_slice(&3970u16.to_le_bytes());
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(ape_length(&src, 0, src.size).unwrap(), None);
     }
 
     #[test]
