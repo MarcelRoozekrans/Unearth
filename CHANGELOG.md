@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **DPX film frames are carved** — `scan` now recovers `.dpx` images (SMPTE
+  ST 268, the standard frame format in film scanning and VFX). Both byte
+  orders (`SDPX`/`XPDS`) are recognised, and the exact length comes from the
+  total-file-size field at offset 0x10 of the generic file header.
 - **Autodesk FLIC animations are carved** — `scan` now recovers `.fli`/`.flc`
   palette animations (Autodesk Animator / Animator Pro, old games and demos).
   The exact length is the total-size field at the start of the 128-byte header.

@@ -740,6 +740,7 @@ alongside the per-file manifest.
 | simg   | Android sparse image (fastboot/factory)          | sum of chunk sizes          |
 | iso    | ISO 9660 disc image (CD/DVD, installers)         | volume size × block size    |
 | fli    | Autodesk FLIC animation (FLI/FLC)                | total size in header field  |
+| dpx    | DPX film frame (SMPTE ST 268, VFX)               | total size in header field  |
 | ole    | Compound File (OLE2) — doc/xls/ppt/msg/msi       | FAT walk to last used sector |
 | pst    | Outlook data file (PST/OST, Unicode)             | ibFileEof field in header   |
 

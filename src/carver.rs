@@ -4625,4 +4625,36 @@ mod tests {
         let (_t, src) = source_of(&anim[..2048]);
         assert_eq!(flic_length(&src, 0, src.size).unwrap(), None);
     }
+
+    #[test]
+    fn dpx_length_reads_total_file_size() {
+        use crate::signatures::SIGNATURES;
+        // Big-endian DPX ("SDPX"): total file size is a big-endian u32 at 0x10.
+        let mut img = vec![0u8; 4096];
+        img[0..4].copy_from_slice(b"SDPX");
+        img[0x10..0x14].copy_from_slice(&4096u32.to_be_bytes());
+        let (_t, src) = source_of(&img);
+        let sig = SIGNATURES
+            .iter()
+            .find(|s| s.ext == "dpx" && s.magic[0] == b'S')
+            .unwrap();
+        assert_eq!(
+            file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(4096)
+        );
+
+        // Little-endian DPX ("XPDS"): total file size is a little-endian u32.
+        let mut img = vec![0u8; 2048];
+        img[0..4].copy_from_slice(b"XPDS");
+        img[0x10..0x14].copy_from_slice(&2048u32.to_le_bytes());
+        let (_t, src) = source_of(&img);
+        let sig = SIGNATURES
+            .iter()
+            .find(|s| s.ext == "dpx" && s.magic[0] == b'X')
+            .unwrap();
+        assert_eq!(
+            file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(2048)
+        );
+    }
 }
