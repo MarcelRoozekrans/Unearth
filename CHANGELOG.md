@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **PCF bitmap fonts are carved** — `scan` now recovers `.pcf` fonts (the X11
+  Portable Compiled Font behind classic Linux/Unix console and terminal
+  bitmap fonts). The exact length is the largest data offset-plus-size across
+  the font's table of contents, with a bounded table count and offset checks to
+  reject a coincidental magic.
 - **DSDIFF (DSD) audio is carved** — `scan` now recovers `.dff` files, the
   Philips DSD Interchange File Format for 1-bit audio. The exact length is the
   `FRM8` form's big-endian 64-bit data size plus its 12-byte header, with the

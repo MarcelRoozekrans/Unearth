@@ -573,6 +573,7 @@ fn file_length(
         Extent::SunRaster => Ok(sun_raster_length(source, file_start, limit)?),
         Extent::Dsf => Ok(dsf_length(source, file_start, limit)?),
         Extent::Dsdiff => Ok(dsdiff_length(source, file_start, limit)?),
+        Extent::Pcf => Ok(pcf_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3422,6 +3423,46 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// PCF bitmap font (`.pcf`) length. The X11 Portable Compiled Font opens with a
+/// `\x01fcp` magic, a little-endian u32 table count, and that many 16-byte table
+/// entries (type, format, a u32 size at offset 8, and a u32 data offset at
+/// offset 12). The file ends at the largest data offset-plus-size. The magic, a
+/// bounded table count, and offsets that fall past the table of contents reject
+/// a coincidental magic.
+fn pcf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut hdr = [0u8; 8];
+    if source.read_at(file_start, &mut hdr)? < 8 || &hdr[0..4] != b"\x01fcp" {
+        return Ok(None);
+    }
+    let count = u32::from_le_bytes(hdr[4..8].try_into().unwrap()) as u64;
+    // PCF has a small fixed set of table types; bound the count.
+    if count == 0 || count > 64 {
+        return Ok(None);
+    }
+    let toc_end = 8 + count * 16;
+    if file_start.saturating_add(toc_end) > limit {
+        return Ok(None);
+    }
+    let mut end = toc_end;
+    for i in 0..count {
+        let mut e = [0u8; 16];
+        if source.read_at(file_start + 8 + i * 16, &mut e)? < 16 {
+            return Ok(None);
+        }
+        let size = u32::from_le_bytes(e[8..12].try_into().unwrap()) as u64;
+        let offset = u32::from_le_bytes(e[12..16].try_into().unwrap()) as u64;
+        // Table data must live past the table of contents.
+        if offset < toc_end {
+            return Ok(None);
+        }
+        end = end.max(offset.saturating_add(size));
+    }
+    if file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
+}
+
 /// DSDIFF (`.dff`) length. The Philips DSD Interchange File Format is an
 /// IFF-style container with 64-bit sizes: the outer `FRM8` chunk has a
 /// big-endian u64 data size at offset 4 that covers the form type and every
@@ -4946,6 +4987,49 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a PCF font with the given `(size, offset)` table entries; the total
+    /// length is the largest offset-plus-size.
+    fn pcf(tables: &[(u32, u32)]) -> Vec<u8> {
+        let count = tables.len();
+        let toc_end = 8 + count * 16;
+        let total = tables
+            .iter()
+            .map(|&(s, o)| o as usize + s as usize)
+            .max()
+            .unwrap_or(toc_end)
+            .max(toc_end);
+        let mut v = vec![0u8; total];
+        v[0..4].copy_from_slice(b"\x01fcp");
+        v[4..8].copy_from_slice(&(count as u32).to_le_bytes());
+        for (i, &(size, offset)) in tables.iter().enumerate() {
+            let e = 8 + i * 16;
+            v[e + 8..e + 12].copy_from_slice(&size.to_le_bytes());
+            v[e + 12..e + 16].copy_from_slice(&offset.to_le_bytes());
+        }
+        v
+    }
+
+    #[test]
+    fn pcf_length_uses_max_table_extent() {
+        // Two tables (toc_end = 40): one at offset 40, one at offset 100.
+        let bytes = pcf(&[(50, 40), (64, 100)]);
+        let total = bytes.len() as u64; // max(40+50, 100+64) = 164
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(pcf_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 164);
+    }
+
+    #[test]
+    fn pcf_length_rejects_non_pcf_and_bad_offset() {
+        // Not a PCF font.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(pcf_length(&src, 0, src.size).unwrap(), None);
+        // A table offset inside the table of contents is rejected.
+        let bytes = pcf(&[(50, 8)]); // offset 8 < toc_end (24)
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(pcf_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a DSDIFF (DFF) file whose FRM8 form data is `data_size` bytes; the
