@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **DSDIFF (DSD) audio is carved** — `scan` now recovers `.dff` files, the
+  Philips DSD Interchange File Format for 1-bit audio. The exact length is the
+  `FRM8` form's big-endian 64-bit data size plus its 12-byte header, with the
+  `DSD ` form type checked to reject a coincidental magic.
 - **DSF (DSD) audio is carved** — `scan` now recovers `.dsf` files, the Sony
   DSD Stream File format used for high-resolution 1-bit audio. The exact length
   is the total-file-size field in the opening DSD chunk, with the chunk size

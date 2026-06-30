@@ -572,6 +572,7 @@ fn file_length(
         Extent::AppleSingle => Ok(applesingle_length(source, file_start, limit)?),
         Extent::SunRaster => Ok(sun_raster_length(source, file_start, limit)?),
         Extent::Dsf => Ok(dsf_length(source, file_start, limit)?),
+        Extent::Dsdiff => Ok(dsdiff_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3421,6 +3422,28 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// DSDIFF (`.dff`) length. The Philips DSD Interchange File Format is an
+/// IFF-style container with 64-bit sizes: the outer `FRM8` chunk has a
+/// big-endian u64 data size at offset 4 that covers the form type and every
+/// local chunk, so the file is `12 + size` bytes. The `DSD ` form type required
+/// at offset 0x0C rejects a coincidental `FRM8` match.
+fn dsdiff_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 16];
+    if source.read_at(file_start, &mut h)? < 16 || &h[0..4] != b"FRM8" || &h[12..16] != b"DSD " {
+        return Ok(None);
+    }
+    let data_size = u64::from_be_bytes(h[4..12].try_into().unwrap());
+    // The form data must at least hold the 4-byte form type.
+    if data_size < 4 {
+        return Ok(None);
+    }
+    let total = 12u64.saturating_add(data_size);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// DSF (`.dsf`) length. The DSD Stream File opens with a DSD chunk: the `DSD `
 /// magic, a little-endian u64 chunk size (always 28) at offset 4, the total
 /// file size as a little-endian u64 at offset 0x0C, and a metadata pointer. The
@@ -4923,6 +4946,38 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a DSDIFF (DFF) file whose FRM8 form data is `data_size` bytes; the
+    /// total length is `12 + data_size`.
+    fn dsdiff(data_size: u64) -> Vec<u8> {
+        let total = 12 + data_size;
+        let mut v = vec![0u8; total as usize];
+        v[0..4].copy_from_slice(b"FRM8");
+        v[4..12].copy_from_slice(&data_size.to_be_bytes());
+        v[12..16].copy_from_slice(b"DSD "); // form type
+        v
+    }
+
+    #[test]
+    fn dsdiff_length_adds_header_to_form_size() {
+        let bytes = dsdiff(1000);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(dsdiff_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 12 + 1000);
+    }
+
+    #[test]
+    fn dsdiff_length_rejects_wrong_form_type() {
+        // Not DSDIFF.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(dsdiff_length(&src, 0, src.size).unwrap(), None);
+        // FRM8 with a non-DSD form type is rejected.
+        let mut bytes = dsdiff(1000);
+        bytes[12..16].copy_from_slice(b"AIFF");
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(dsdiff_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a DSF (DSD) file with `data_len` bytes of sample data; the total
