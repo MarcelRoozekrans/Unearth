@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **JNG images are carved** — `scan` now recovers `.jng` images (JPEG Network
+  Graphics), a PNG-family wrapper around JPEG data. Like PNG, a standalone
+  datastream ends with an empty `IEND` chunk, so the same footer marker locates
+  the file end.
 - **MNG animations are carved** — `scan` now recovers `.mng` images (Multiple-
   image Network Graphics), a PNG-family animation that shares PNG's chunk
   structure. The file ends at the empty `MEND` chunk, found by its constant
