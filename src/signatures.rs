@@ -97,6 +97,8 @@
 //!   12-byte header.
 //! * [`Extent::Pcf`] — PCF bitmap font: the largest table offset-plus-size in
 //!   the table of contents.
+//! * [`Extent::UImage`] — U-Boot uImage: the 64-byte header plus the image-data
+//!   size field.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -465,6 +467,13 @@ pub enum Extent {
     /// table count, and offsets that fall past the table of contents reject a
     /// coincidental magic.
     Pcf,
+    /// U-Boot legacy image (`.uimage`) — the boot-image wrapper produced by
+    /// `mkimage` for U-Boot, ubiquitous in router/IoT firmware. A 64-byte
+    /// big-endian header opens with the magic `0x27051956` and records the
+    /// image-data size as a u32 at offset 0x0C, so the file is `64 + size`
+    /// bytes. The distinctive magic and a non-zero size reject a coincidental
+    /// match.
+    UImage,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1755,6 +1764,16 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 64 * MB,
     },
     Signature {
+        // U-Boot legacy image: 0x27051956 magic, size = 64-byte header + data.
+        name: "U-Boot uImage",
+        ext: "uimage",
+        magic: &[0x27, 0x05, 0x19, 0x56],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::UImage,
+        max_size: 512 * MB,
+    },
+    Signature {
         // DPX film frame (SMPTE ST 268), big-endian ("SDPX"): the generic file
         // header stores the total file size as a big-endian u32 at offset 0x10.
         name: "DPX image (big-endian)",
@@ -2049,7 +2068,7 @@ pub fn category_of(ext: &str) -> Category {
         }
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
-        "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" => {
+        "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage" => {
             Category::System
         }
         _ => Category::Other,
