@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **Autodesk FLIC animations are carved** — `scan` now recovers `.fli`/`.flc`
+  palette animations (Autodesk Animator / Animator Pro, old games and demos).
+  The exact length is the total-size field at the start of the 128-byte header.
+  The format magic (`0xAF11`/`0xAF12`), colour depth, frame count, and frame
+  dimensions are range-checked to reject a coincidental two-byte magic.
 - **ISO 9660 disc images are carved** — `scan` now recovers `.iso` images
   (CD/DVD filesystems, distro installers, optical-media backups). The exact
   length comes from the primary volume descriptor at sector 16: the volume
