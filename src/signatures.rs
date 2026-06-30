@@ -89,6 +89,8 @@
 //!   descriptor.
 //! * [`Extent::AppleSingle`] — AppleSingle/AppleDouble: the largest entry
 //!   offset-plus-length in the entry table.
+//! * [`Extent::SunRaster`] — Sun raster image: 32-byte header + colormap length
+//!   + image-data length.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -429,6 +431,13 @@ pub enum Extent {
     /// the largest offset-plus-length. The magic, version, and a bounded entry
     /// count reject a coincidental match.
     AppleSingle,
+    /// Sun raster image (`.ras`/`.sun`) — the classic raster format from SunOS.
+    /// The 32-byte big-endian header (magic `0x59A66A95`) records the image-data
+    /// length at offset 0x10 and the colormap length at offset 0x1C, so the file
+    /// is `32 + maplength + length` bytes. The depth (1/8/24/32), image type
+    /// (≤ 5), colormap type (≤ 2), and non-zero geometry are checked to reject a
+    /// coincidental magic.
+    SunRaster,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1679,6 +1688,16 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 2 * GB,
     },
     Signature {
+        // Sun raster image: 0x59A66A95 magic, size = header + colormap + data.
+        name: "Sun raster image",
+        ext: "ras",
+        magic: &[0x59, 0xA6, 0x6A, 0x95],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::SunRaster,
+        max_size: 512 * MB,
+    },
+    Signature {
         // DPX film frame (SMPTE ST 268), big-endian ("SDPX"): the generic file
         // header stores the total file size as a big-endian u32 at offset 0x10.
         name: "DPX image (big-endian)",
@@ -1957,7 +1976,7 @@ pub fn category_of(ext: &str) -> Category {
     match ext {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
-        | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" => Category::Image,
+        | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {

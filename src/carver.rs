@@ -570,6 +570,7 @@ fn file_length(
         Extent::WavPack => Ok(wavpack_length(source, file_start, limit)?),
         Extent::Ape => Ok(ape_length(source, file_start, limit)?),
         Extent::AppleSingle => Ok(applesingle_length(source, file_start, limit)?),
+        Extent::SunRaster => Ok(sun_raster_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3419,6 +3420,40 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// Sun raster image (`.ras`) length. The 32-byte big-endian header (magic
+/// `0x59A66A95`) records the image-data length at offset 0x10 and the colormap
+/// length at offset 0x1C, so the file is `32 + maplength + length` bytes. The
+/// colour depth (1/8/24/32), image type (≤ 5), colormap type (≤ 2), non-zero
+/// geometry, and a non-zero data length are checked to reject a coincidental
+/// magic.
+fn sun_raster_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 32];
+    if source.read_at(file_start, &mut h)? < 32 {
+        return Ok(None);
+    }
+    let be = |o: usize| u32::from_be_bytes(h[o..o + 4].try_into().unwrap()) as u64;
+    if be(0) != 0x59A6_6A95 {
+        return Ok(None);
+    }
+    let (width, height, depth) = (be(4), be(8), be(0x0C));
+    let length = be(0x10);
+    let (rtype, maptype, maplength) = (be(0x14), be(0x18), be(0x1C));
+    if width == 0
+        || height == 0
+        || !matches!(depth, 1 | 8 | 24 | 32)
+        || rtype > 5
+        || maptype > 2
+        || length == 0
+    {
+        return Ok(None);
+    }
+    let size = 32u64.saturating_add(maplength).saturating_add(length);
+    if file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
+}
+
 /// AppleSingle / AppleDouble (RFC 1740) length. The big-endian header holds a
 /// magic (`0x00051600` AppleSingle or `0x00051607` AppleDouble), a version, 16
 /// filler bytes, and a u16 entry count at offset 0x18. Each 12-byte entry that
@@ -4864,6 +4899,43 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a Sun raster image with `length` bytes of image data and a
+    /// `maplength`-byte colormap; the total is `32 + maplength + length`.
+    fn sun_raster(length: u32, maplength: u32) -> Vec<u8> {
+        let total = 32 + maplength as usize + length as usize;
+        let mut v = vec![0u8; total];
+        v[0..4].copy_from_slice(&0x59A6_6A95u32.to_be_bytes());
+        v[4..8].copy_from_slice(&16u32.to_be_bytes()); // width
+        v[8..12].copy_from_slice(&16u32.to_be_bytes()); // height
+        v[12..16].copy_from_slice(&8u32.to_be_bytes()); // depth
+        v[16..20].copy_from_slice(&length.to_be_bytes());
+        v[20..24].copy_from_slice(&1u32.to_be_bytes()); // type = standard
+        v[24..28].copy_from_slice(&1u32.to_be_bytes()); // maptype = equal RGB
+        v[28..32].copy_from_slice(&maplength.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn sun_raster_length_sums_header_map_and_data() {
+        let bytes = sun_raster(256, 48);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(sun_raster_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 32 + 48 + 256);
+    }
+
+    #[test]
+    fn sun_raster_length_rejects_bad_fields() {
+        // Not a Sun raster.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(sun_raster_length(&src, 0, src.size).unwrap(), None);
+        // Valid magic but an implausible colour depth.
+        let mut bytes = sun_raster(256, 0);
+        bytes[12..16].copy_from_slice(&7u32.to_be_bytes());
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(sun_raster_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an AppleSingle/AppleDouble container with the given magic and a
