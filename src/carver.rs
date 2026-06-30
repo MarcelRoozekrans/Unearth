@@ -4657,4 +4657,19 @@ mod tests {
             Some(2048)
         );
     }
+
+    #[test]
+    fn cineon_length_reads_total_file_size() {
+        use crate::signatures::SIGNATURES;
+        // Cineon: total file size is a big-endian u32 at offset 0x14.
+        let mut img = vec![0u8; 4096];
+        img[0..4].copy_from_slice(&[0x80, 0x2A, 0x5F, 0xD7]);
+        img[0x14..0x18].copy_from_slice(&4096u32.to_be_bytes());
+        let (_t, src) = source_of(&img);
+        let sig = SIGNATURES.iter().find(|s| s.ext == "cin").unwrap();
+        assert_eq!(
+            file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(4096)
+        );
+    }
 }

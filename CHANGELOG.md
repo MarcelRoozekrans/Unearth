@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Cineon film frames are carved** — `scan` now recovers `.cin` images, the
+  Kodak film-scan format DPX descends from. The exact length comes from the
+  total-file-size field at offset 0x14 of the big-endian file-information
+  header.
 - **DPX film frames are carved** — `scan` now recovers `.dpx` images (SMPTE
   ST 268, the standard frame format in film scanning and VFX). Both byte
   orders (`SDPX`/`XPDS`) are recognised, and the exact length comes from the
