@@ -5024,6 +5024,22 @@ mod tests {
     }
 
     #[test]
+    fn sf2_length_reads_riff_size() {
+        use crate::signatures::SIGNATURES;
+        // SoundFont 2 is a RIFF/sfbk container: size at offset 4, plus 8.
+        let mut img = vec![0u8; 4096];
+        img[0..4].copy_from_slice(b"RIFF");
+        img[4..8].copy_from_slice(&(4096u32 - 8).to_le_bytes());
+        img[8..12].copy_from_slice(b"sfbk");
+        let (_t, src) = source_of(&img);
+        let sig = SIGNATURES.iter().find(|s| s.ext == "sf2").unwrap();
+        assert_eq!(
+            file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(4096)
+        );
+    }
+
+    #[test]
     fn trx_length_reads_total_length_field() {
         use crate::signatures::SIGNATURES;
         // TRX: the total file length is a little-endian u32 at offset 4.

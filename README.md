@@ -696,6 +696,7 @@ alongside the per-file manifest.
 | trx    | TRX firmware (Broadcom/OpenWrt routers)         | len field in header         |
 | sqlite | SQLite database                                 | page size × page count      |
 | wav    | WAV audio                                        | RIFF size field             |
+| sf2    | SoundFont 2 (sampled instruments)               | RIFF size field             |
 | mp3    | MP3 audio                                        | ID3v2 tag or frame-sync walk |
 | aac    | AAC audio (ADTS)                                 | ADTS frame-length walk      |
 | avi    | AVI video                                        | RIFF size field             |

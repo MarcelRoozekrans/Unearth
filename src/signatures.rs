@@ -687,6 +687,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 100 * MB,
     },
     Signature {
+        // SoundFont 2 (`.sf2`): a RIFF container with the "sfbk" form type,
+        // widely used for sampled instruments in music software.
+        name: "SoundFont 2",
+        ext: "sf2",
+        magic: b"RIFF",
+        magic_offset: 0,
+        secondary: Some((8, b"sfbk")),
+        extent: Extent::RiffSize,
+        max_size: 2 * GB,
+    },
+    Signature {
         name: "AIFF audio",
         ext: "aiff",
         magic: b"FORM",
@@ -2077,7 +2088,7 @@ pub fn category_of(ext: &str) -> Category {
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
-        | "wv" | "ape" | "dsf" | "dff" => Category::Audio,
+        | "wv" | "ape" | "dsf" | "dff" | "sf2" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
             Category::Video
         }
@@ -2124,6 +2135,7 @@ mod tests {
         assert_eq!(ext_of(b"RIFF\0\0\0\0WAVE"), Some("wav"));
         assert_eq!(ext_of(b"RIFF\0\0\0\0AVI "), Some("avi"));
         assert_eq!(ext_of(b"RIFF\0\0\0\0WEBP"), Some("webp"));
+        assert_eq!(ext_of(b"RIFF\0\0\0\0sfbk"), Some("sf2"));
         // An unknown RIFF form type matches nothing (no generic fallback).
         assert_eq!(ext_of(b"RIFF\0\0\0\0JUNK"), None);
     }
