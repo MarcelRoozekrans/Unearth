@@ -577,6 +577,7 @@ fn file_length(
         Extent::UImage => Ok(uimage_length(source, file_start, limit)?),
         Extent::QuakePak => Ok(pak_length(source, file_start, limit)?),
         Extent::Md2 => Ok(md2_length(source, file_start, limit)?),
+        Extent::Ivf => Ok(ivf_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3426,6 +3427,41 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// IVF (`.ivf`) length. The container that wraps raw AV1/VP9/VP8 bitstreams
+/// opens with a 32-byte little-endian header: the `DKIF` magic, version 0, a
+/// header length of 32, and a frame count as a u32 at offset 0x18. Each frame
+/// is a 12-byte header (a u32 size and a u64 timestamp) followed by the frame
+/// data, so the file is walked frame by frame for exactly the frame count. The
+/// magic, version, and header length reject a coincidental match.
+fn ivf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 32];
+    if source.read_at(file_start, &mut h)? < 32 || &h[0..4] != b"DKIF" {
+        return Ok(None);
+    }
+    let version = u16::from_le_bytes(h[4..6].try_into().unwrap());
+    let header_len = u16::from_le_bytes(h[6..8].try_into().unwrap());
+    if version != 0 || header_len != 32 {
+        return Ok(None);
+    }
+    let num_frames = u32::from_le_bytes(h[0x18..0x1C].try_into().unwrap()) as u64;
+    if num_frames == 0 {
+        return Ok(None);
+    }
+    let mut pos = file_start + 32;
+    for _ in 0..num_frames {
+        let mut fh = [0u8; 12];
+        if pos.saturating_add(12) > limit || source.read_at(pos, &mut fh)? < 12 {
+            return Ok(None);
+        }
+        let frame_size = u32::from_le_bytes(fh[0..4].try_into().unwrap()) as u64;
+        pos = pos.saturating_add(12 + frame_size);
+        if pos > limit {
+            return Ok(None);
+        }
+    }
+    Ok(Some(pos - file_start))
+}
+
 /// Quake II model (`.md2`) length. The 68-byte little-endian header opens with
 /// the `IDP2` magic and version 8; its final field at offset 0x40 (`ofs_end`)
 /// is the exact file size. The magic and version reject a coincidental match.
@@ -5055,6 +5091,47 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build an IVF file with the given per-frame data sizes; the total is the
+    /// 32-byte header plus each frame's 12-byte header and data.
+    fn ivf(frame_sizes: &[u32]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"DKIF");
+        v.extend_from_slice(&0u16.to_le_bytes()); // version
+        v.extend_from_slice(&32u16.to_le_bytes()); // header length
+        v.extend_from_slice(b"AV01"); // codec fourcc
+        v.extend_from_slice(&[0u8; 8]); // width/height/frame rate (unused here)
+        v.extend_from_slice(&[0u8; 4]); // rate den
+        v.extend_from_slice(&(frame_sizes.len() as u32).to_le_bytes()); // num_frames
+        v.extend_from_slice(&[0u8; 4]); // reserved
+        for &sz in frame_sizes {
+            v.extend_from_slice(&sz.to_le_bytes()); // frame size
+            v.extend_from_slice(&[0u8; 8]); // timestamp
+            v.extend(std::iter::repeat(0u8).take(sz as usize)); // frame data
+        }
+        v
+    }
+
+    #[test]
+    fn ivf_length_walks_the_frame_count() {
+        // Two frames of 100 and 200 bytes: 32 + (12+100) + (12+200).
+        let bytes = ivf(&[100, 200]);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(ivf_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 32 + 12 + 100 + 12 + 200);
+    }
+
+    #[test]
+    fn ivf_length_rejects_bad_header_and_overrun() {
+        // Not an IVF file.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(ivf_length(&src, 0, src.size).unwrap(), None);
+        // A frame that runs past the region is rejected.
+        let bytes = ivf(&[100, 200]);
+        let (_t, src) = source_of(&bytes[..100]);
+        assert_eq!(ivf_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a Quake II model whose header `ofs_end` field is `ofs_end`; that is

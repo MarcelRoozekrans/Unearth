@@ -711,6 +711,7 @@ alongside the per-file manifest.
 | 3gp    | 3GP video                                        | ISO box (atom) walk         |
 | flv    | Flash Video                                      | tag-chain walk              |
 | mkv    | Matroska / WebM video                            | EBML segment-size walk      |
+| ivf    | IVF video (AV1 / VP9 / VP8 bitstream)            | frame-count walk in header  |
 | ts     | MPEG transport stream (DVB/DVR)                  | 188-byte packet-sync walk   |
 | mpg    | MPEG program stream (DVD/VOB)                    | pack/PES walk to end code    |
 | ogg    | Ogg (Vorbis/Opus/Theora)                        | Ogg page-chain walk         |
