@@ -101,6 +101,7 @@
 //!   size field.
 //! * [`Extent::QuakePak`] — Quake PAK archive: the directory offset plus its
 //!   length.
+//! * [`Extent::Md2`] — Quake II model: the end-of-file offset in the header.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -484,6 +485,12 @@ pub enum Extent {
     /// directory length that is a multiple of 64 and an offset past the header
     /// reject a coincidental magic.
     QuakePak,
+    /// Quake II model (`.md2`) — the animated mesh format from id Software's
+    /// Quake II (and many games and mods built on it). A 68-byte little-endian
+    /// header opens with the `IDP2` magic and version 8, and its final field at
+    /// offset 0x40 (`ofs_end`) is the exact file size. The magic and version
+    /// reject a coincidental match.
+    Md2,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1803,6 +1810,16 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::QuakePak,
         max_size: 2 * GB,
+    },
+    Signature {
+        // Quake II model: "IDP2" magic, size from the header's ofs_end field.
+        name: "Quake II model",
+        ext: "md2",
+        magic: b"IDP2",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Md2,
+        max_size: 64 * MB,
     },
     Signature {
         // Flattened device tree (`.dtb`/FDT): 0xD00DFEED magic, with the total
