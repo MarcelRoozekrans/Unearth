@@ -5024,6 +5024,21 @@ mod tests {
     }
 
     #[test]
+    fn trx_length_reads_total_length_field() {
+        use crate::signatures::SIGNATURES;
+        // TRX: the total file length is a little-endian u32 at offset 4.
+        let mut img = vec![0u8; 4096];
+        img[0..4].copy_from_slice(b"HDR0");
+        img[4..8].copy_from_slice(&4096u32.to_le_bytes());
+        let (_t, src) = source_of(&img);
+        let sig = SIGNATURES.iter().find(|s| s.ext == "trx").unwrap();
+        assert_eq!(
+            file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(4096)
+        );
+    }
+
+    #[test]
     fn dtb_length_reads_total_size_field() {
         use crate::signatures::SIGNATURES;
         // Device tree blob: totalsize is a big-endian u32 at offset 4.

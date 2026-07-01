@@ -6,7 +6,7 @@
 //!
 //! * [`Extent::Footer`] — scan forward for a trailing marker (JPEG, PNG, ...).
 //! * [`Extent::HeaderSizeLe32`] — read a little-endian u32 size field (BMP, CAB,
-//!   little-endian DPX).
+//!   little-endian DPX, TRX firmware).
 //! * [`Extent::RiffSize`] — RIFF container size at offset 4, plus the 8-byte
 //!   chunk header (WAV, AVI, WEBP).
 //! * [`Extent::FormSize`] — IFF "FORM" container size (big-endian) at offset 4,
@@ -1785,6 +1785,18 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 256 * MB,
     },
     Signature {
+        // TRX firmware container (Broadcom/OpenWrt router images): "HDR0" magic
+        // with the total file length (header included) as a little-endian u32 at
+        // offset 4.
+        name: "TRX firmware image",
+        ext: "trx",
+        magic: b"HDR0",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::HeaderSizeLe32 { offset: 4 },
+        max_size: 256 * MB,
+    },
+    Signature {
         // DPX film frame (SMPTE ST 268), big-endian ("SDPX"): the generic file
         // header stores the total file size as a big-endian u32 at offset 0x10.
         name: "DPX image (big-endian)",
@@ -2080,7 +2092,7 @@ pub fn category_of(ext: &str) -> Category {
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
-        | "dtb" => Category::System,
+        | "dtb" | "trx" => Category::System,
         _ => Category::Other,
     }
 }
@@ -2153,6 +2165,11 @@ mod tests {
     #[test]
     fn dtb_magic_matches() {
         assert_eq!(ext_of(&[0xD0, 0x0D, 0xFE, 0xED, 0, 0, 0, 0]), Some("dtb"));
+    }
+
+    #[test]
+    fn trx_magic_matches() {
+        assert_eq!(ext_of(b"HDR0\0\0\0\0"), Some("trx"));
     }
 
     #[test]

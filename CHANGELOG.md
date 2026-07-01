@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **TRX firmware images are carved** — `scan` now recovers `.trx` router
+  firmware containers (Broadcom/OpenWrt and many consumer routers). The exact
+  length is the `len` field at offset 4 of the header (which counts the header),
+  behind the `HDR0` magic.
 - **Device tree blobs are carved** — `scan` now recovers `.dtb` flattened
   device trees (FDT), the hardware-description blobs used throughout embedded
   Linux and Android boot. The exact length is the `totalsize` field at offset 4
