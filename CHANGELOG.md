@@ -14,6 +14,9 @@ formats.
 
 ### Added
 
+- **SoundFont 2 files are carved** — `scan` now recovers `.sf2` sampled-
+  instrument banks, a RIFF container with the `sfbk` form type, using the RIFF
+  size field for the exact length.
 - **TRX firmware images are carved** — `scan` now recovers `.trx` router
   firmware containers (Broadcom/OpenWrt and many consumer routers). The exact
   length is the `len` field at offset 4 of the header (which counts the header),
