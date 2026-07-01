@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Quake PAK archives are carved** — `scan` now recovers `.pak` asset bundles
+  from id Software's Quake engine and games built on it. The exact length is the
+  directory offset plus the directory length from the header, with the 64-byte
+  entry alignment and a header-relative offset rejecting a coincidental magic.
 - **SoundFont 2 files are carved** — `scan` now recovers `.sf2` sampled-
   instrument banks, a RIFF container with the `sfbk` form type, using the RIFF
   size field for the exact length.

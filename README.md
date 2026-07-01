@@ -690,6 +690,7 @@ alongside the per-file manifest.
 | ar     | Unix ar archive (deb / static lib)              | member-chain walk           |
 | tar    | tar archive (POSIX / GNU ustar)                 | 512-byte member-chain walk  |
 | cpio   | cpio archive (newc; initramfs / RPM)            | entry-chain walk to TRAILER |
+| pak    | Quake PAK archive (game assets)                 | directory offset + length   |
 | squashfs | SquashFS image (Snap / AppImage / firmware)   | bytes_used in superblock    |
 | uimage | U-Boot uImage (router/IoT firmware)             | 64-byte header + data size  |
 | dtb    | Device Tree Blob (FDT, embedded Linux)          | totalsize field in header   |

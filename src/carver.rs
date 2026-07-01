@@ -575,6 +575,7 @@ fn file_length(
         Extent::Dsdiff => Ok(dsdiff_length(source, file_start, limit)?),
         Extent::Pcf => Ok(pcf_length(source, file_start, limit)?),
         Extent::UImage => Ok(uimage_length(source, file_start, limit)?),
+        Extent::QuakePak => Ok(pak_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3424,6 +3425,29 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// Quake PAK archive (`.pak`) length. The `PACK` header stores a little-endian
+/// u32 directory offset at offset 4 and a little-endian u32 directory length at
+/// offset 8. The directory of 64-byte entries lives at the end of the file, so
+/// the length is `dir_offset + dir_length`. A directory length that is a
+/// non-zero multiple of 64 and an offset past the 12-byte header reject a
+/// coincidental magic.
+fn pak_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 12];
+    if source.read_at(file_start, &mut h)? < 12 || &h[0..4] != b"PACK" {
+        return Ok(None);
+    }
+    let dir_offset = u32::from_le_bytes(h[4..8].try_into().unwrap()) as u64;
+    let dir_length = u32::from_le_bytes(h[8..12].try_into().unwrap()) as u64;
+    if dir_offset < 12 || dir_length == 0 || dir_length % 64 != 0 {
+        return Ok(None);
+    }
+    let total = dir_offset.saturating_add(dir_length);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// U-Boot legacy image (`.uimage`) length. The 64-byte big-endian header opens
 /// with the magic `0x27051956` and records the image-data size as a u32 at
 /// offset 0x0C, so the file is `64 + size` bytes. The distinctive magic and a
@@ -5011,6 +5035,40 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a Quake PAK archive with `entries` 64-byte directory entries whose
+    /// directory begins at `dir_offset`; the total is `dir_offset + entries*64`.
+    fn quake_pak(entries: u32, dir_offset: u32) -> Vec<u8> {
+        let dir_length = entries * 64;
+        let total = dir_offset + dir_length;
+        let mut v = vec![0u8; total as usize];
+        v[0..4].copy_from_slice(b"PACK");
+        v[4..8].copy_from_slice(&dir_offset.to_le_bytes());
+        v[8..12].copy_from_slice(&dir_length.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn pak_length_uses_directory_end() {
+        // Three 64-byte entries (192-byte directory) at offset 512.
+        let bytes = quake_pak(3, 512);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(pak_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 512 + 192);
+    }
+
+    #[test]
+    fn pak_length_rejects_bad_directory() {
+        // Not a PAK archive.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(pak_length(&src, 0, src.size).unwrap(), None);
+        // A directory length that isn't a multiple of 64 is rejected.
+        let mut bytes = quake_pak(3, 512);
+        bytes[8..12].copy_from_slice(&100u32.to_le_bytes());
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(pak_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a U-Boot uImage with `data_size` bytes of image data; the total
