@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Quake II models are carved** — `scan` now recovers `.md2` animated meshes
+  from Quake II and the many games and mods built on it. The exact length is the
+  `ofs_end` field in the header, with the `IDP2` magic and version 8 rejecting a
+  coincidental match.
 - **Quake PAK archives are carved** — `scan` now recovers `.pak` asset bundles
   from id Software's Quake engine and games built on it. The exact length is the
   directory offset plus the directory length from the header, with the 64-byte

@@ -576,6 +576,7 @@ fn file_length(
         Extent::Pcf => Ok(pcf_length(source, file_start, limit)?),
         Extent::UImage => Ok(uimage_length(source, file_start, limit)?),
         Extent::QuakePak => Ok(pak_length(source, file_start, limit)?),
+        Extent::Md2 => Ok(md2_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3425,6 +3426,25 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// Quake II model (`.md2`) length. The 68-byte little-endian header opens with
+/// the `IDP2` magic and version 8; its final field at offset 0x40 (`ofs_end`)
+/// is the exact file size. The magic and version reject a coincidental match.
+fn md2_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x44];
+    if source.read_at(file_start, &mut h)? < 0x44 || &h[0..4] != b"IDP2" {
+        return Ok(None);
+    }
+    if u32::from_le_bytes(h[4..8].try_into().unwrap()) != 8 {
+        return Ok(None);
+    }
+    let ofs_end = u32::from_le_bytes(h[0x40..0x44].try_into().unwrap()) as u64;
+    // The end offset must at least span the 68-byte header.
+    if ofs_end < 0x44 || file_start.saturating_add(ofs_end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(ofs_end))
+}
+
 /// Quake PAK archive (`.pak`) length. The `PACK` header stores a little-endian
 /// u32 directory offset at offset 4 and a little-endian u32 directory length at
 /// offset 8. The directory of 64-byte entries lives at the end of the file, so
@@ -5035,6 +5055,38 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a Quake II model whose header `ofs_end` field is `ofs_end`; that is
+    /// the exact file length.
+    fn md2_model(ofs_end: u32) -> Vec<u8> {
+        let total = ofs_end.max(0x44) as usize;
+        let mut v = vec![0u8; total];
+        v[0..4].copy_from_slice(b"IDP2");
+        v[4..8].copy_from_slice(&8u32.to_le_bytes()); // version
+        v[0x40..0x44].copy_from_slice(&ofs_end.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn md2_length_reads_end_offset() {
+        let bytes = md2_model(2000);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(md2_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 2000);
+    }
+
+    #[test]
+    fn md2_length_rejects_bad_version() {
+        // Not an MD2 model.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(md2_length(&src, 0, src.size).unwrap(), None);
+        // Right magic, wrong version.
+        let mut bytes = md2_model(2000);
+        bytes[4..8].copy_from_slice(&7u32.to_le_bytes());
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(md2_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a Quake PAK archive with `entries` 64-byte directory entries whose
