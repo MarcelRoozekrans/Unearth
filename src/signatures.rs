@@ -99,6 +99,8 @@
 //!   the table of contents.
 //! * [`Extent::UImage`] — U-Boot uImage: the 64-byte header plus the image-data
 //!   size field.
+//! * [`Extent::QuakePak`] — Quake PAK archive: the directory offset plus its
+//!   length.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -474,6 +476,14 @@ pub enum Extent {
     /// bytes. The distinctive magic and a non-zero size reject a coincidental
     /// match.
     UImage,
+    /// Quake PAK archive (`.pak`) — the asset-bundle format from id Software's
+    /// Quake engine (and games built on it). A `PACK` magic is followed by a
+    /// little-endian u32 directory offset at offset 4 and a little-endian u32
+    /// directory length at offset 8. The directory of 64-byte entries sits at
+    /// the end of the file, so the length is `dir_offset + dir_length`. A
+    /// directory length that is a multiple of 64 and an offset past the header
+    /// reject a coincidental magic.
+    QuakePak,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1785,6 +1795,16 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * MB,
     },
     Signature {
+        // Quake PAK archive: "PACK" magic, size from the directory location.
+        name: "Quake PAK archive",
+        ext: "pak",
+        magic: b"PACK",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::QuakePak,
+        max_size: 2 * GB,
+    },
+    Signature {
         // Flattened device tree (`.dtb`/FDT): 0xD00DFEED magic, with the total
         // block size as a big-endian u32 at offset 4 (the exact file length).
         name: "Device Tree Blob",
@@ -2097,7 +2117,7 @@ pub fn category_of(ext: &str) -> Category {
         // CFBF.
         "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "doc"
         | "xls" | "ppt" | "msg" | "pst" | "ole" => Category::Document,
-        "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "cpio" | "zst" | "lz4" | "jar" => {
+        "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "cpio" | "zst" | "lz4" | "jar" | "pak" => {
             Category::Archive
         }
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
