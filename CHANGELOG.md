@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **Android boot images are carved** — `scan` now recovers `boot.img` files
+  (the kernel/ramdisk container flashed to Android devices), a common
+  phone-forensics target. The exact length is the sum of the page-rounded
+  sections: header versions 0–2 use the header's page size with (v1) a
+  recovery-DTBO and (v2) a DTB section, while versions 3–4 use a fixed 4096-byte
+  page with (v4) a boot signature. The `ANDROID!` magic makes false positives
+  negligible, and any header version beyond those is skipped rather than
+  mis-sized.
 - **GGUF models are carved** — `scan` now recovers `.gguf` files, the dominant
   on-disk format for local large-language-model weights (llama.cpp / ggml). The
   exact length is computed by walking the metadata and tensor-info tables and

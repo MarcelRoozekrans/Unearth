@@ -580,6 +580,7 @@ fn file_length(
         Extent::Ivf => Ok(ivf_length(source, file_start, limit)?),
         Extent::Zim => Ok(zim_length(source, file_start, limit)?),
         Extent::Gguf => Ok(gguf_length(source, file_start, limit)?),
+        Extent::BootImg => Ok(bootimg_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3556,6 +3557,81 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// Android boot image (`boot.img`) length. After the `ANDROID!` magic the image
+/// is a sequence of page-aligned sections. Header versions 0–2 store the page
+/// size at offset 0x24 and the section sizes for the kernel (0x08), ramdisk
+/// (0x10), second stage (0x18), plus (v1) a recovery DTBO at 0x660 and (v2) a
+/// DTB at 0x670; the file is the header page plus each page-rounded section.
+/// Versions 3–4 use a fixed 4096-byte page with the kernel size at 0x08, the
+/// ramdisk size at 0x0C, and (v4) a boot signature at 0x62C. Any other version
+/// is skipped rather than mis-sized. The 8-byte magic makes false positives
+/// negligible.
+fn bootimg_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    // Large enough to reach the v2 DTB field (0x670) and the v4 signature
+    // field (0x62C); the version-specific reads below still bounds-check `n`.
+    let mut h = [0u8; 0x680];
+    let n = source.read_at(file_start, &mut h)?;
+    if n < 0x2C || &h[0..8] != b"ANDROID!" {
+        return Ok(None);
+    }
+    let u32_at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap()) as u64;
+    let round = |size: u64, page: u64| size.div_ceil(page).saturating_mul(page);
+    let header_version = u32_at(0x28);
+
+    if header_version <= 2 {
+        let kernel = u32_at(0x08);
+        let ramdisk = u32_at(0x10);
+        let second = u32_at(0x18);
+        let page = u32_at(0x24);
+        // A real boot image has a kernel and a sane page size.
+        if kernel == 0 || !(256..=65536).contains(&page) {
+            return Ok(None);
+        }
+        let mut total = page; // the header occupies one page
+        total = total.saturating_add(round(kernel, page));
+        total = total.saturating_add(round(ramdisk, page));
+        total = total.saturating_add(round(second, page));
+        if header_version >= 1 {
+            if n < 0x664 {
+                return Ok(None);
+            }
+            total = total.saturating_add(round(u32_at(0x660), page)); // recovery DTBO
+        }
+        if header_version == 2 {
+            if n < 0x674 {
+                return Ok(None);
+            }
+            total = total.saturating_add(round(u32_at(0x670), page)); // DTB
+        }
+        if file_start.saturating_add(total) > limit {
+            return Ok(None);
+        }
+        Ok(Some(total))
+    } else if header_version <= 4 {
+        const PAGE: u64 = 4096;
+        let kernel = u32_at(0x08);
+        let ramdisk = u32_at(0x0C);
+        if kernel == 0 {
+            return Ok(None);
+        }
+        let mut total = PAGE; // header padded to one 4096-byte page
+        total = total.saturating_add(round(kernel, PAGE));
+        total = total.saturating_add(round(ramdisk, PAGE));
+        if header_version == 4 {
+            if n < 0x630 {
+                return Ok(None);
+            }
+            total = total.saturating_add(round(u32_at(0x62C), PAGE)); // boot signature
+        }
+        if file_start.saturating_add(total) > limit {
+            return Ok(None);
+        }
+        Ok(Some(total))
+    } else {
+        Ok(None)
+    }
+}
+
 /// GGUF (`.gguf`) length. The modern container for llama.cpp / ggml model
 /// weights (local LLMs). A little-endian header — the `GGUF` magic, a u32
 /// version (2 or 3), a u64 tensor count, and a u64 metadata KV count — is
@@ -5363,6 +5439,102 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build an Android boot image (header versions 0–2, page-size based) with
+    /// the given section sizes; the total is the header page plus each
+    /// page-rounded section.
+    fn bootimg_v012(
+        version: u32,
+        page: u64,
+        kernel: u64,
+        ramdisk: u64,
+        second: u64,
+        dtbo: u64,
+        dtb: u64,
+    ) -> Vec<u8> {
+        let round = |s: u64| s.div_ceil(page) * page;
+        let mut total = page + round(kernel) + round(ramdisk) + round(second);
+        if version >= 1 {
+            total += round(dtbo);
+        }
+        if version == 2 {
+            total += round(dtb);
+        }
+        let mut v = vec![0u8; total as usize];
+        v[0..8].copy_from_slice(b"ANDROID!");
+        v[0x08..0x0C].copy_from_slice(&(kernel as u32).to_le_bytes());
+        v[0x10..0x14].copy_from_slice(&(ramdisk as u32).to_le_bytes());
+        v[0x18..0x1C].copy_from_slice(&(second as u32).to_le_bytes());
+        v[0x24..0x28].copy_from_slice(&(page as u32).to_le_bytes());
+        v[0x28..0x2C].copy_from_slice(&version.to_le_bytes());
+        if version >= 1 {
+            v[0x660..0x664].copy_from_slice(&(dtbo as u32).to_le_bytes());
+        }
+        if version == 2 {
+            v[0x670..0x674].copy_from_slice(&(dtb as u32).to_le_bytes());
+        }
+        v
+    }
+
+    /// Build an Android boot image (header versions 3–4, fixed 4096-byte page).
+    fn bootimg_v34(version: u32, kernel: u64, ramdisk: u64, sig: u64) -> Vec<u8> {
+        let round = |s: u64| s.div_ceil(4096) * 4096;
+        let mut total = 4096 + round(kernel) + round(ramdisk);
+        if version == 4 {
+            total += round(sig);
+        }
+        let mut v = vec![0u8; total as usize];
+        v[0..8].copy_from_slice(b"ANDROID!");
+        v[0x08..0x0C].copy_from_slice(&(kernel as u32).to_le_bytes());
+        v[0x0C..0x10].copy_from_slice(&(ramdisk as u32).to_le_bytes());
+        v[0x28..0x2C].copy_from_slice(&version.to_le_bytes());
+        if version == 4 {
+            v[0x62C..0x630].copy_from_slice(&(sig as u32).to_le_bytes());
+        }
+        v
+    }
+
+    #[test]
+    fn bootimg_length_v0_and_v2_page_sections() {
+        // v0: header page + kernel(3 pages) + ramdisk(2 pages), page 2048.
+        let v = bootimg_v012(0, 2048, 5000, 3000, 0, 0, 0);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(bootimg_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 2048 + 6144 + 4096);
+        // v2: adds second, recovery-DTBO, and DTB sections.
+        let v = bootimg_v012(2, 2048, 5000, 3000, 1000, 500, 800);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(bootimg_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn bootimg_length_v3_and_v4_fixed_page() {
+        // v3: header page + kernel(3 pages) + ramdisk(2 pages), page 4096.
+        let v = bootimg_v34(3, 10000, 6000, 0);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(bootimg_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 4096 + 12288 + 8192);
+        // v4: adds a page-rounded boot signature.
+        let v = bootimg_v34(4, 10000, 6000, 2000);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(bootimg_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn bootimg_length_rejects_bad_magic_and_unknown_version() {
+        // Not a boot image.
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(bootimg_length(&src, 0, src.size).unwrap(), None);
+        // An unmodelled header version is skipped rather than mis-sized.
+        let mut v = bootimg_v34(3, 10000, 6000, 0);
+        v[0x28..0x2C].copy_from_slice(&9u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(bootimg_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Append a GGUF string (u64 length + bytes) to `v`.
