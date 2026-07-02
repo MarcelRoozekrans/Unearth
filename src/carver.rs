@@ -579,6 +579,7 @@ fn file_length(
         Extent::Md2 => Ok(md2_length(source, file_start, limit)?),
         Extent::Ivf => Ok(ivf_length(source, file_start, limit)?),
         Extent::Zim => Ok(zim_length(source, file_start, limit)?),
+        Extent::Gguf => Ok(gguf_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3428,6 +3429,254 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// Read `buf.len()` bytes at `*pos` (advancing it) within `limit`; false on a
+/// short read or overrun. Small helper for the GGUF field-by-field parse.
+fn gguf_rd(source: &Source, pos: &mut u64, limit: u64, buf: &mut [u8]) -> Result<bool> {
+    let n = buf.len() as u64;
+    if pos.checked_add(n).map(|e| e > limit).unwrap_or(true) {
+        return Ok(false);
+    }
+    if source.read_at(*pos, buf)? < buf.len() {
+        return Ok(false);
+    }
+    *pos += n;
+    Ok(true)
+}
+
+fn gguf_u32(source: &Source, pos: &mut u64, limit: u64) -> Result<Option<u32>> {
+    let mut b = [0u8; 4];
+    Ok(gguf_rd(source, pos, limit, &mut b)?.then(|| u32::from_le_bytes(b)))
+}
+
+fn gguf_u64(source: &Source, pos: &mut u64, limit: u64) -> Result<Option<u64>> {
+    let mut b = [0u8; 8];
+    Ok(gguf_rd(source, pos, limit, &mut b)?.then(|| u64::from_le_bytes(b)))
+}
+
+/// Advance `*pos` by `n`, staying within `limit`.
+fn gguf_skip(pos: &mut u64, limit: u64, n: u64) -> bool {
+    match pos.checked_add(n) {
+        Some(np) if np <= limit => {
+            *pos = np;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Byte size of a fixed-width GGUF metadata scalar value type, if it is one.
+fn gguf_scalar_size(t: u32) -> Option<u64> {
+    Some(match t {
+        0 | 1 | 7 => 1, // uint8, int8, bool
+        2 | 3 => 2,     // uint16, int16
+        4..=6 => 4,     // uint32, int32, float32
+        10..=12 => 8,   // uint64, int64, float64
+        _ => return None,
+    })
+}
+
+/// (elements per block, bytes per block) for a ggml tensor type. Returns `None`
+/// for any type whose layout is not known here (e.g. the IQ* quantisations), so
+/// a file using it is skipped rather than mis-sized. These constants are fixed
+/// in ggml — changing them would break every existing model.
+fn ggml_type_block(t: u32) -> Option<(u64, u64)> {
+    Some(match t {
+        0 => (1, 4),      // F32
+        1 => (1, 2),      // F16
+        2 => (32, 18),    // Q4_0
+        3 => (32, 20),    // Q4_1
+        6 => (32, 22),    // Q5_0
+        7 => (32, 24),    // Q5_1
+        8 => (32, 34),    // Q8_0
+        9 => (32, 36),    // Q8_1
+        10 => (256, 84),  // Q2_K
+        11 => (256, 110), // Q3_K
+        12 => (256, 144), // Q4_K
+        13 => (256, 176), // Q5_K
+        14 => (256, 210), // Q6_K
+        15 => (256, 292), // Q8_K
+        24 => (1, 1),     // I8
+        25 => (1, 2),     // I16
+        26 => (1, 4),     // I32
+        27 => (1, 8),     // I64
+        28 => (1, 8),     // F64
+        30 => (1, 2),     // BF16
+        _ => return None,
+    })
+}
+
+/// Skip a GGUF metadata value of type `vtype`, advancing `*pos`. Returns false
+/// on malformed/overrunning data or an unsupported nested type.
+fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Result<bool> {
+    if let Some(sz) = gguf_scalar_size(vtype) {
+        return Ok(gguf_skip(pos, limit, sz));
+    }
+    match vtype {
+        8 => {
+            // String: a u64 length followed by that many bytes.
+            let Some(len) = gguf_u64(source, pos, limit)? else {
+                return Ok(false);
+            };
+            Ok(gguf_skip(pos, limit, len))
+        }
+        9 => {
+            // Array: element type (u32), count (u64), then the elements.
+            let Some(et) = gguf_u32(source, pos, limit)? else {
+                return Ok(false);
+            };
+            let Some(count) = gguf_u64(source, pos, limit)? else {
+                return Ok(false);
+            };
+            if let Some(sz) = gguf_scalar_size(et) {
+                match count.checked_mul(sz) {
+                    Some(n) => Ok(gguf_skip(pos, limit, n)),
+                    None => Ok(false),
+                }
+            } else if et == 8 {
+                // Array of strings (e.g. the tokenizer vocab): each is a u64
+                // length + bytes. Each needs at least 8 bytes, which bounds the
+                // loop by the remaining region.
+                if count.saturating_mul(8) > limit.saturating_sub(*pos) {
+                    return Ok(false);
+                }
+                for _ in 0..count {
+                    let Some(len) = gguf_u64(source, pos, limit)? else {
+                        return Ok(false);
+                    };
+                    if !gguf_skip(pos, limit, len) {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            } else {
+                Ok(false) // nested arrays / unknown element type: bail
+            }
+        }
+        _ => Ok(false),
+    }
+}
+
+/// GGUF (`.gguf`) length. The modern container for llama.cpp / ggml model
+/// weights (local LLMs). A little-endian header — the `GGUF` magic, a u32
+/// version (2 or 3), a u64 tensor count, and a u64 metadata KV count — is
+/// followed by the metadata KV table and then the tensor-info table. The tensor
+/// data section begins at the next `general.alignment` boundary (default 32)
+/// after the tensor infos, and each tensor info records a data-relative offset;
+/// the file ends at the largest `offset + tensor_bytes`. Tensor bytes come from
+/// the fixed ggml block constants, and any tensor whose type is not known here
+/// aborts the carve rather than risk a wrong length.
+fn gguf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut hdr = [0u8; 24];
+    if source.read_at(file_start, &mut hdr)? < 24 || &hdr[0..4] != b"GGUF" {
+        return Ok(None);
+    }
+    let version = u32::from_le_bytes(hdr[4..8].try_into().unwrap());
+    if version != 2 && version != 3 {
+        return Ok(None);
+    }
+    let tensor_count = u64::from_le_bytes(hdr[8..16].try_into().unwrap());
+    let kv_count = u64::from_le_bytes(hdr[16..24].try_into().unwrap());
+    // Bound the counts to reject a coincidental magic and cap the work.
+    if tensor_count > (1 << 20) || kv_count > (1 << 20) {
+        return Ok(None);
+    }
+
+    let mut pos = file_start + 24;
+    let mut alignment: u64 = 32;
+
+    // Metadata KV table: a key string, a value type, then the value. Only the
+    // `general.alignment` key (a uint32) affects the layout.
+    for _ in 0..kv_count {
+        let Some(key_len) = gguf_u64(source, &mut pos, limit)? else {
+            return Ok(None);
+        };
+        if key_len > (1 << 20) {
+            return Ok(None);
+        }
+        let is_align = if key_len == 17 {
+            let mut kb = [0u8; 17];
+            if !gguf_rd(source, &mut pos, limit, &mut kb)? {
+                return Ok(None);
+            }
+            &kb == b"general.alignment"
+        } else {
+            if !gguf_skip(&mut pos, limit, key_len) {
+                return Ok(None);
+            }
+            false
+        };
+        let Some(vtype) = gguf_u32(source, &mut pos, limit)? else {
+            return Ok(None);
+        };
+        if is_align && vtype == 4 {
+            let Some(a) = gguf_u32(source, &mut pos, limit)? else {
+                return Ok(None);
+            };
+            let a = a as u64;
+            if a == 0 || !a.is_power_of_two() || a > 4096 {
+                return Ok(None);
+            }
+            alignment = a;
+        } else if !gguf_skip_value(source, &mut pos, limit, vtype)? {
+            return Ok(None);
+        }
+    }
+
+    // Tensor-info table: a name string, dimension count and dims, a type, and a
+    // data-relative offset. The file ends at the largest offset + tensor bytes.
+    let mut max_end: u64 = 0;
+    for _ in 0..tensor_count {
+        let Some(name_len) = gguf_u64(source, &mut pos, limit)? else {
+            return Ok(None);
+        };
+        if name_len > (1 << 20) || !gguf_skip(&mut pos, limit, name_len) {
+            return Ok(None);
+        }
+        let Some(n_dims) = gguf_u32(source, &mut pos, limit)? else {
+            return Ok(None);
+        };
+        if n_dims > 4 {
+            return Ok(None);
+        }
+        let mut n_elems: u64 = 1;
+        for _ in 0..n_dims {
+            let Some(d) = gguf_u64(source, &mut pos, limit)? else {
+                return Ok(None);
+            };
+            n_elems = n_elems.saturating_mul(d);
+        }
+        let Some(ttype) = gguf_u32(source, &mut pos, limit)? else {
+            return Ok(None);
+        };
+        let Some(offset) = gguf_u64(source, &mut pos, limit)? else {
+            return Ok(None);
+        };
+        let Some((blck, tsize)) = ggml_type_block(ttype) else {
+            return Ok(None); // unknown type: don't guess a size
+        };
+        if n_elems % blck != 0 {
+            return Ok(None);
+        }
+        let nbytes = (n_elems / blck).saturating_mul(tsize);
+        max_end = max_end.max(offset.saturating_add(nbytes));
+    }
+
+    // The tensor data begins at the next alignment boundary after the infos.
+    let rel = pos - file_start;
+    let data_start = match rel.div_ceil(alignment).checked_mul(alignment) {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    let total = match data_start.checked_add(max_end) {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// ZIM (`.zim`) length. The openZIM/Kiwix offline-content archive opens with an
 /// 80-byte little-endian header: the `ZIM\x04` magic and a u64 checksum position
 /// at offset 0x48. A 16-byte MD5 checksum is the last thing in the file, so the
@@ -5114,6 +5363,73 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Append a GGUF string (u64 length + bytes) to `v`.
+    fn gguf_push_str(v: &mut Vec<u8>, s: &[u8]) {
+        v.extend_from_slice(&(s.len() as u64).to_le_bytes());
+        v.extend_from_slice(s);
+    }
+
+    /// Build a GGUF file with the given metadata alignment (via a
+    /// `general.alignment` KV when not 32) and a single tensor of `n_elems`
+    /// elements of ggml type `ttype`. Returns the bytes and the expected length.
+    fn gguf_one_tensor(alignment: u32, ttype: u32, n_elems: u64) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"GGUF");
+        v.extend_from_slice(&3u32.to_le_bytes()); // version
+        v.extend_from_slice(&1u64.to_le_bytes()); // tensor_count
+        let kv_count: u64 = if alignment == 32 { 0 } else { 1 };
+        v.extend_from_slice(&kv_count.to_le_bytes());
+        if alignment != 32 {
+            gguf_push_str(&mut v, b"general.alignment");
+            v.extend_from_slice(&4u32.to_le_bytes()); // value type uint32
+            v.extend_from_slice(&alignment.to_le_bytes());
+        }
+        // One tensor: name, n_dims=1, dim0=n_elems, type, offset=0.
+        gguf_push_str(&mut v, b"w");
+        v.extend_from_slice(&1u32.to_le_bytes());
+        v.extend_from_slice(&n_elems.to_le_bytes());
+        v.extend_from_slice(&ttype.to_le_bytes());
+        v.extend_from_slice(&0u64.to_le_bytes());
+        // Pad to the alignment boundary, then append the tensor data.
+        let align = alignment as usize;
+        let data_start = v.len().div_ceil(align) * align;
+        v.resize(data_start, 0);
+        v
+    }
+
+    #[test]
+    fn gguf_length_f32_tensor_default_alignment() {
+        // 64 F32 elements = 256 bytes; data starts at the 32-byte boundary.
+        let mut v = gguf_one_tensor(32, 0, 64);
+        v.resize(v.len() + 256, 0);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(gguf_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn gguf_length_quantized_tensor_custom_alignment() {
+        // 64 Q4_0 elements = 64/32*18 = 36 bytes, alignment 16.
+        let mut v = gguf_one_tensor(16, 2, 64);
+        v.resize(v.len() + 36, 0);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(gguf_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn gguf_length_rejects_unknown_type_and_bad_magic() {
+        // Not a GGUF file.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(gguf_length(&src, 0, src.size).unwrap(), None);
+        // An IQ2_XXS tensor (type 16) has no known block size here, so the file
+        // is skipped rather than mis-sized.
+        let mut v = gguf_one_tensor(32, 16, 256);
+        v.resize(v.len() + 1024, 0);
+        let (_t, src) = source_of(&v);
+        assert_eq!(gguf_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a ZIM archive whose header checksum position is `checksum_pos`; the

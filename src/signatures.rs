@@ -105,6 +105,8 @@
 //! * [`Extent::Ivf`] — IVF (AV1/VP9): walk the frame count from the header.
 //! * [`Extent::Zim`] — ZIM archive: the checksum position plus the trailing
 //!   MD5.
+//! * [`Extent::Gguf`] — GGUF model: walk the metadata and tensor tables to the
+//!   aligned end of the tensor data.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -509,6 +511,17 @@ pub enum Extent {
     /// last thing in the file, so the length is `checksumPos + 16`. The magic
     /// and a checksum position past the header reject a coincidental match.
     Zim,
+    /// GGUF (`.gguf`) — the container for llama.cpp / ggml model weights, the
+    /// dominant on-disk format for local large language models. A little-endian
+    /// header (the `GGUF` magic, a u32 version, a u64 tensor count, and a u64
+    /// metadata KV count) is followed by the metadata table and the tensor-info
+    /// table; the tensor data section begins at the next `general.alignment`
+    /// boundary after the infos, and the file ends at the largest tensor offset
+    /// plus its byte size (computed from the fixed ggml block constants). A file
+    /// using a tensor type whose layout is not known is skipped rather than
+    /// mis-sized. The magic, a supported version, and bounded counts reject a
+    /// coincidental match.
+    Gguf,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1860,6 +1873,17 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Zim,
         max_size: 64 * GB,
+    },
+    Signature {
+        // GGUF (llama.cpp/ggml model weights): "GGUF" magic, size from the
+        // metadata + tensor-info tables and the aligned tensor data.
+        name: "GGUF model",
+        ext: "gguf",
+        magic: b"GGUF",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Gguf,
+        max_size: 512 * GB,
     },
     Signature {
         // Flattened device tree (`.dtb`/FDT): 0xD00DFEED magic, with the total
