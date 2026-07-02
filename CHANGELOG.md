@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **IVF video is carved** — `scan` now recovers `.ivf` files, the container
+  that wraps raw AV1, VP9, and VP8 bitstreams from modern web-video encoders and
+  codec test suites. The exact length is walked frame by frame for the frame
+  count recorded in the header, with the `DKIF` magic, version, and header
+  length rejecting a coincidental match.
 - **Quake II models are carved** — `scan` now recovers `.md2` animated meshes
   from Quake II and the many games and mods built on it. The exact length is the
   `ofs_end` field in the header, with the `IDP2` magic and version 8 rejecting a

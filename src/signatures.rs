@@ -102,6 +102,7 @@
 //! * [`Extent::QuakePak`] — Quake PAK archive: the directory offset plus its
 //!   length.
 //! * [`Extent::Md2`] — Quake II model: the end-of-file offset in the header.
+//! * [`Extent::Ivf`] — IVF (AV1/VP9): walk the frame count from the header.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -491,6 +492,14 @@ pub enum Extent {
     /// offset 0x40 (`ofs_end`) is the exact file size. The magic and version
     /// reject a coincidental match.
     Md2,
+    /// IVF (`.ivf`) — the simple container that wraps raw AV1, VP9, and VP8
+    /// bitstreams, produced by modern web-video encoders and codec test suites.
+    /// A 32-byte little-endian header opens with the `DKIF` magic, version 0,
+    /// and a header length of 32, and records the frame count as a u32 at offset
+    /// 0x18. Each frame is a 12-byte header (a u32 size and a u64 timestamp)
+    /// followed by the frame data, so the file is walked frame by frame to the
+    /// end. The magic, version, and header length reject a coincidental match.
+    Ivf,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1822,6 +1831,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 64 * MB,
     },
     Signature {
+        // IVF (AV1/VP9/VP8 raw-bitstream container): "DKIF" magic, size walked
+        // over the frame count in the header.
+        name: "IVF video (AV1/VP9)",
+        ext: "ivf",
+        magic: b"DKIF",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Ivf,
+        max_size: 4 * GB,
+    },
+    Signature {
         // Flattened device tree (`.dtb`/FDT): 0xD00DFEED magic, with the total
         // block size as a big-endian u32 at offset 4 (the exact file length).
         name: "Device Tree Blob",
@@ -2126,7 +2146,7 @@ pub fn category_of(ext: &str) -> Category {
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" | "dsf" | "dff" | "sf2" => Category::Audio,
-        "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" => {
+        "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf" => {
             Category::Video
         }
         // The OOXML/OpenDocument/e-book types come from ZIP-content
