@@ -103,6 +103,8 @@
 //!   length.
 //! * [`Extent::Md2`] — Quake II model: the end-of-file offset in the header.
 //! * [`Extent::Ivf`] — IVF (AV1/VP9): walk the frame count from the header.
+//! * [`Extent::Zim`] — ZIM archive: the checksum position plus the trailing
+//!   MD5.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -500,6 +502,13 @@ pub enum Extent {
     /// followed by the frame data, so the file is walked frame by frame to the
     /// end. The magic, version, and header length reject a coincidental match.
     Ivf,
+    /// ZIM archive (`.zim`) — the openZIM/Kiwix container for offline web
+    /// content (offline Wikipedia and other educational corpora). An 80-byte
+    /// little-endian header opens with the `ZIM\x04` magic and stores the
+    /// checksum position as a u64 at offset 0x48. A 16-byte MD5 checksum is the
+    /// last thing in the file, so the length is `checksumPos + 16`. The magic
+    /// and a checksum position past the header reject a coincidental match.
+    Zim,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1842,6 +1851,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 4 * GB,
     },
     Signature {
+        // ZIM archive (openZIM/Kiwix offline content): "ZIM\x04" magic, size from
+        // the checksum position field plus the trailing 16-byte MD5.
+        name: "ZIM archive",
+        ext: "zim",
+        magic: b"ZIM\x04",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Zim,
+        max_size: 64 * GB,
+    },
+    Signature {
         // Flattened device tree (`.dtb`/FDT): 0xD00DFEED magic, with the total
         // block size as a big-endian u32 at offset 4 (the exact file length).
         name: "Device Tree Blob",
@@ -2154,9 +2174,8 @@ pub fn category_of(ext: &str) -> Category {
         // CFBF.
         "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "doc"
         | "xls" | "ppt" | "msg" | "pst" | "ole" => Category::Document,
-        "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "cpio" | "zst" | "lz4" | "jar" | "pak" => {
-            Category::Archive
-        }
+        "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "cpio" | "zst" | "lz4" | "jar" | "pak"
+        | "zim" => Category::Archive,
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"

@@ -578,6 +578,7 @@ fn file_length(
         Extent::QuakePak => Ok(pak_length(source, file_start, limit)?),
         Extent::Md2 => Ok(md2_length(source, file_start, limit)?),
         Extent::Ivf => Ok(ivf_length(source, file_start, limit)?),
+        Extent::Zim => Ok(zim_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3427,6 +3428,28 @@ fn squashfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(bytes_used))
 }
 
+/// ZIM (`.zim`) length. The openZIM/Kiwix offline-content archive opens with an
+/// 80-byte little-endian header: the `ZIM\x04` magic and a u64 checksum position
+/// at offset 0x48. A 16-byte MD5 checksum is the last thing in the file, so the
+/// length is `checksumPos + 16`. The magic and a checksum position past the
+/// header reject a coincidental match.
+fn zim_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x50];
+    if source.read_at(file_start, &mut h)? < 0x50 || &h[0..4] != b"ZIM\x04" {
+        return Ok(None);
+    }
+    let checksum_pos = u64::from_le_bytes(h[0x48..0x50].try_into().unwrap());
+    // The checksum (and thus the file) must lie past the 80-byte header.
+    if checksum_pos < 0x50 {
+        return Ok(None);
+    }
+    let total = checksum_pos.saturating_add(16);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// IVF (`.ivf`) length. The container that wraps raw AV1/VP9/VP8 bitstreams
 /// opens with a 32-byte little-endian header: the `DKIF` magic, version 0, a
 /// header length of 32, and a frame count as a u32 at offset 0x18. Each frame
@@ -5091,6 +5114,39 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a ZIM archive whose header checksum position is `checksum_pos`; the
+    /// total length is `checksum_pos + 16` (the trailing MD5).
+    fn zim(checksum_pos: u64) -> Vec<u8> {
+        let total = checksum_pos as usize + 16;
+        let mut v = vec![0u8; total];
+        v[0..4].copy_from_slice(b"ZIM\x04");
+        v[4..6].copy_from_slice(&6u16.to_le_bytes()); // major version
+        v[0x48..0x50].copy_from_slice(&checksum_pos.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn zim_length_reads_checksum_position() {
+        // checksumPos 2000 -> the file ends at 2000 + 16 (the MD5).
+        let bytes = zim(2000);
+        let total = bytes.len() as u64;
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(zim_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 2000 + 16);
+    }
+
+    #[test]
+    fn zim_length_rejects_non_zim_and_short_checksum() {
+        // Not a ZIM archive.
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(zim_length(&src, 0, src.size).unwrap(), None);
+        // A checksum position inside the header is rejected.
+        let mut bytes = zim(2000);
+        bytes[0x48..0x50].copy_from_slice(&40u64.to_le_bytes());
+        let (_t, src) = source_of(&bytes);
+        assert_eq!(zim_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an IVF file with the given per-frame data sizes; the total is the

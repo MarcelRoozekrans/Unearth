@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **ZIM archives are carved** — `scan` now recovers `.zim` files, the
+  openZIM/Kiwix container for offline web content (offline Wikipedia and other
+  educational corpora). The exact length is the checksum position in the header
+  plus the trailing 16-byte MD5, with the `ZIM\x04` magic and a checksum
+  position past the header rejecting a coincidental match.
 - **IVF video is carved** — `scan` now recovers `.ivf` files, the container
   that wraps raw AV1, VP9, and VP8 bitstreams from modern web-video encoders and
   codec test suites. The exact length is walked frame by frame for the frame
