@@ -691,6 +691,7 @@ alongside the per-file manifest.
 | tar    | tar archive (POSIX / GNU ustar)                 | 512-byte member-chain walk  |
 | cpio   | cpio archive (newc; initramfs / RPM)            | entry-chain walk to TRAILER |
 | pak    | Quake PAK archive (game assets)                 | directory offset + length   |
+| zim    | ZIM archive (offline Wikipedia / Kiwix)         | checksum position + MD5     |
 | md2    | Quake II model (animated mesh)                  | ofs_end field in header     |
 | squashfs | SquashFS image (Snap / AppImage / firmware)   | bytes_used in superblock    |
 | uimage | U-Boot uImage (router/IoT firmware)             | 64-byte header + data size  |
