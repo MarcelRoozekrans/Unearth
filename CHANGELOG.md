@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **GGUF models are carved** — `scan` now recovers `.gguf` files, the dominant
+  on-disk format for local large-language-model weights (llama.cpp / ggml). The
+  exact length is computed by walking the metadata and tensor-info tables and
+  taking the largest tensor offset plus its byte size (from the fixed ggml block
+  constants), aligned to the tensor-data boundary. A file that uses a tensor
+  type whose layout is not known is skipped rather than recovered at the wrong
+  length.
 - **ZIM archives are carved** — `scan` now recovers `.zim` files, the
   openZIM/Kiwix container for offline web content (offline Wikipedia and other
   educational corpora). The exact length is the checksum position in the header
