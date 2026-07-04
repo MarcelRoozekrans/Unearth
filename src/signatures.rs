@@ -32,7 +32,7 @@
 //! * [`Extent::IcoCur`] — take the furthest `offset + size` across an ICO/CUR
 //!   image directory.
 //! * [`Extent::HeaderSizeBe32`] — read a big-endian u32 size field (WOFF fonts,
-//!   big-endian DPX, Cineon, device-tree blobs).
+//!   big-endian DPX, Cineon, device-tree blobs, Android DTBO images).
 //! * [`Extent::Sfnt`] — walk a TrueType/OpenType font's table directory.
 //! * [`Extent::Midi`] — walk a Standard MIDI file's `MThd`/`MTrk` chunks.
 //! * [`Extent::Flv`] — walk a Flash Video tag chain.
@@ -1908,6 +1908,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 2 * GB,
     },
     Signature {
+        // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
+        // total image size as a big-endian u32 at offset 4.
+        name: "Android DTBO image",
+        ext: "dtbo",
+        magic: &[0xD7, 0xB7, 0xAB, 0x1E],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::HeaderSizeBe32 { offset: 4 },
+        max_size: 64 * MB,
+    },
+    Signature {
         // Flattened device tree (`.dtb`/FDT): 0xD00DFEED magic, with the total
         // block size as a big-endian u32 at offset 4 (the exact file length).
         name: "Device Tree Blob",
@@ -2225,7 +2236,7 @@ pub fn category_of(ext: &str) -> Category {
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
-        | "dtb" | "trx" | "img" => Category::System,
+        | "dtb" | "trx" | "img" | "dtbo" => Category::System,
         _ => Category::Other,
     }
 }
@@ -2299,6 +2310,11 @@ mod tests {
     #[test]
     fn dtb_magic_matches() {
         assert_eq!(ext_of(&[0xD0, 0x0D, 0xFE, 0xED, 0, 0, 0, 0]), Some("dtb"));
+    }
+
+    #[test]
+    fn dtbo_magic_matches() {
+        assert_eq!(ext_of(&[0xD7, 0xB7, 0xAB, 0x1E, 0, 0, 0, 0]), Some("dtbo"));
     }
 
     #[test]

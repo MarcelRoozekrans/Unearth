@@ -694,6 +694,7 @@ alongside the per-file manifest.
 | zim    | ZIM archive (offline Wikipedia / Kiwix)         | checksum position + MD5     |
 | gguf   | GGUF model (llama.cpp / local LLM weights)      | tensor-table walk to data end |
 | img    | Android boot image (boot.img, v0–v4)            | sum of page-rounded sections |
+| dtbo   | Android DTBO/DTB image (device-tree overlays)   | total_size field in header  |
 | md2    | Quake II model (animated mesh)                  | ofs_end field in header     |
 | squashfs | SquashFS image (Snap / AppImage / firmware)   | bytes_used in superblock    |
 | uimage | U-Boot uImage (router/IoT firmware)             | 64-byte header + data size  |
