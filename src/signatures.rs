@@ -107,6 +107,7 @@
 //!   MD5.
 //! * [`Extent::Gguf`] — GGUF model: walk the metadata and tensor tables to the
 //!   aligned end of the tensor data.
+//! * [`Extent::BootImg`] — Android boot image: sum the page-rounded sections.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -522,6 +523,16 @@ pub enum Extent {
     /// mis-sized. The magic, a supported version, and bounded counts reject a
     /// coincidental match.
     Gguf,
+    /// Android boot image (`boot.img`) — the kernel/ramdisk container flashed to
+    /// Android devices, a common phone-forensics recovery target. The `ANDROID!`
+    /// magic is followed by section sizes that are each rounded up to the page
+    /// size, so the file is the sum of the header page and the page-rounded
+    /// kernel, ramdisk, and any additional sections. Header versions 0–2 store a
+    /// page size and (v1) a recovery-DTBO and (v2) a DTB section; versions 3–4
+    /// use a fixed 4096-byte page and (v4) a boot signature. Versions beyond
+    /// those are skipped rather than mis-sized. The 8-byte magic makes false
+    /// positives negligible.
+    BootImg,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1886,6 +1897,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * GB,
     },
     Signature {
+        // Android boot image: "ANDROID!" magic, size from the page-rounded
+        // section sizes in the header.
+        name: "Android boot image",
+        ext: "img",
+        magic: b"ANDROID!",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::BootImg,
+        max_size: 2 * GB,
+    },
+    Signature {
         // Flattened device tree (`.dtb`/FDT): 0xD00DFEED magic, with the total
         // block size as a big-endian u32 at offset 4 (the exact file length).
         name: "Device Tree Blob",
@@ -2203,7 +2225,7 @@ pub fn category_of(ext: &str) -> Category {
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
-        | "dtb" | "trx" => Category::System,
+        | "dtb" | "trx" | "img" => Category::System,
         _ => Category::Other,
     }
 }
