@@ -108,6 +108,8 @@
 //! * [`Extent::Gguf`] — GGUF model: walk the metadata and tensor tables to the
 //!   aligned end of the tensor data.
 //! * [`Extent::BootImg`] — Android boot image: sum the page-rounded sections.
+//! * [`Extent::Ktx2`] — KTX2 GPU texture: the largest section offset-plus-length
+//!   across the level index and data descriptors.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -533,6 +535,14 @@ pub enum Extent {
     /// those are skipped rather than mis-sized. The 8-byte magic makes false
     /// positives negligible.
     BootImg,
+    /// KTX2 texture (`.ktx2`) — the current Khronos GPU-texture container (glTF
+    /// `KHR_texture_basisu`, WebGPU, game engines). After the 12-byte magic the
+    /// 80-byte header records a level count and byte offset/length pairs for the
+    /// data-format descriptor, key/value data, and supercompression global data,
+    /// followed by a level index of `byteOffset`/`byteLength`/uncompressed
+    /// triples. The file ends at the largest section offset-plus-length. The long
+    /// magic and a bounded level count reject a coincidental match.
+    Ktx2,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1908,6 +1918,19 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 2 * GB,
     },
     Signature {
+        // KTX2 GPU texture: the 12-byte «KTX 20» identifier, size from the level
+        // index and data descriptors.
+        name: "KTX2 texture",
+        ext: "ktx2",
+        magic: &[
+            0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+        ],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Ktx2,
+        max_size: 2 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2220,7 +2243,9 @@ pub fn category_of(ext: &str) -> Category {
     match ext {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
-        | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" => Category::Image,
+        | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" | "ktx2" => {
+            Category::Image
+        }
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" | "dsf" | "dff" | "sf2" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf" => {

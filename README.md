@@ -676,6 +676,7 @@ alongside the per-file manifest.
 | icns   | Apple icon image                                 | size field in header (BE)    |
 | cr3    | Canon CR3 raw image                              | ISO box (atom) walk         |
 | jxl    | JPEG XL image                                    | ISO box (atom) walk         |
+| ktx2   | KTX2 GPU texture (glTF / WebGPU)                | max section offset + length |
 | tif    | TIFF / BigTIFF / raw (DNG/NEF/ARW)              | IFD / strip-tile walk       |
 | cr2    | Canon CR2 raw image                              | IFD / strip-tile walk       |
 | pdf    | PDF document                                     | `%%EOF`                     |
