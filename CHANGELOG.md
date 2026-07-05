@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Android DTBO images are carved** — `scan` now recovers `.dtbo`/`dtb.img`
+  device-tree-overlay partition images (present on every modern Android device).
+  The exact length is the `total_size` field at offset 4 of the `dt_table_header`
+  (magic `0xD7B7AB1E`).
 - **Android boot images are carved** — `scan` now recovers `boot.img` files
   (the kernel/ramdisk container flashed to Android devices), a common
   phone-forensics target. The exact length is the sum of the page-rounded

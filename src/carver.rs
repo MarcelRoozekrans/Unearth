@@ -5786,6 +5786,21 @@ mod tests {
     }
 
     #[test]
+    fn dtbo_length_reads_total_size_field() {
+        use crate::signatures::SIGNATURES;
+        // Android DTBO image: total_size is a big-endian u32 at offset 4.
+        let mut img = vec![0u8; 4096];
+        img[0..4].copy_from_slice(&[0xD7, 0xB7, 0xAB, 0x1E]);
+        img[4..8].copy_from_slice(&4096u32.to_be_bytes());
+        let (_t, src) = source_of(&img);
+        let sig = SIGNATURES.iter().find(|s| s.ext == "dtbo").unwrap();
+        assert_eq!(
+            file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(4096)
+        );
+    }
+
+    #[test]
     fn dtb_length_reads_total_size_field() {
         use crate::signatures::SIGNATURES;
         // Device tree blob: totalsize is a big-endian u32 at offset 4.
