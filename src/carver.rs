@@ -581,6 +581,7 @@ fn file_length(
         Extent::Zim => Ok(zim_length(source, file_start, limit)?),
         Extent::Gguf => Ok(gguf_length(source, file_start, limit)?),
         Extent::BootImg => Ok(bootimg_length(source, file_start, limit)?),
+        Extent::Ktx2 => Ok(ktx2_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3557,6 +3558,54 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// KTX2 texture (`.ktx2`) length. After the 12-byte «KTX 20» identifier the
+/// 80-byte header records a level count at offset 0x28 and byte offset/length
+/// pairs for the data-format descriptor (0x30, u32s), key/value data (0x38,
+/// u32s), and supercompression global data (0x40, u64s), followed by a level
+/// index of `byteOffset`/`byteLength`/uncompressed triples (24 bytes each). The
+/// file ends at the largest section offset-plus-length. The long magic and a
+/// bounded level count reject a coincidental match.
+fn ktx2_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAGIC: [u8; 12] = [
+        0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+    ];
+    let mut h = [0u8; 0x50];
+    if source.read_at(file_start, &mut h)? < 0x50 || h[0..12] != MAGIC {
+        return Ok(None);
+    }
+    let level_count = u32::from_le_bytes(h[0x28..0x2C].try_into().unwrap());
+    if level_count > 32 {
+        return Ok(None);
+    }
+    // A level count of 0 means "generate mipmaps": the file still stores one level.
+    let levels = level_count.max(1) as u64;
+    let u32_at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap()) as u64;
+    let u64_at = |o: usize| u64::from_le_bytes(h[o..o + 8].try_into().unwrap());
+    // At minimum the file spans the header and the level index.
+    let mut end = 0x50u64.saturating_add(levels.saturating_mul(24));
+    // Data-format descriptor, key/value data (u32 pairs), and supercompression
+    // global data (u64 pair).
+    end = end.max(u32_at(0x30).saturating_add(u32_at(0x34)));
+    end = end.max(u32_at(0x38).saturating_add(u32_at(0x3C)));
+    end = end.max(u64_at(0x40).saturating_add(u64_at(0x48)));
+    // Level index: each entry is byteOffset, byteLength, uncompressedByteLength.
+    let mut pos = file_start + 0x50;
+    for _ in 0..levels {
+        let mut e = [0u8; 24];
+        if pos.saturating_add(24) > limit || source.read_at(pos, &mut e)? < 24 {
+            return Ok(None);
+        }
+        let off = u64::from_le_bytes(e[0..8].try_into().unwrap());
+        let len = u64::from_le_bytes(e[8..16].try_into().unwrap());
+        end = end.max(off.saturating_add(len));
+        pos += 24;
+    }
+    if file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
+}
+
 /// Android boot image (`boot.img`) length. After the `ANDROID!` magic the image
 /// is a sequence of page-aligned sections. Header versions 0–2 store the page
 /// size at offset 0x24 and the section sizes for the kernel (0x08), ramdisk
@@ -5439,6 +5488,56 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a KTX2 texture with `level_count` levels; level 0 lives at
+    /// `level_off` with `level_len` bytes, and the key/value data at `kvd_off`
+    /// with `kvd_len` bytes. The total is the largest section end.
+    fn ktx2(
+        level_count: u32,
+        level_off: u64,
+        level_len: u64,
+        kvd_off: u32,
+        kvd_len: u32,
+    ) -> Vec<u8> {
+        let levels = level_count.max(1) as usize;
+        let index_end = (0x50 + levels * 24) as u64;
+        let total = index_end
+            .max(kvd_off as u64 + kvd_len as u64)
+            .max(level_off + level_len) as usize;
+        let mut v = vec![0u8; total];
+        v[0..12].copy_from_slice(&[
+            0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+        ]);
+        v[0x28..0x2C].copy_from_slice(&level_count.to_le_bytes());
+        v[0x38..0x3C].copy_from_slice(&kvd_off.to_le_bytes());
+        v[0x3C..0x40].copy_from_slice(&kvd_len.to_le_bytes());
+        // Level 0 index entry at offset 0x50.
+        v[0x50..0x58].copy_from_slice(&level_off.to_le_bytes());
+        v[0x58..0x60].copy_from_slice(&level_len.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn ktx2_length_uses_max_section_end() {
+        // Level data at 0x100..0x300 is the farthest section.
+        let v = ktx2(1, 0x100, 512, 0x80, 64);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(ktx2_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 0x100 + 512);
+    }
+
+    #[test]
+    fn ktx2_length_rejects_bad_magic_and_level_count() {
+        // Not a KTX2 texture.
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(ktx2_length(&src, 0, src.size).unwrap(), None);
+        // An absurd level count is rejected.
+        let mut v = ktx2(1, 0x100, 512, 0x80, 64);
+        v[0x28..0x2C].copy_from_slice(&100u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(ktx2_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an Android boot image (header versions 0–2, page-size based) with

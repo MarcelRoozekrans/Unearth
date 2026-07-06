@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **KTX2 textures are carved** — `scan` now recovers `.ktx2` files, the current
+  Khronos GPU-texture container (glTF `KHR_texture_basisu`, WebGPU, game
+  engines). The exact length is the largest section offset-plus-length across
+  the level index and the data-format / key-value / supercompression
+  descriptors, behind the 12-byte «KTX 20» magic.
 - **Android DTBO images are carved** — `scan` now recovers `.dtbo`/`dtb.img`
   device-tree-overlay partition images (present on every modern Android device).
   The exact length is the `total_size` field at offset 4 of the `dt_table_header`
