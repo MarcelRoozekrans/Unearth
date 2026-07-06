@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **QOA audio is carved** — `scan` now recovers `.qoa` files, the modern
+  "Quite OK Audio" lossy codec. The exact length is walked over the frame chain
+  for the header's sample count, using each frame's own size field, behind the
+  `qoaf` magic.
 - **KTX2 textures are carved** — `scan` now recovers `.ktx2` files, the current
   Khronos GPU-texture container (glTF `KHR_texture_basisu`, WebGPU, game
   engines). The exact length is the largest section offset-plus-length across

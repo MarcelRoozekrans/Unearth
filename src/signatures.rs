@@ -110,6 +110,8 @@
 //! * [`Extent::BootImg`] — Android boot image: sum the page-rounded sections.
 //! * [`Extent::Ktx2`] — KTX2 GPU texture: the largest section offset-plus-length
 //!   across the level index and data descriptors.
+//! * [`Extent::Qoa`] — QOA audio: walk the frame chain for the header's sample
+//!   count.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -543,6 +545,14 @@ pub enum Extent {
     /// triples. The file ends at the largest section offset-plus-length. The long
     /// magic and a bounded level count reject a coincidental match.
     Ktx2,
+    /// QOA audio (`.qoa`) — the "Quite OK Audio" format, a modern minimal lossy
+    /// codec. An 8-byte header (`qoaf` magic and a big-endian u32 total sample
+    /// count) is followed by frames, each holding up to 5120 samples per channel
+    /// and recording its own size as a big-endian u16 at offset 6 of its 8-byte
+    /// frame header. The frames are walked for the sample-derived frame count to
+    /// the end of the file. The magic, a non-zero sample count, and a valid first
+    /// frame reject a coincidental match.
+    Qoa,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1931,6 +1941,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 2 * GB,
     },
     Signature {
+        // QOA audio ("Quite OK Audio"): "qoaf" magic, size walked over the frame
+        // chain for the header's sample count.
+        name: "QOA audio",
+        ext: "qoa",
+        magic: b"qoaf",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Qoa,
+        max_size: 512 * MB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2247,7 +2268,7 @@ pub fn category_of(ext: &str) -> Category {
             Category::Image
         }
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
-        | "wv" | "ape" | "dsf" | "dff" | "sf2" => Category::Audio,
+        | "wv" | "ape" | "dsf" | "dff" | "sf2" | "qoa" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf" => {
             Category::Video
         }
