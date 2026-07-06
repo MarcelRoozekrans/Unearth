@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **E57 point clouds are carved** — `scan` now recovers `.e57` files, the ASTM
+  E2807 format for 3D laser-scan and imaging data used in surveying, BIM, and
+  robotics. The exact length is the physical-file-length field in the header,
+  behind the 8-byte `ASTM-E57` magic.
 - **Godot asset packs are carved** — `scan` now recovers `.pck` files, the
   resource bundle for Godot Engine games, covering pack format v1 (Godot 3) and
   v2 (Godot 4). The exact length comes from walking the directory to the largest

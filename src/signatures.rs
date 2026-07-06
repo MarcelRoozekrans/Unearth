@@ -126,6 +126,7 @@
 //!   `point_count × record_length`.
 //! * [`Extent::GodotPck`] — Godot asset pack: walk the directory to the last
 //!   file's end.
+//! * [`Extent::E57`] — E57 point cloud: the physical file length in the header.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -634,6 +635,12 @@ pub enum Extent {
     /// largest `file_base + offset + size`. The magic, a supported version, and a
     /// bounded file count reject a coincidental match.
     GodotPck,
+    /// E57 point cloud (`.e57`) — the ASTM E2807 format for 3D laser-scan and
+    /// imaging data, used in surveying, BIM, and robotics. The 48-byte header
+    /// opens with the `ASTM-E57` signature and stores the physical file length
+    /// as a little-endian u64 at offset 0x10, which is the exact size. The
+    /// 8-byte magic makes false positives negligible.
+    E57,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2117,6 +2124,17 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::GodotPck,
         max_size: 8 * GB,
+    },
+    Signature {
+        // E57 3D point cloud (ASTM E2807): "ASTM-E57" magic, physical file
+        // length as a u64 in the header.
+        name: "E57 point cloud",
+        ext: "e57",
+        magic: b"ASTM-E57",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::E57,
+        max_size: 16 * GB,
     },
     Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
