@@ -720,6 +720,7 @@ alongside the per-file manifest.
 | ts     | MPEG transport stream (DVB/DVR)                  | 188-byte packet-sync walk   |
 | mpg    | MPEG program stream (DVD/VOB)                    | pack/PES walk to end code    |
 | ogg    | Ogg (Vorbis/Opus/Theora)                        | Ogg page-chain walk         |
+| qoa    | QOA audio (Quite OK Audio)                       | frame-chain walk (fsize)    |
 | asf    | ASF / WMV / WMA media                            | ASF object walk             |
 | elf    | ELF executable / shared object                   | section-header table offset |
 | exe    | PE executable (EXE/DLL)                          | PE/COFF section table        |

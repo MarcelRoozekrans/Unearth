@@ -582,6 +582,7 @@ fn file_length(
         Extent::Gguf => Ok(gguf_length(source, file_start, limit)?),
         Extent::BootImg => Ok(bootimg_length(source, file_start, limit)?),
         Extent::Ktx2 => Ok(ktx2_length(source, file_start, limit)?),
+        Extent::Qoa => Ok(qoa_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3558,6 +3559,55 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// QOA audio (`.qoa`) length. The "Quite OK Audio" format opens with an 8-byte
+/// header — the `qoaf` magic and a big-endian u32 total sample count — followed
+/// by frames of up to 5120 samples per channel. Each frame's 8-byte header ends
+/// with the frame size as a big-endian u16 at offset 6, so the frames are walked
+/// for the sample-derived frame count to the end of the file. The magic, a
+/// non-zero sample count, and a first frame with a valid channel count and
+/// sample rate reject a coincidental match.
+fn qoa_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 8];
+    if source.read_at(file_start, &mut h)? < 8 || &h[0..4] != b"qoaf" {
+        return Ok(None);
+    }
+    let samples = u32::from_be_bytes(h[4..8].try_into().unwrap()) as u64;
+    if samples == 0 {
+        return Ok(None);
+    }
+    const FRAME_LEN: u64 = 5120; // max samples per channel in a QOA frame
+    let num_frames = samples.div_ceil(FRAME_LEN);
+    if num_frames > (1 << 24) {
+        return Ok(None);
+    }
+    let mut pos = file_start + 8;
+    let mut first = true;
+    for _ in 0..num_frames {
+        let mut fh = [0u8; 8];
+        if pos.saturating_add(8) > limit || source.read_at(pos, &mut fh)? < 8 {
+            return Ok(None);
+        }
+        if first {
+            let channels = fh[0];
+            let samplerate = u32::from_be_bytes([0, fh[1], fh[2], fh[3]]);
+            if channels == 0 || samplerate == 0 {
+                return Ok(None);
+            }
+            first = false;
+        }
+        // The frame size (including its 8-byte header) is a big-endian u16 at 6.
+        let fsize = u16::from_be_bytes([fh[6], fh[7]]) as u64;
+        if fsize < 8 {
+            return Ok(None);
+        }
+        pos = pos.saturating_add(fsize);
+        if pos > limit {
+            return Ok(None);
+        }
+    }
+    Ok(Some(pos - file_start))
+}
+
 /// KTX2 texture (`.ktx2`) length. After the 12-byte «KTX 20» identifier the
 /// 80-byte header records a level count at offset 0x28 and byte offset/length
 /// pairs for the data-format descriptor (0x30, u32s), key/value data (0x38,
@@ -5488,6 +5538,45 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a QOA audio file with the given total sample count and per-frame
+    /// sizes (each ≥ 8, including the 8-byte frame header); the total is 8 plus
+    /// the sum of the frame sizes.
+    fn qoa(samples: u32, frame_sizes: &[u16]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"qoaf");
+        v.extend_from_slice(&samples.to_be_bytes());
+        for &fsize in frame_sizes {
+            let mut frame = vec![0u8; fsize as usize];
+            frame[0] = 1; // num_channels
+            frame[1..4].copy_from_slice(&[0x00, 0xAC, 0x44]); // samplerate 44100 (u24)
+            frame[6..8].copy_from_slice(&fsize.to_be_bytes());
+            v.extend_from_slice(&frame);
+        }
+        v
+    }
+
+    #[test]
+    fn qoa_length_walks_frames_for_sample_count() {
+        // 6000 samples -> ceil(6000/5120) = 2 frames.
+        let v = qoa(6000, &[2064, 848]);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(qoa_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 8 + 2064 + 848);
+    }
+
+    #[test]
+    fn qoa_length_rejects_bad_magic_and_tiny_frame() {
+        // Not a QOA file.
+        let (_t, src) = source_of(&[0u8; 32]);
+        assert_eq!(qoa_length(&src, 0, src.size).unwrap(), None);
+        // A frame whose recorded size is smaller than its header is rejected.
+        let mut v = qoa(6000, &[2064, 848]);
+        v[14..16].copy_from_slice(&4u16.to_be_bytes()); // first frame's fsize field
+        let (_t, src) = source_of(&v);
+        assert_eq!(qoa_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a KTX2 texture with `level_count` levels; level 0 lives at
