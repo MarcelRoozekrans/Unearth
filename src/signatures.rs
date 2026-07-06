@@ -124,6 +124,8 @@
 //!   v2 header.
 //! * [`Extent::Las`] — LAS point cloud: the point-data offset plus
 //!   `point_count × record_length`.
+//! * [`Extent::GodotPck`] — Godot asset pack: walk the directory to the last
+//!   file's end.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -624,6 +626,14 @@ pub enum Extent {
     /// extended VLRs — whose size can't be derived this simply — are skipped
     /// rather than mis-sized.
     Las,
+    /// Godot asset pack (`.pck`) — the resource bundle for Godot Engine games,
+    /// covering pack format v1 (Godot 3) and v2 (Godot 4). After the `GDPC`
+    /// magic the header carries the format version, a v2 `file_base`, and a file
+    /// count, followed by directory entries (a length-prefixed path, a u64
+    /// offset and size, an MD5, and a v2 flags word). The file ends at the
+    /// largest `file_base + offset + size`. The magic, a supported version, and a
+    /// bounded file count reject a coincidental match.
+    GodotPck,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2098,6 +2108,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 8 * GB,
     },
     Signature {
+        // Godot asset pack (Godot Engine games): "GDPC" magic, size from the
+        // directory of packed files.
+        name: "Godot asset pack",
+        ext: "pck",
+        magic: b"GDPC",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::GodotPck,
+        max_size: 8 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2423,7 +2444,7 @@ pub fn category_of(ext: &str) -> Category {
         "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "doc"
         | "xls" | "ppt" | "msg" | "pst" | "ole" => Category::Document,
         "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "cpio" | "zst" | "lz4" | "jar" | "pak"
-        | "zim" | "unity3d" | "vpk" => Category::Archive,
+        | "zim" | "unity3d" | "vpk" | "pck" => Category::Archive,
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
