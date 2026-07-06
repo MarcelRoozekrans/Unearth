@@ -590,6 +590,7 @@ fn file_length(
         Extent::Raf => Ok(raf_length(source, file_start, limit)?),
         Extent::Vpk => Ok(vpk_length(source, file_start, limit)?),
         Extent::Las => Ok(las_length(source, file_start, limit)?),
+        Extent::GodotPck => Ok(godot_pck_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3566,6 +3567,69 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// Godot asset pack (`.pck`) length. After the `GDPC` magic the header carries a
+/// format version, a v2 `file_base` (u64 at 0x18), 16 reserved words, and a file
+/// count (at 0x54 for v1, 0x60 for v2). Directory entries follow: a u32
+/// length-prefixed path, a u64 offset and size, a 16-byte MD5, and a v2 flags
+/// word. The file ends at the largest `file_base + offset + size`. The magic, a
+/// supported version, and a bounded file count reject a coincidental match.
+fn godot_pck_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut hdr = [0u8; 0x64];
+    if source.read_at(file_start, &mut hdr)? < 0x64 || &hdr[0..4] != b"GDPC" {
+        return Ok(None);
+    }
+    let version = u32::from_le_bytes(hdr[4..8].try_into().unwrap());
+    let (file_base, file_count, mut pos, entry_tail) = match version {
+        1 => (
+            0u64,
+            u32::from_le_bytes(hdr[0x54..0x58].try_into().unwrap()) as u64,
+            file_start + 0x58,
+            16u64, // md5 only
+        ),
+        2 => (
+            u64::from_le_bytes(hdr[0x18..0x20].try_into().unwrap()),
+            u32::from_le_bytes(hdr[0x60..0x64].try_into().unwrap()) as u64,
+            file_start + 0x64,
+            20u64, // md5 + flags
+        ),
+        _ => return Ok(None),
+    };
+    if file_count == 0 || file_count > (1 << 22) {
+        return Ok(None);
+    }
+    let mut max_end = 0u64;
+    for _ in 0..file_count {
+        let mut b4 = [0u8; 4];
+        if pos.saturating_add(4) > limit || source.read_at(pos, &mut b4)? < 4 {
+            return Ok(None);
+        }
+        let path_len = u32::from_le_bytes(b4) as u64;
+        if path_len > 4096 {
+            return Ok(None);
+        }
+        pos += 4;
+        // Skip the path, then read the offset and size.
+        pos = pos.saturating_add(path_len);
+        let mut b16 = [0u8; 16];
+        if pos.saturating_add(16) > limit || source.read_at(pos, &mut b16)? < 16 {
+            return Ok(None);
+        }
+        let ofs = u64::from_le_bytes(b16[0..8].try_into().unwrap());
+        let size = u64::from_le_bytes(b16[8..16].try_into().unwrap());
+        pos = pos.saturating_add(16 + entry_tail);
+        if pos > limit {
+            return Ok(None);
+        }
+        max_end = max_end.max(file_base.saturating_add(ofs).saturating_add(size));
+    }
+    // The file spans at least the directory; its data follows.
+    let total = (pos - file_start).max(max_end);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// LAS point cloud (`.las`) length. After the `LASF` magic the public header
 /// block records the offset to point data (a u32 at 0x60), the point record
 /// length (a u16 at 0x69), and the point count (a u32 at 0x6B for LAS 1.0–1.3,
@@ -5848,6 +5912,69 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a Godot asset pack of the given version with the given
+    /// `(offset, size)` file entries and v2 `file_base`; the total is the largest
+    /// `file_base + offset + size` (or the directory end).
+    fn godot_pck(version: u32, file_base: u64, entries: &[(u64, u64)]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"GDPC");
+        v.extend_from_slice(&version.to_le_bytes());
+        v.extend_from_slice(&[0u8; 12]); // major, minor, patch
+        if version == 2 {
+            v.extend_from_slice(&0u32.to_le_bytes()); // pack_flags
+            v.extend_from_slice(&file_base.to_le_bytes()); // file_base (u64)
+        }
+        v.extend_from_slice(&[0u8; 64]); // reserved
+        v.extend_from_slice(&(entries.len() as u32).to_le_bytes()); // file_count
+        for &(ofs, size) in entries {
+            v.extend_from_slice(&12u32.to_le_bytes()); // padded path length
+            v.extend_from_slice(b"res://a.txt"); // 11 bytes
+            v.push(0); // pad to 12
+            v.extend_from_slice(&ofs.to_le_bytes());
+            v.extend_from_slice(&size.to_le_bytes());
+            v.extend_from_slice(&[0u8; 16]); // md5
+            if version == 2 {
+                v.extend_from_slice(&0u32.to_le_bytes()); // flags
+            }
+        }
+        let dir_end = v.len() as u64;
+        let max_data = entries
+            .iter()
+            .map(|&(o, s)| file_base + o + s)
+            .max()
+            .unwrap_or(0);
+        v.resize(dir_end.max(max_data) as usize, 0);
+        v
+    }
+
+    #[test]
+    fn godot_pck_length_v1_and_v2_use_last_file_end() {
+        // v1: two files, the farthest ending at 0x2000 + 0x800.
+        let v = godot_pck(1, 0, &[(0x1000, 0x500), (0x2000, 0x800)]);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(godot_pck_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 0x2000 + 0x800);
+        // v2: offsets are relative to file_base.
+        let v = godot_pck(2, 0x100, &[(0x1000, 0x500)]);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(godot_pck_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 0x100 + 0x1000 + 0x500);
+    }
+
+    #[test]
+    fn godot_pck_length_rejects_bad_magic_and_version() {
+        // Not a Godot pack.
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(godot_pck_length(&src, 0, src.size).unwrap(), None);
+        // An unsupported pack version is rejected.
+        let mut v = godot_pck(1, 0, &[(0x1000, 0x500)]);
+        v[4..8].copy_from_slice(&9u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(godot_pck_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a LAS point cloud with the given version-minor, point format,

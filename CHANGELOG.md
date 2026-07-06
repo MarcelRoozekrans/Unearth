@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Godot asset packs are carved** — `scan` now recovers `.pck` files, the
+  resource bundle for Godot Engine games, covering pack format v1 (Godot 3) and
+  v2 (Godot 4). The exact length comes from walking the directory to the largest
+  `file_base + offset + size`, behind the `GDPC` magic.
 - **LAS point clouds are carved** — `scan` now recovers `.las` files, the LiDAR
   point-cloud format used in surveying, GIS, and autonomous-vehicle datasets.
   The exact length is the point-data offset plus `point_count × record_length`
