@@ -589,6 +589,7 @@ fn file_length(
         Extent::UnityFs => Ok(unityfs_length(source, file_start, limit)?),
         Extent::Raf => Ok(raf_length(source, file_start, limit)?),
         Extent::Vpk => Ok(vpk_length(source, file_start, limit)?),
+        Extent::Las => Ok(las_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3565,6 +3566,66 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// LAS point cloud (`.las`) length. After the `LASF` magic the public header
+/// block records the offset to point data (a u32 at 0x60), the point record
+/// length (a u16 at 0x69), and the point count (a u32 at 0x6B for LAS 1.0–1.3,
+/// or a u64 at 0xFF for LAS 1.4). The file is `offset + count × record_length`.
+/// Compressed (LAZ) files — flagged by the high bit of the point format —
+/// waveform point formats (4/5/9/10), and LAS 1.4 files with extended VLRs are
+/// skipped rather than mis-sized, since their layout isn't this simple.
+fn las_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x110];
+    let n = source.read_at(file_start, &mut h)?;
+    if n < 0x6F || &h[0..4] != b"LASF" {
+        return Ok(None);
+    }
+    // Version 1.0–1.4 only.
+    if h[0x18] != 1 || h[0x19] > 4 {
+        return Ok(None);
+    }
+    let u16_at = |o: usize| u16::from_le_bytes(h[o..o + 2].try_into().unwrap()) as u64;
+    let u32_at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap()) as u64;
+    // The high bit of the point-data record format flags LAZ compression, whose
+    // point data isn't `count × record_length`.
+    let raw_fmt = h[0x68];
+    if raw_fmt & 0x80 != 0 {
+        return Ok(None);
+    }
+    // Waveform formats append data after the points; skip them.
+    if matches!(raw_fmt, 4 | 5 | 9 | 10) || raw_fmt > 10 {
+        return Ok(None);
+    }
+    let header_size = u16_at(0x5E);
+    let offset_to_point = u32_at(0x60);
+    let record_len = u16_at(0x69);
+    if !(0x5E..=0x400).contains(&header_size)
+        || offset_to_point < header_size
+        || !(1..=1024).contains(&record_len)
+    {
+        return Ok(None);
+    }
+    let point_count = if h[0x19] >= 4 {
+        if n < 0x107 {
+            return Ok(None);
+        }
+        // Extended VLRs sit after the point data; skip files that use them.
+        if u32_at(0xFB) != 0 {
+            return Ok(None);
+        }
+        u64::from_le_bytes(h[0xFF..0x107].try_into().unwrap())
+    } else {
+        u32_at(0x6B)
+    };
+    if point_count == 0 {
+        return Ok(None);
+    }
+    let total = offset_to_point.saturating_add(point_count.saturating_mul(record_len));
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// Valve VPK archive (`.vpk`) length. The version-2 header (magic `0x55AA1234`)
 /// records the tree size (0x08) and the file-data (0x0C), archive-MD5 (0x10),
 /// other-MD5 (0x14), and signature (0x18) section sizes, so the file is the
@@ -5787,6 +5848,54 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a LAS point cloud with the given version-minor, point format,
+    /// record length, and point count; the total is the header plus the point
+    /// data. The header occupies the point-data offset (no VLRs).
+    fn las(vmin: u8, fmt: u8, record_len: u16, point_count: u64) -> Vec<u8> {
+        let header_size: u32 = if vmin >= 4 { 375 } else { 227 };
+        let total = header_size as u64 + point_count * record_len as u64;
+        let mut v = vec![0u8; total as usize];
+        v[0..4].copy_from_slice(b"LASF");
+        v[0x18] = 1; // version major
+        v[0x19] = vmin;
+        v[0x5E..0x60].copy_from_slice(&(header_size as u16).to_le_bytes());
+        v[0x60..0x64].copy_from_slice(&header_size.to_le_bytes()); // offset to point data
+        v[0x68] = fmt;
+        v[0x69..0x6B].copy_from_slice(&record_len.to_le_bytes());
+        if vmin >= 4 {
+            v[0xFF..0x107].copy_from_slice(&point_count.to_le_bytes());
+        } else {
+            v[0x6B..0x6F].copy_from_slice(&(point_count as u32).to_le_bytes());
+        }
+        v
+    }
+
+    #[test]
+    fn las_length_computes_point_data() {
+        // LAS 1.2, format 1 (28-byte records), 1000 points.
+        let v = las(2, 1, 28, 1000);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(las_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 227 + 1000 * 28);
+        // LAS 1.4, format 6 (30-byte records), 2000 points (u64 count).
+        let v = las(4, 6, 30, 2000);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(las_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn las_length_rejects_bad_magic_and_compressed() {
+        // Not a LAS file.
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(las_length(&src, 0, src.size).unwrap(), None);
+        // A LAZ-compressed file sets the high bit of the point format.
+        let v = las(2, 1 | 0x80, 28, 1000);
+        let (_t, src) = source_of(&v);
+        assert_eq!(las_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a Valve VPK (v2) archive with the given section sizes; the total is
