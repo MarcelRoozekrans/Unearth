@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Unity asset bundles are carved** — `scan` now recovers `.unity3d` files, the
+  `UnityFS` container that ships the assets of virtually every Unity game. The
+  exact length is the total-size field in the header, read after the two
+  null-terminated Unity version strings.
 - **systemd journals are carved** — `scan` now recovers `.journal` files, the
   binary log format under `/var/log/journal` on every modern Linux system and a
   common forensics artifact. The exact length is the header size plus the arena

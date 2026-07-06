@@ -693,6 +693,7 @@ alongside the per-file manifest.
 | cpio   | cpio archive (newc; initramfs / RPM)            | entry-chain walk to TRAILER |
 | pak    | Quake PAK archive (game assets)                 | directory offset + length   |
 | zim    | ZIM archive (offline Wikipedia / Kiwix)         | checksum position + MD5     |
+| unity3d | Unity asset bundle (UnityFS, game assets)      | total-size field in header  |
 | gguf   | GGUF model (llama.cpp / local LLM weights)      | tensor-table walk to data end |
 | npy    | NumPy array (np.save, ML/scientific)            | header + shape × itemsize   |
 | img    | Android boot image (boot.img, v0–v4)            | sum of page-rounded sections |

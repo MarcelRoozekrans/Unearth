@@ -116,6 +116,8 @@
 //!   sections.
 //! * [`Extent::Npy`] — NumPy array: the header plus `product(shape) × itemsize`.
 //! * [`Extent::Journal`] — systemd journal: the header size plus the arena size.
+//! * [`Extent::UnityFs`] — Unity asset bundle: the total-size field after the
+//!   version strings.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -584,6 +586,14 @@ pub enum Extent {
     /// magic, a sane header size, and a non-zero arena reject a coincidental
     /// match.
     Journal,
+    /// Unity asset bundle (`.unity3d`) — the `UnityFS` container that ships the
+    /// assets of virtually every Unity game, a common game-asset recovery
+    /// target. The header is the `UnityFS\0` signature, a big-endian u32 format
+    /// version, two null-terminated version strings (the Unity version and
+    /// revision), then the total file size as a big-endian i64. That size field
+    /// gives the exact end. The magic, a sane version, and terminated version
+    /// strings reject a coincidental match.
+    UnityFs,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2014,6 +2024,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 4 * GB,
     },
     Signature {
+        // Unity asset bundle: "UnityFS" signature, total size from the header
+        // after the version strings.
+        name: "Unity asset bundle",
+        ext: "unity3d",
+        magic: b"UnityFS\0",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::UnityFs,
+        max_size: 4 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2340,7 +2361,7 @@ pub fn category_of(ext: &str) -> Category {
         "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "doc"
         | "xls" | "ppt" | "msg" | "pst" | "ole" => Category::Document,
         "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "cpio" | "zst" | "lz4" | "jar" | "pak"
-        | "zim" => Category::Archive,
+        | "zim" | "unity3d" => Category::Archive,
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
