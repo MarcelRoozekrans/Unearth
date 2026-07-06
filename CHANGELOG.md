@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **LAS point clouds are carved** — `scan` now recovers `.las` files, the LiDAR
+  point-cloud format used in surveying, GIS, and autonomous-vehicle datasets.
+  The exact length is the point-data offset plus `point_count × record_length`
+  from the public header block. Compressed (LAZ) files, waveform point formats,
+  and LAS 1.4 files with extended VLRs are skipped rather than mis-sized.
 - **Valve VPK archives are carved** — `scan` now recovers `.vpk` files, the pak
   format used by Source and Source 2 games (CS2, Dota 2, Half-Life: Alyx). The
   exact length is the 28-byte version-2 header plus the sum of its section sizes

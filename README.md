@@ -751,6 +751,7 @@ alongside the per-file manifest.
 | wim    | Windows Imaging (WIM/ESD)                        | resource-table extents      |
 | icc    | ICC colour profile                               | size field in profile header |
 | shp    | ESRI Shapefile                                   | length field in header (BE)  |
+| las    | LAS LiDAR point cloud                            | offset + count × record len |
 | blend  | Blender file                                     | block chain to ENDB block   |
 | nes    | NES ROM (iNES / NES 2.0)                         | PRG/CHR bank counts         |
 | gb     | Game Boy / Game Boy Color ROM                    | size code in header (0x148) |

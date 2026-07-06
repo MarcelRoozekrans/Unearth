@@ -122,6 +122,8 @@
 //!   the header.
 //! * [`Extent::Vpk`] — Valve VPK archive: the sum of the section sizes in the
 //!   v2 header.
+//! * [`Extent::Las`] — LAS point cloud: the point-data offset plus
+//!   `point_count × record_length`.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -613,6 +615,15 @@ pub enum Extent {
     /// carries all the section sizes) is sized; version 1 is skipped. The magic
     /// and version reject a coincidental match.
     Vpk,
+    /// LAS point cloud (`.las`) — the LiDAR point-cloud format used in
+    /// surveying, GIS, and autonomous-vehicle datasets. After the `LASF` magic
+    /// the public header block records the offset to point data (0x60), the
+    /// point record length (0x69), and the point count (a u32 at 0x6B, or a u64
+    /// at 0xFF in LAS 1.4), so the file is `offset + count × record_length`.
+    /// Compressed (LAZ) files, waveform point formats, and LAS 1.4 files with
+    /// extended VLRs — whose size can't be derived this simply — are skipped
+    /// rather than mis-sized.
+    Las,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2074,6 +2085,17 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Vpk,
         max_size: 4 * GB,
+    },
+    Signature {
+        // LAS LiDAR point cloud: "LASF" magic, size = point-data offset +
+        // point count x record length.
+        name: "LAS point cloud",
+        ext: "las",
+        magic: b"LASF",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Las,
+        max_size: 8 * GB,
     },
     Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
