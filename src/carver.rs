@@ -588,6 +588,7 @@ fn file_length(
         Extent::Journal => Ok(journal_length(source, file_start, limit)?),
         Extent::UnityFs => Ok(unityfs_length(source, file_start, limit)?),
         Extent::Raf => Ok(raf_length(source, file_start, limit)?),
+        Extent::Vpk => Ok(vpk_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3564,6 +3565,38 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// Valve VPK archive (`.vpk`) length. The version-2 header (magic `0x55AA1234`)
+/// records the tree size (0x08) and the file-data (0x0C), archive-MD5 (0x10),
+/// other-MD5 (0x14), and signature (0x18) section sizes, so the file is the
+/// 28-byte header plus their sum. Only version 2 carries all the section sizes;
+/// version 1 is skipped. The magic and version reject a coincidental match.
+fn vpk_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 28];
+    if source.read_at(file_start, &mut h)? < 28
+        || u32::from_le_bytes(h[0..4].try_into().unwrap()) != 0x55AA_1234
+    {
+        return Ok(None);
+    }
+    if u32::from_le_bytes(h[4..8].try_into().unwrap()) != 2 {
+        return Ok(None);
+    }
+    let u32_at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap()) as u64;
+    // A real VPK has a directory tree.
+    if u32_at(0x08) == 0 {
+        return Ok(None);
+    }
+    let total = 28u64
+        .saturating_add(u32_at(0x08))
+        .saturating_add(u32_at(0x0C))
+        .saturating_add(u32_at(0x10))
+        .saturating_add(u32_at(0x14))
+        .saturating_add(u32_at(0x18));
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// Fuji RAF raw image (`.raf`) length. After the 16-byte `FUJIFILMCCD-RAW `
 /// magic the header records big-endian u32 offset/length pairs for the embedded
 /// JPEG (0x54/0x58), the CFA header (0x5C/0x60), and the CFA raw data
@@ -5754,6 +5787,43 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a Valve VPK (v2) archive with the given section sizes; the total is
+    /// the 28-byte header plus their sum.
+    fn vpk(tree: u32, data: u32, amd5: u32, omd5: u32, sig: u32) -> Vec<u8> {
+        let total =
+            28 + tree as usize + data as usize + amd5 as usize + omd5 as usize + sig as usize;
+        let mut v = vec![0u8; total];
+        v[0..4].copy_from_slice(&0x55AA_1234u32.to_le_bytes());
+        v[4..8].copy_from_slice(&2u32.to_le_bytes());
+        v[8..12].copy_from_slice(&tree.to_le_bytes());
+        v[12..16].copy_from_slice(&data.to_le_bytes());
+        v[16..20].copy_from_slice(&amd5.to_le_bytes());
+        v[20..24].copy_from_slice(&omd5.to_le_bytes());
+        v[24..28].copy_from_slice(&sig.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn vpk_length_sums_section_sizes() {
+        let v = vpk(1000, 4000, 16, 32, 0);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(vpk_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 28 + 1000 + 4000 + 16 + 32);
+    }
+
+    #[test]
+    fn vpk_length_rejects_bad_magic_and_v1() {
+        // Not a VPK archive.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(vpk_length(&src, 0, src.size).unwrap(), None);
+        // A version-1 header lacks the section-size fields, so it is skipped.
+        let mut v = vpk(1000, 4000, 16, 32, 0);
+        v[4..8].copy_from_slice(&1u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(vpk_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a Fuji RAF image with the given JPEG and CFA-data section

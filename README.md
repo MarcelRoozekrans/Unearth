@@ -695,6 +695,7 @@ alongside the per-file manifest.
 | pak    | Quake PAK archive (game assets)                 | directory offset + length   |
 | zim    | ZIM archive (offline Wikipedia / Kiwix)         | checksum position + MD5     |
 | unity3d | Unity asset bundle (UnityFS, game assets)      | total-size field in header  |
+| vpk    | Valve VPK archive (Source/Source 2 games)       | sum of v2 section sizes     |
 | gguf   | GGUF model (llama.cpp / local LLM weights)      | tensor-table walk to data end |
 | npy    | NumPy array (np.save, ML/scientific)            | header + shape × itemsize   |
 | img    | Android boot image (boot.img, v0–v4)            | sum of page-rounded sections |

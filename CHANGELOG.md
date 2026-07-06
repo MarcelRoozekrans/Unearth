@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **Valve VPK archives are carved** — `scan` now recovers `.vpk` files, the pak
+  format used by Source and Source 2 games (CS2, Dota 2, Half-Life: Alyx). The
+  exact length is the 28-byte version-2 header plus the sum of its section sizes
+  (tree, file data, archive MD5, other MD5, signature). Version-1 VPKs, which
+  lack the section-size fields, are skipped rather than mis-sized.
 - **Fuji RAF raw images are carved** — `scan` now recovers `.raf` files, the raw
   photo format from Fujifilm's mirrorless cameras. The exact length is the
   largest section offset-plus-length across the embedded JPEG, CFA header, and

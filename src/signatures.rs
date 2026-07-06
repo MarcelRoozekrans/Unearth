@@ -120,6 +120,8 @@
 //!   version strings.
 //! * [`Extent::Raf`] — Fuji RAF raw: the largest section offset-plus-length in
 //!   the header.
+//! * [`Extent::Vpk`] — Valve VPK archive: the sum of the section sizes in the
+//!   v2 header.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -603,6 +605,14 @@ pub enum Extent {
     /// the CFA raw data (0x64/0x68); the file ends at the largest offset plus
     /// length. The 16-byte magic makes false positives negligible.
     Raf,
+    /// Valve VPK archive (`.vpk`) — the pak format used by Source and Source 2
+    /// games (CS2, Dota 2, Half-Life: Alyx), a common game-asset recovery
+    /// target. The version-2 header (magic `0x55AA1234`) records the tree size
+    /// and the file-data, archive-MD5, other-MD5, and signature section sizes,
+    /// so the file is the 28-byte header plus their sum. Only version 2 (which
+    /// carries all the section sizes) is sized; version 1 is skipped. The magic
+    /// and version reject a coincidental match.
+    Vpk,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2055,6 +2065,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * MB,
     },
     Signature {
+        // Valve VPK archive (Source/Source 2 games): 0x55AA1234 magic, size
+        // summed from the v2 header's section sizes.
+        name: "Valve VPK archive",
+        ext: "vpk",
+        magic: &[0x34, 0x12, 0xAA, 0x55],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Vpk,
+        max_size: 4 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2380,7 +2401,7 @@ pub fn category_of(ext: &str) -> Category {
         "pdf" | "rtf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "doc"
         | "xls" | "ppt" | "msg" | "pst" | "ole" => Category::Document,
         "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "cpio" | "zst" | "lz4" | "jar" | "pak"
-        | "zim" | "unity3d" => Category::Archive,
+        | "zim" | "unity3d" | "vpk" => Category::Archive,
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
