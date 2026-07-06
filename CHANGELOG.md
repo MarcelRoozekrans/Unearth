@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **Fuji RAF raw images are carved** — `scan` now recovers `.raf` files, the raw
+  photo format from Fujifilm's mirrorless cameras. The exact length is the
+  largest section offset-plus-length across the embedded JPEG, CFA header, and
+  CFA raw data recorded in the 16-byte-magic header.
 - **Unity asset bundles are carved** — `scan` now recovers `.unity3d` files, the
   `UnityFS` container that ships the assets of virtually every Unity game. The
   exact length is the total-size field in the header, read after the two
