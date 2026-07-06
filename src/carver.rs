@@ -591,6 +591,7 @@ fn file_length(
         Extent::Vpk => Ok(vpk_length(source, file_start, limit)?),
         Extent::Las => Ok(las_length(source, file_start, limit)?),
         Extent::GodotPck => Ok(godot_pck_length(source, file_start, limit)?),
+        Extent::E57 => Ok(e57_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3567,6 +3568,23 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// E57 point cloud (`.e57`) length. The 48-byte header opens with the `ASTM-E57`
+/// signature and stores the physical file length as a little-endian u64 at
+/// offset 0x10 — the exact size. The 8-byte magic makes false positives
+/// negligible.
+fn e57_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x18];
+    if source.read_at(file_start, &mut h)? < 0x18 || &h[0..8] != b"ASTM-E57" {
+        return Ok(None);
+    }
+    let total = u64::from_le_bytes(h[0x10..0x18].try_into().unwrap());
+    // Must at least span the 48-byte header and fit the region.
+    if total < 0x30 || file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// Godot asset pack (`.pck`) length. After the `GDPC` magic the header carries a
 /// format version, a v2 `file_base` (u64 at 0x18), 16 reserved words, and a file
 /// count (at 0x54 for v1, 0x60 for v2). Directory entries follow: a u32
@@ -5912,6 +5930,29 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build an E57 point cloud whose header records `total` as its physical
+    /// file length.
+    fn e57(total: u64) -> Vec<u8> {
+        let mut v = vec![0u8; total as usize];
+        v[0..8].copy_from_slice(b"ASTM-E57");
+        v[0x10..0x18].copy_from_slice(&total.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn e57_length_reads_physical_length() {
+        let v = e57(8192);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(e57_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn e57_length_rejects_bad_magic() {
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(e57_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a Godot asset pack of the given version with the given
