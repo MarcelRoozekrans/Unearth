@@ -584,6 +584,7 @@ fn file_length(
         Extent::Ktx2 => Ok(ktx2_length(source, file_start, limit)?),
         Extent::Qoa => Ok(qoa_length(source, file_start, limit)?),
         Extent::VendorBoot => Ok(vendorboot_length(source, file_start, limit)?),
+        Extent::Npy => Ok(npy_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3560,6 +3561,87 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// The text of a NumPy header dict field: the substring just after `key:`.
+fn npy_field<'a>(hdr: &'a str, key: &str) -> Option<&'a str> {
+    let i = hdr.find(key)?;
+    let after = &hdr[i + key.len()..];
+    let colon = after.find(':')?;
+    Some(after[colon + 1..].trim_start())
+}
+
+/// Byte size of a NumPy `descr` string, if it is a fixed-size numeric or byte
+/// dtype (e.g. `<f8`, `|u1`, `<c16`). Object, unicode, datetime, void, and
+/// structured dtypes return `None` so the file is skipped rather than mis-sized.
+fn npy_itemsize(descr: &str) -> Option<u64> {
+    let b = descr.as_bytes();
+    // Skip an optional byte-order character.
+    let i = usize::from(matches!(b.first()?, b'<' | b'>' | b'|' | b'='));
+    // Only kinds where the trailing number is the byte size per element.
+    if !matches!(b.get(i)?, b'b' | b'i' | b'u' | b'f' | b'c' | b'S') {
+        return None;
+    }
+    let n: u64 = descr.get(i + 1..)?.parse().ok()?;
+    (1..=(1 << 20)).contains(&n).then_some(n)
+}
+
+/// Parse a NumPy header dict for its `descr` (dtype) and `shape`, returning the
+/// item byte size and the total element count.
+fn npy_descr_and_count(hdr: &str) -> Option<(u64, u64)> {
+    // descr: a quoted dtype string (a `[`-prefixed structured dtype yields None).
+    let dv = npy_field(hdr, "'descr'")?.strip_prefix('\'')?;
+    let itemsize = npy_itemsize(&dv[..dv.find('\'')?])?;
+    // shape: a parenthesised tuple of dimensions; `()` is a scalar (count 1).
+    let sv = npy_field(hdr, "'shape'")?.strip_prefix('(')?;
+    let mut count: u64 = 1;
+    for tok in sv[..sv.find(')')?].split(',') {
+        let t = tok.trim();
+        if !t.is_empty() {
+            count = count.checked_mul(t.parse().ok()?)?;
+        }
+    }
+    Some((itemsize, count))
+}
+
+/// NumPy array (`.npy`) length. After the `\x93NUMPY` magic and a two-byte
+/// version, a little-endian header length (u16 for v1, u32 for v2/v3) precedes an
+/// ASCII header dict giving the `descr` (dtype) and `shape`. The file is the
+/// header plus `product(shape) × itemsize`. Only fixed-size numeric and byte
+/// dtypes are sized; object, structured, unicode, and datetime dtypes are
+/// skipped rather than mis-sized.
+fn npy_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut pre = [0u8; 12];
+    if source.read_at(file_start, &mut pre)? < 10 || &pre[0..6] != b"\x93NUMPY" {
+        return Ok(None);
+    }
+    let (header_len, hdr_start) = match pre[6] {
+        1 => (u16::from_le_bytes([pre[8], pre[9]]) as u64, 10u64),
+        2 | 3 => (
+            u32::from_le_bytes([pre[8], pre[9], pre[10], pre[11]]) as u64,
+            12u64,
+        ),
+        _ => return Ok(None),
+    };
+    if header_len == 0 || header_len > 65536 {
+        return Ok(None);
+    }
+    let mut hbuf = vec![0u8; header_len as usize];
+    if source.read_at(file_start + hdr_start, &mut hbuf)? < header_len as usize {
+        return Ok(None);
+    }
+    let Ok(hdr) = std::str::from_utf8(&hbuf) else {
+        return Ok(None);
+    };
+    let Some((itemsize, count)) = npy_descr_and_count(hdr) else {
+        return Ok(None);
+    };
+    let data_size = count.saturating_mul(itemsize);
+    let total = (hdr_start + header_len).saturating_add(data_size);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// Android vendor_boot image (`vendor_boot.img`) length. After the `VNDRBOOT`
 /// magic the header records the page size (0x0C), the vendor-ramdisk size
 /// (0x18), the header size (0x830), and the DTB size (0x834); version 4 adds a
@@ -5587,6 +5669,55 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a NumPy `.npy` file (v1.0) with the given dtype descr, shape tuple
+    /// text, and raw data length; the header is padded to a 64-byte boundary.
+    fn npy(descr: &str, shape: &str, data_len: usize) -> Vec<u8> {
+        let dict = format!("{{'descr': '{descr}', 'fortran_order': False, 'shape': ({shape}), }}");
+        // (magic 6 + version 2 + len field 2 + header) must be a 64-byte multiple.
+        let base = 10 + dict.len() + 1; // +1 for the trailing newline
+        let pad = (64 - (base % 64)) % 64;
+        let mut header = dict.into_bytes();
+        header.extend(std::iter::repeat(b' ').take(pad));
+        header.push(b'\n');
+        let mut v = Vec::new();
+        v.extend_from_slice(b"\x93NUMPY");
+        v.extend_from_slice(&[1, 0]); // version 1.0
+        v.extend_from_slice(&(header.len() as u16).to_le_bytes());
+        v.extend_from_slice(&header);
+        v.extend(std::iter::repeat(0u8).take(data_len));
+        v
+    }
+
+    #[test]
+    fn npy_length_computes_header_plus_data() {
+        // 1-D float64 of 100 elements: 800 bytes of data.
+        let v = npy("<f8", "100,", 100 * 8);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(npy_length(&src, 0, src.size).unwrap(), Some(total));
+        // 2-D int32 (10 x 20): 800 elements x 4 bytes.
+        let v = npy("<i4", "10, 20", 10 * 20 * 4);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(npy_length(&src, 0, src.size).unwrap(), Some(total));
+        // A scalar (empty shape) is one element.
+        let v = npy("<f8", "", 8);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(npy_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn npy_length_rejects_bad_magic_and_object_dtype() {
+        // Not a NumPy array.
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(npy_length(&src, 0, src.size).unwrap(), None);
+        // An object dtype has no fixed item size, so the file is skipped.
+        let v = npy("|O", "5,", 64);
+        let (_t, src) = source_of(&v);
+        assert_eq!(npy_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an Android vendor_boot image with the given section sizes; the total

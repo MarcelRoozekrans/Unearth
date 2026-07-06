@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **NumPy arrays are carved** — `scan` now recovers `.npy` files, the standard
+  `numpy.save` array format ubiquitous in machine-learning and scientific
+  Python. The exact length is the header plus `product(shape) × itemsize`,
+  parsed from the header's `descr` (dtype) and `shape`. Object, structured,
+  unicode, and datetime dtypes — whose element size can't be derived exactly —
+  are skipped rather than recovered at the wrong length.
 - **Android vendor_boot images are carved** — `scan` now recovers
   `vendor_boot.img` files (the GKI-era partition on Android 11+ devices holding
   the vendor ramdisk and DTB), completing the Android boot-partition set

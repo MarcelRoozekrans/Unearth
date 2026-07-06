@@ -114,6 +114,7 @@
 //!   count.
 //! * [`Extent::VendorBoot`] — Android vendor_boot image: sum the page-rounded
 //!   sections.
+//! * [`Extent::Npy`] — NumPy array: the header plus `product(shape) × itemsize`.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -565,6 +566,15 @@ pub enum Extent {
     /// DTB, and (v4) table and bootconfig. Only header versions 3–4 are sized;
     /// others are skipped. The 8-byte magic makes false positives negligible.
     VendorBoot,
+    /// NumPy array (`.npy`) — the standard `numpy.save` on-disk format,
+    /// ubiquitous in machine-learning and scientific-Python data. After the
+    /// `\x93NUMPY` magic and a version, a little-endian header length precedes an
+    /// ASCII header dict describing the `descr` (dtype) and `shape`. The file is
+    /// the header plus `product(shape) × itemsize`. Only fixed-size numeric and
+    /// byte dtypes are sized; object, structured, and unicode dtypes are skipped
+    /// rather than mis-sized. The magic and a parseable header reject a
+    /// coincidental match.
+    Npy,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1973,6 +1983,16 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::VendorBoot,
         max_size: 2 * GB,
+    },
+    Signature {
+        // NumPy array: "\x93NUMPY" magic, size from the header's dtype and shape.
+        name: "NumPy array",
+        ext: "npy",
+        magic: b"\x93NUMPY",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Npy,
+        max_size: 8 * GB,
     },
     Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
