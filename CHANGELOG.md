@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **Android vendor_boot images are carved** — `scan` now recovers
+  `vendor_boot.img` files (the GKI-era partition on Android 11+ devices holding
+  the vendor ramdisk and DTB), completing the Android boot-partition set
+  alongside `boot.img` and DTBO. The exact length is the sum of the page-rounded
+  header, vendor ramdisk, DTB, and (v4) vendor-ramdisk-table and bootconfig
+  sections. Header versions other than 3–4 are skipped rather than mis-sized,
+  and the `VNDRBOOT` magic makes false positives negligible.
 - **QOA audio is carved** — `scan` now recovers `.qoa` files, the modern
   "Quite OK Audio" lossy codec. The exact length is walked over the frame chain
   for the header's sample count, using each frame's own size field, behind the

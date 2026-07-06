@@ -112,6 +112,8 @@
 //!   across the level index and data descriptors.
 //! * [`Extent::Qoa`] — QOA audio: walk the frame chain for the header's sample
 //!   count.
+//! * [`Extent::VendorBoot`] — Android vendor_boot image: sum the page-rounded
+//!   sections.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -553,6 +555,16 @@ pub enum Extent {
     /// the end of the file. The magic, a non-zero sample count, and a valid first
     /// frame reject a coincidental match.
     Qoa,
+    /// Android vendor_boot image (`vendor_boot.img`) — the GKI-era partition
+    /// (Android 11+) holding the vendor ramdisk and DTB, a phone-forensics
+    /// recovery target. After the `VNDRBOOT` magic a header records the page
+    /// size (0x0C), the vendor-ramdisk size (0x18), the header size (0x830), and
+    /// the DTB size (0x834); version 4 adds a vendor-ramdisk-table size (0x840)
+    /// and a bootconfig size (0x84C). Each section is rounded up to the page
+    /// size, so the file is the sum of the page-rounded header, vendor ramdisk,
+    /// DTB, and (v4) table and bootconfig. Only header versions 3–4 are sized;
+    /// others are skipped. The 8-byte magic makes false positives negligible.
+    VendorBoot,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1950,6 +1962,17 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Qoa,
         max_size: 512 * MB,
+    },
+    Signature {
+        // Android vendor_boot image: "VNDRBOOT" magic, size from the
+        // page-rounded section sizes in the header.
+        name: "Android vendor_boot image",
+        ext: "img",
+        magic: b"VNDRBOOT",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::VendorBoot,
+        max_size: 2 * GB,
     },
     Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the

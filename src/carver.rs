@@ -583,6 +583,7 @@ fn file_length(
         Extent::BootImg => Ok(bootimg_length(source, file_start, limit)?),
         Extent::Ktx2 => Ok(ktx2_length(source, file_start, limit)?),
         Extent::Qoa => Ok(qoa_length(source, file_start, limit)?),
+        Extent::VendorBoot => Ok(vendorboot_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3559,6 +3560,54 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// Android vendor_boot image (`vendor_boot.img`) length. After the `VNDRBOOT`
+/// magic the header records the page size (0x0C), the vendor-ramdisk size
+/// (0x18), the header size (0x830), and the DTB size (0x834); version 4 adds a
+/// vendor-ramdisk-table size (0x840) and a bootconfig size (0x84C). Each section
+/// is rounded up to the page size, so the file is the sum of the page-rounded
+/// header, vendor ramdisk, DTB, and (v4) table and bootconfig. Only header
+/// versions 3–4 are sized; others are skipped. The 8-byte magic makes false
+/// positives negligible.
+fn vendorboot_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x850];
+    let n = source.read_at(file_start, &mut h)?;
+    if n < 0x838 || &h[0..8] != b"VNDRBOOT" {
+        return Ok(None);
+    }
+    let u32_at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap()) as u64;
+    let round = |size: u64, page: u64| size.div_ceil(page).saturating_mul(page);
+    let version = u32_at(0x08);
+    if version != 3 && version != 4 {
+        return Ok(None);
+    }
+    let page = u32_at(0x0C);
+    let vendor_ramdisk = u32_at(0x18);
+    let header_size = u32_at(0x830);
+    let dtb = u32_at(0x834);
+    // A real vendor_boot has a vendor ramdisk, a sane page size, and a header
+    // size in the v3/v4 struct range.
+    if vendor_ramdisk == 0
+        || !(256..=65536).contains(&page)
+        || !(0x800..=0x2000).contains(&header_size)
+    {
+        return Ok(None);
+    }
+    let mut total = round(header_size, page);
+    total = total.saturating_add(round(vendor_ramdisk, page));
+    total = total.saturating_add(round(dtb, page));
+    if version == 4 {
+        if n < 0x850 {
+            return Ok(None);
+        }
+        total = total.saturating_add(round(u32_at(0x840), page)); // vendor ramdisk table
+        total = total.saturating_add(round(u32_at(0x84C), page)); // bootconfig
+    }
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// QOA audio (`.qoa`) length. The "Quite OK Audio" format opens with an 8-byte
 /// header — the `qoaf` magic and a big-endian u32 total sample count — followed
 /// by frames of up to 5120 samples per channel. Each frame's 8-byte header ends
@@ -5538,6 +5587,64 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build an Android vendor_boot image with the given section sizes; the total
+    /// is the sum of the page-rounded header, vendor ramdisk, DTB, and (v4) the
+    /// vendor-ramdisk-table and bootconfig sections.
+    fn vendorboot(
+        version: u32,
+        page: u64,
+        header_size: u64,
+        vendor_ramdisk: u64,
+        dtb: u64,
+        vrt: u64,
+        bootconfig: u64,
+    ) -> Vec<u8> {
+        let round = |s: u64| s.div_ceil(page) * page;
+        let mut total = round(header_size) + round(vendor_ramdisk) + round(dtb);
+        if version == 4 {
+            total += round(vrt) + round(bootconfig);
+        }
+        let mut v = vec![0u8; total as usize];
+        v[0..8].copy_from_slice(b"VNDRBOOT");
+        v[0x08..0x0C].copy_from_slice(&version.to_le_bytes());
+        v[0x0C..0x10].copy_from_slice(&(page as u32).to_le_bytes());
+        v[0x18..0x1C].copy_from_slice(&(vendor_ramdisk as u32).to_le_bytes());
+        v[0x830..0x834].copy_from_slice(&(header_size as u32).to_le_bytes());
+        v[0x834..0x838].copy_from_slice(&(dtb as u32).to_le_bytes());
+        if version == 4 {
+            v[0x840..0x844].copy_from_slice(&(vrt as u32).to_le_bytes());
+            v[0x84C..0x850].copy_from_slice(&(bootconfig as u32).to_le_bytes());
+        }
+        v
+    }
+
+    #[test]
+    fn vendorboot_length_v3_and_v4_page_sections() {
+        // v3: header page + vendor ramdisk (2 pages) + dtb (1 page), page 4096.
+        let v = vendorboot(3, 4096, 0x840, 8000, 3000, 0, 0);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(vendorboot_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 4096 + 8192 + 4096);
+        // v4: adds page-rounded vendor-ramdisk-table and bootconfig sections.
+        let v = vendorboot(4, 4096, 0x850, 8000, 3000, 200, 500);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(vendorboot_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn vendorboot_length_rejects_bad_magic_and_version() {
+        // Not a vendor_boot image.
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(vendorboot_length(&src, 0, src.size).unwrap(), None);
+        // An unmodelled header version is skipped rather than mis-sized.
+        let mut v = vendorboot(3, 4096, 0x840, 8000, 3000, 0, 0);
+        v[0x08..0x0C].copy_from_slice(&2u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(vendorboot_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a QOA audio file with the given total sample count and per-frame
