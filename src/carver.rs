@@ -585,6 +585,7 @@ fn file_length(
         Extent::Qoa => Ok(qoa_length(source, file_start, limit)?),
         Extent::VendorBoot => Ok(vendorboot_length(source, file_start, limit)?),
         Extent::Npy => Ok(npy_length(source, file_start, limit)?),
+        Extent::Journal => Ok(journal_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3561,6 +3562,29 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// systemd journal (`.journal`) length. After the `LPKSHHRH` magic the header
+/// records a little-endian u64 header size at offset 0x58 and arena size at
+/// offset 0x60. The arena immediately follows the header, so the file is
+/// `header_size + arena_size`. The 8-byte magic, a sane header size, and a
+/// non-zero arena reject a coincidental match.
+fn journal_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x68];
+    if source.read_at(file_start, &mut h)? < 0x68 || &h[0..8] != b"LPKSHHRH" {
+        return Ok(None);
+    }
+    let header_size = u64::from_le_bytes(h[0x58..0x60].try_into().unwrap());
+    let arena_size = u64::from_le_bytes(h[0x60..0x68].try_into().unwrap());
+    // The header must be a sane size and the arena non-empty.
+    if !(0xD0..=0x10000).contains(&header_size) || arena_size == 0 {
+        return Ok(None);
+    }
+    let total = header_size.saturating_add(arena_size);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// The text of a NumPy header dict field: the substring just after `key:`.
 fn npy_field<'a>(hdr: &'a str, key: &str) -> Option<&'a str> {
     let i = hdr.find(key)?;
@@ -5669,6 +5693,37 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a systemd journal file with the given header and arena sizes; the
+    /// total is `header_size + arena_size`.
+    fn journal(header_size: u64, arena_size: u64) -> Vec<u8> {
+        let total = header_size + arena_size;
+        let mut v = vec![0u8; total as usize];
+        v[0..8].copy_from_slice(b"LPKSHHRH");
+        v[0x58..0x60].copy_from_slice(&header_size.to_le_bytes());
+        v[0x60..0x68].copy_from_slice(&arena_size.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn journal_length_sums_header_and_arena() {
+        let v = journal(240, 4096);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(journal_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 240 + 4096);
+    }
+
+    #[test]
+    fn journal_length_rejects_bad_magic_and_empty_arena() {
+        // Not a journal file.
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(journal_length(&src, 0, src.size).unwrap(), None);
+        // A zero-size arena is rejected.
+        let v = journal(240, 0);
+        let (_t, src) = source_of(&v);
+        assert_eq!(journal_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a NumPy `.npy` file (v1.0) with the given dtype descr, shape tuple

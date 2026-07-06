@@ -14,6 +14,10 @@ formats.
 
 ### Added
 
+- **systemd journals are carved** — `scan` now recovers `.journal` files, the
+  binary log format under `/var/log/journal` on every modern Linux system and a
+  common forensics artifact. The exact length is the header size plus the arena
+  size recorded in the header, behind the 8-byte `LPKSHHRH` magic.
 - **NumPy arrays are carved** — `scan` now recovers `.npy` files, the standard
   `numpy.save` array format ubiquitous in machine-learning and scientific
   Python. The exact length is the header plus `product(shape) × itemsize`,

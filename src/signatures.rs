@@ -115,6 +115,7 @@
 //! * [`Extent::VendorBoot`] — Android vendor_boot image: sum the page-rounded
 //!   sections.
 //! * [`Extent::Npy`] — NumPy array: the header plus `product(shape) × itemsize`.
+//! * [`Extent::Journal`] — systemd journal: the header size plus the arena size.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -575,6 +576,14 @@ pub enum Extent {
     /// rather than mis-sized. The magic and a parseable header reject a
     /// coincidental match.
     Npy,
+    /// systemd journal (`.journal`) — the binary log format under
+    /// `/var/log/journal` on every modern Linux system, a common forensics
+    /// target. After the `LPKSHHRH` magic the header records a little-endian u64
+    /// header size at offset 0x58 and arena size at offset 0x60; the arena
+    /// follows the header, so the file is `header_size + arena_size`. The 8-byte
+    /// magic, a sane header size, and a non-zero arena reject a coincidental
+    /// match.
+    Journal,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -1995,6 +2004,16 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 8 * GB,
     },
     Signature {
+        // systemd journal: "LPKSHHRH" magic, size = header size + arena size.
+        name: "systemd journal",
+        ext: "journal",
+        magic: b"LPKSHHRH",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Journal,
+        max_size: 4 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2325,7 +2344,7 @@ pub fn category_of(ext: &str) -> Category {
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
-        | "dtb" | "trx" | "img" | "dtbo" => Category::System,
+        | "dtb" | "trx" | "img" | "dtbo" | "journal" => Category::System,
         _ => Category::Other,
     }
 }
