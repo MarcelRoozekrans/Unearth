@@ -586,6 +586,7 @@ fn file_length(
         Extent::VendorBoot => Ok(vendorboot_length(source, file_start, limit)?),
         Extent::Npy => Ok(npy_length(source, file_start, limit)?),
         Extent::Journal => Ok(journal_length(source, file_start, limit)?),
+        Extent::UnityFs => Ok(unityfs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3562,6 +3563,43 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// Unity asset bundle (`.unity3d`) length. The `UnityFS\0` signature is followed
+/// by a big-endian u32 format version, two null-terminated version strings (the
+/// Unity version and revision), then the total file size as a big-endian i64.
+/// That size field gives the exact end. The magic, a sane version, and
+/// null-terminated version strings reject a coincidental match.
+fn unityfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 256];
+    let n = source.read_at(file_start, &mut h)?;
+    if n < 20 || &h[0..8] != b"UnityFS\0" {
+        return Ok(None);
+    }
+    let version = u32::from_be_bytes([h[8], h[9], h[10], h[11]]);
+    if version == 0 || version > 1000 {
+        return Ok(None);
+    }
+    // Skip the two null-terminated version strings that follow the version.
+    let mut pos = 12usize;
+    for _ in 0..2 {
+        while pos < n && h[pos] != 0 {
+            pos += 1;
+        }
+        if pos >= n {
+            return Ok(None); // no terminator within the read window
+        }
+        pos += 1; // step over the terminator
+    }
+    if pos + 8 > n {
+        return Ok(None);
+    }
+    let size = u64::from_be_bytes(h[pos..pos + 8].try_into().unwrap());
+    // The size must at least cover the header parsed so far.
+    if size < pos as u64 + 8 || file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
+}
+
 /// systemd journal (`.journal`) length. After the `LPKSHHRH` magic the header
 /// records a little-endian u64 header size at offset 0x58 and arena size at
 /// offset 0x60. The arena immediately follows the header, so the file is
@@ -5693,6 +5731,43 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a Unity asset bundle whose header records `size` as its total file
+    /// size, with the given format version and version strings.
+    fn unityfs(version: u32, unity_version: &str, revision: &str, size: u64) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"UnityFS\0");
+        v.extend_from_slice(&version.to_be_bytes());
+        v.extend_from_slice(unity_version.as_bytes());
+        v.push(0);
+        v.extend_from_slice(revision.as_bytes());
+        v.push(0);
+        v.extend_from_slice(&size.to_be_bytes());
+        v.resize(size as usize, 0);
+        v
+    }
+
+    #[test]
+    fn unityfs_length_reads_size_field() {
+        let v = unityfs(6, "5.x.x", "2019.4.31f1", 4096);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(unityfs_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 4096);
+    }
+
+    #[test]
+    fn unityfs_length_rejects_bad_magic_and_tiny_size() {
+        // Not a Unity bundle.
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(unityfs_length(&src, 0, src.size).unwrap(), None);
+        // A size smaller than the parsed header is rejected. The size field sits
+        // at offset 8 + 4 + len("5.x.x\0") + len("2019.4.31f1\0") = 30.
+        let mut v = unityfs(6, "5.x.x", "2019.4.31f1", 4096);
+        v[30..38].copy_from_slice(&10u64.to_be_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(unityfs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a systemd journal file with the given header and arena sizes; the
