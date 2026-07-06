@@ -679,6 +679,7 @@ alongside the per-file manifest.
 | ktx2   | KTX2 GPU texture (glTF / WebGPU)                | max section offset + length |
 | tif    | TIFF / BigTIFF / raw (DNG/NEF/ARW)              | IFD / strip-tile walk       |
 | cr2    | Canon CR2 raw image                              | IFD / strip-tile walk       |
+| raf    | Fuji RAF raw image                               | max section offset + length |
 | pdf    | PDF document                                     | `%%EOF`                     |
 | djvu   | DjVu document                                    | IFF FORM length             |
 | rtf    | Rich Text Format document                        | outer `{ }` group match     |

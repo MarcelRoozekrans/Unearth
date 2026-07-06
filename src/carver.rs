@@ -587,6 +587,7 @@ fn file_length(
         Extent::Npy => Ok(npy_length(source, file_start, limit)?),
         Extent::Journal => Ok(journal_length(source, file_start, limit)?),
         Extent::UnityFs => Ok(unityfs_length(source, file_start, limit)?),
+        Extent::Raf => Ok(raf_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3563,6 +3564,28 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// Fuji RAF raw image (`.raf`) length. After the 16-byte `FUJIFILMCCD-RAW `
+/// magic the header records big-endian u32 offset/length pairs for the embedded
+/// JPEG (0x54/0x58), the CFA header (0x5C/0x60), and the CFA raw data
+/// (0x64/0x68). The file ends at the largest offset plus length. The 16-byte
+/// magic makes false positives negligible.
+fn raf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x6C];
+    if source.read_at(file_start, &mut h)? < 0x6C || &h[0..16] != b"FUJIFILMCCD-RAW " {
+        return Ok(None);
+    }
+    let be = |o: usize| u32::from_be_bytes(h[o..o + 4].try_into().unwrap()) as u64;
+    let end = be(0x54)
+        .saturating_add(be(0x58))
+        .max(be(0x5C).saturating_add(be(0x60)))
+        .max(be(0x64).saturating_add(be(0x68)));
+    // Must at least span the header and fit the region.
+    if end < 0x6C || file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
+}
+
 /// Unity asset bundle (`.unity3d`) length. The `UnityFS\0` signature is followed
 /// by a big-endian u32 format version, two null-terminated version strings (the
 /// Unity version and revision), then the total file size as a big-endian i64.
@@ -5731,6 +5754,37 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a Fuji RAF image with the given JPEG and CFA-data section
+    /// offset/length pairs; the total is the largest section end.
+    fn raf(jpeg_off: u32, jpeg_len: u32, cfa_off: u32, cfa_len: u32) -> Vec<u8> {
+        let total = (jpeg_off as u64 + jpeg_len as u64)
+            .max(cfa_off as u64 + cfa_len as u64)
+            .max(0x6C) as usize;
+        let mut v = vec![0u8; total];
+        v[0..16].copy_from_slice(b"FUJIFILMCCD-RAW ");
+        v[0x54..0x58].copy_from_slice(&jpeg_off.to_be_bytes());
+        v[0x58..0x5C].copy_from_slice(&jpeg_len.to_be_bytes());
+        v[0x64..0x68].copy_from_slice(&cfa_off.to_be_bytes());
+        v[0x68..0x6C].copy_from_slice(&cfa_len.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn raf_length_uses_max_section_end() {
+        // The CFA raw data at 0x1000..0x5000 is the farthest section.
+        let v = raf(0x800, 0x400, 0x1000, 0x4000);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(raf_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 0x1000 + 0x4000);
+    }
+
+    #[test]
+    fn raf_length_rejects_bad_magic() {
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(raf_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a Unity asset bundle whose header records `size` as its total file

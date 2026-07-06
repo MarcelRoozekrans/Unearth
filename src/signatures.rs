@@ -118,6 +118,8 @@
 //! * [`Extent::Journal`] — systemd journal: the header size plus the arena size.
 //! * [`Extent::UnityFs`] — Unity asset bundle: the total-size field after the
 //!   version strings.
+//! * [`Extent::Raf`] — Fuji RAF raw: the largest section offset-plus-length in
+//!   the header.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -594,6 +596,13 @@ pub enum Extent {
     /// gives the exact end. The magic, a sane version, and terminated version
     /// strings reject a coincidental match.
     UnityFs,
+    /// Fuji RAF raw image (`.raf`) — the raw photo format from Fujifilm's
+    /// mirrorless cameras, a common photo-recovery target. After the 16-byte
+    /// `FUJIFILMCCD-RAW ` magic the header records big-endian u32 offset/length
+    /// pairs for the embedded JPEG (0x54/0x58), the CFA header (0x5C/0x60), and
+    /// the CFA raw data (0x64/0x68); the file ends at the largest offset plus
+    /// length. The 16-byte magic makes false positives negligible.
+    Raf,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2035,6 +2044,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 4 * GB,
     },
     Signature {
+        // Fuji RAF raw image: 16-byte "FUJIFILMCCD-RAW " magic, size from the
+        // section offset/length pairs in the header.
+        name: "Fuji RAF raw image",
+        ext: "raf",
+        magic: b"FUJIFILMCCD-RAW ",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Raf,
+        max_size: 512 * MB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2347,9 +2367,8 @@ pub fn category_of(ext: &str) -> Category {
     match ext {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
-        | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" | "ktx2" => {
-            Category::Image
-        }
+        | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" | "ktx2"
+        | "raf" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" | "dsf" | "dff" | "sf2" | "qoa" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf" => {
