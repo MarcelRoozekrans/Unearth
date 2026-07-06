@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **RF64/BW64 audio is carved** — `scan` now recovers `.rf64` files, the EBU
+  extension of WAV for recordings larger than 4 GiB (broadcast and field
+  recording), where the classic 32-bit RIFF size overflows. The exact length is
+  the 64-bit RIFF size in the `ds64` chunk plus 8, behind the `RF64`/`WAVE`/
+  `ds64` anchors.
 - **E57 point clouds are carved** — `scan` now recovers `.e57` files, the ASTM
   E2807 format for 3D laser-scan and imaging data used in surveying, BIM, and
   robotics. The exact length is the physical-file-length field in the header,

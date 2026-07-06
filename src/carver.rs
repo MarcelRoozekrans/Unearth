@@ -592,6 +592,7 @@ fn file_length(
         Extent::Las => Ok(las_length(source, file_start, limit)?),
         Extent::GodotPck => Ok(godot_pck_length(source, file_start, limit)?),
         Extent::E57 => Ok(e57_length(source, file_start, limit)?),
+        Extent::Rf64 => Ok(rf64_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3568,6 +3569,27 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// RF64 / BW64 (`.rf64`) length. The large-file WAV variant opens with the
+/// `RF64` magic, a `0xFFFFFFFF` size placeholder, the `WAVE` form type, and a
+/// `ds64` chunk whose first field is the true 64-bit RIFF size at offset 0x14.
+/// The file is that size plus the 8-byte `RF64` + size prefix. The `RF64`,
+/// `WAVE`, and `ds64` anchors reject a coincidental match.
+fn rf64_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x1C];
+    if source.read_at(file_start, &mut h)? < 0x1C {
+        return Ok(None);
+    }
+    if &h[0..4] != b"RF64" || &h[8..12] != b"WAVE" || &h[12..16] != b"ds64" {
+        return Ok(None);
+    }
+    let riff_size = u64::from_le_bytes(h[0x14..0x1C].try_into().unwrap());
+    let total = riff_size.saturating_add(8);
+    if total < 0x1C || file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// E57 point cloud (`.e57`) length. The 48-byte header opens with the `ASTM-E57`
 /// signature and stores the physical file length as a little-endian u64 at
 /// offset 0x10 — the exact size. The 8-byte magic makes false positives
@@ -5930,6 +5952,41 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build an RF64 file whose ds64 chunk records `riff_size`; the total is
+    /// `riff_size + 8`.
+    fn rf64(riff_size: u64) -> Vec<u8> {
+        let total = riff_size + 8;
+        let mut v = vec![0u8; total as usize];
+        v[0..4].copy_from_slice(b"RF64");
+        v[4..8].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // size placeholder
+        v[8..12].copy_from_slice(b"WAVE");
+        v[12..16].copy_from_slice(b"ds64");
+        v[16..20].copy_from_slice(&28u32.to_le_bytes()); // ds64 chunk size
+        v[0x14..0x1C].copy_from_slice(&riff_size.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn rf64_length_reads_ds64_riff_size() {
+        let v = rf64(4096);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(rf64_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 8 + 4096);
+    }
+
+    #[test]
+    fn rf64_length_rejects_bad_magic_and_missing_ds64() {
+        // Not an RF64 file.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(rf64_length(&src, 0, src.size).unwrap(), None);
+        // The ds64 chunk must come first; a different chunk is rejected.
+        let mut v = rf64(4096);
+        v[12..16].copy_from_slice(b"fmt ");
+        let (_t, src) = source_of(&v);
+        assert_eq!(rf64_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an E57 point cloud whose header records `total` as its physical
