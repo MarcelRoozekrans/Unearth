@@ -680,6 +680,7 @@ alongside the per-file manifest.
 | tif    | TIFF / BigTIFF / raw (DNG/NEF/ARW)              | IFD / strip-tile walk       |
 | cr2    | Canon CR2 raw image                              | IFD / strip-tile walk       |
 | raf    | Fuji RAF raw image                               | max section offset + length |
+| nii    | NIfTI neuroimaging volume (MRI/fMRI)            | data offset + dims × bitpix |
 | pdf    | PDF document                                     | `%%EOF`                     |
 | djvu   | DjVu document                                    | IFF FORM length             |
 | rtf    | Rich Text Format document                        | outer `{ }` group match     |

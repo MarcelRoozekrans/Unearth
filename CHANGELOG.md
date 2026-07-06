@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **NIfTI neuroimaging volumes are carved** — `scan` now recovers `.nii` files,
+  the standard MRI/fMRI volumetric medical-imaging format used throughout
+  research and clinical pipelines. The exact length is the data offset plus
+  `product(dimensions) × bytes-per-voxel` from the header. Big-endian volumes
+  and unusual headers are skipped rather than mis-sized.
 - **RF64/BW64 audio is carved** — `scan` now recovers `.rf64` files, the EBU
   extension of WAV for recordings larger than 4 GiB (broadcast and field
   recording), where the classic 32-bit RIFF size overflows. The exact length is
