@@ -664,6 +664,7 @@ alongside the per-file manifest.
 | bmp    | BMP image                                        | size field in header        |
 | psd    | Photoshop document (PSD/PSB)                      | header + sections + image   |
 | glb    | glTF binary (3D model)                           | size field in header        |
+| usdc   | USD crate scene (Pixar 3D / Omniverse)          | max section end in TOC      |
 | ico    | Windows icon                                     | image-directory walk        |
 | cur    | Windows cursor                                   | image-directory walk        |
 | ani    | Windows animated cursor                          | RIFF size field             |

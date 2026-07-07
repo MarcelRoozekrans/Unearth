@@ -131,6 +131,8 @@
 //!   chunk.
 //! * [`Extent::Nifti`] — NIfTI neuroimaging volume: the data offset plus
 //!   `product(dims) × bytes-per-voxel`.
+//! * [`Extent::Usdc`] — USD crate scene: the largest section end in the table of
+//!   contents.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -661,6 +663,14 @@ pub enum Extent {
     /// 348, the magic, and sane dimensions/bit depth reject a coincidental match;
     /// big-endian volumes are skipped.
     Nifti,
+    /// USD crate scene (`.usdc`) — Pixar's binary Universal Scene Description,
+    /// the standard for 3D scene interchange in film/VFX and NVIDIA Omniverse.
+    /// The bootstrap header (`PXR-USDC` magic) stores a table-of-contents offset
+    /// as a u64 at 0x10; the table is a u64 section count followed by 32-byte
+    /// sections (a 16-byte name, a u64 start, and a u64 size). The file ends at
+    /// the largest section start-plus-size (or the end of the table). The 8-byte
+    /// magic and a bounded section count reject a coincidental match.
+    Usdc,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2177,6 +2187,17 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Nifti,
         max_size: 4 * GB,
+    },
+    Signature {
+        // USD crate scene (Pixar Universal Scene Description, binary): "PXR-USDC"
+        // magic, size from the table of contents.
+        name: "USD crate scene",
+        ext: "usdc",
+        magic: b"PXR-USDC",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Usdc,
+        max_size: 8 * GB,
     },
     Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
