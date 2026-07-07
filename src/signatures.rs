@@ -137,6 +137,7 @@
 //!   sync marker.
 //! * [`Extent::Hdf5`] — HDF5 data file: the end-of-file address in the
 //!   superblock.
+//! * [`Extent::Dds`] — DDS texture: the header plus the computed mip-chain size.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -690,6 +691,14 @@ pub enum Extent {
     /// (superblock versions 0/1/2/3). Files with a non-8-byte offset size or an
     /// unrecognised superblock version are skipped rather than mis-sized.
     Hdf5,
+    /// DDS texture (`.dds`) — the DirectDraw Surface GPU-texture format used
+    /// throughout games and 3D tools. The 128-byte header (magic `DDS `) records
+    /// the width, height, mip-map count, and pixel format; the file is the header
+    /// plus the mip-chain size, computed from the block size of the compressed
+    /// format (DXT1/3/5, BC4/5) or the bit depth of an uncompressed one.
+    /// DX10-extended, cubemap, and volume textures — whose size needs more than
+    /// this — are skipped rather than mis-sized.
+    Dds,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2241,6 +2250,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 64 * GB,
     },
     Signature {
+        // DDS GPU texture (DirectDraw Surface): "DDS " magic, size = header +
+        // computed mip chain.
+        name: "DDS texture",
+        ext: "dds",
+        magic: b"DDS ",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Dds,
+        max_size: 512 * MB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2554,7 +2574,7 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" | "ktx2"
-        | "raf" | "nii" => Category::Image,
+        | "raf" | "nii" | "dds" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" | "dsf" | "dff" | "sf2" | "qoa" | "rf64" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf" => {

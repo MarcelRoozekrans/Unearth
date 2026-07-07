@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **DDS textures are carved** — `scan` now recovers `.dds` files, the DirectDraw
+  Surface GPU-texture format used throughout games and 3D tools. The exact
+  length is the 128-byte header plus the mip-chain size, computed from the block
+  size of the compressed format (DXT1/3/5, BC4/5) or the bit depth of an
+  uncompressed one. DX10-extended, cubemap, and volume textures are skipped
+  rather than mis-sized.
 - **HDF5 data files are carved** — `scan` now recovers `.h5`/HDF5 files, the
   dominant scientific and machine-learning data container (Keras models,
   scientific datasets, NetCDF-4). The exact length is the end-of-file address in
