@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **ASTC textures are carved** — `scan` now recovers `.astc` files, the
+  Adaptive Scalable Texture Compression format used by modern mobile GPUs and
+  Vulkan pipelines. The 16-byte header records the block footprint and the
+  texel dimensions, and every compressed block is exactly 16 bytes, so the
+  length is `16 + ceil(x/bx) * ceil(y/by) * ceil(z/bz) * 16` — an exact,
+  content-independent size.
 - **DDS textures are carved** — `scan` now recovers `.dds` files, the DirectDraw
   Surface GPU-texture format used throughout games and 3D tools. The exact
   length is the 128-byte header plus the mip-chain size, computed from the block

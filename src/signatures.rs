@@ -138,6 +138,8 @@
 //! * [`Extent::Hdf5`] — HDF5 data file: the end-of-file address in the
 //!   superblock.
 //! * [`Extent::Dds`] — DDS texture: the header plus the computed mip-chain size.
+//! * [`Extent::Astc`] — ASTC texture: the 16-byte header plus 16 bytes per
+//!   block.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -699,6 +701,13 @@ pub enum Extent {
     /// DX10-extended, cubemap, and volume textures — whose size needs more than
     /// this — are skipped rather than mis-sized.
     Dds,
+    /// ASTC texture (`.astc`) — the Adaptive Scalable Texture Compression format
+    /// used by modern mobile GPUs and Vulkan. The 16-byte header (magic
+    /// `0x5CA1AB13`) records the block dimensions and the texture dimensions;
+    /// every ASTC block is exactly 16 bytes, so the file is `16 + block_count ×
+    /// 16` where the block count is `ceil(x/bx) × ceil(y/by) × ceil(z/bz)`. The
+    /// magic and sane block/texture dimensions reject a coincidental match.
+    Astc,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2261,6 +2270,16 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * MB,
     },
     Signature {
+        // ASTC GPU texture: 0x5CA1AB13 magic, size = header + 16 bytes/block.
+        name: "ASTC texture",
+        ext: "astc",
+        magic: &[0x13, 0xAB, 0xA1, 0x5C],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Astc,
+        max_size: 512 * MB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2574,7 +2593,7 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" | "ktx2"
-        | "raf" | "nii" | "dds" => Category::Image,
+        | "raf" | "nii" | "dds" | "astc" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" | "dsf" | "dff" | "sf2" | "qoa" | "rf64" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf" => {

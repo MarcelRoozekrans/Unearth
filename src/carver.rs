@@ -598,6 +598,7 @@ fn file_length(
         Extent::Avro => Ok(avro_length(source, file_start, limit)?),
         Extent::Hdf5 => Ok(hdf5_length(source, file_start, limit)?),
         Extent::Dds => Ok(dds_length(source, file_start, limit)?),
+        Extent::Astc => Ok(astc_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3643,6 +3644,40 @@ fn dds_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(total))
 }
 
+/// ASTC texture (`.astc`) length. The 16-byte header records the block
+/// footprint (`block_x/y/z`) and the texel dimensions (`x/y/z`, each a 24-bit
+/// little-endian field). Every compressed block occupies exactly 16 bytes, so
+/// the payload is `ceil(x/bx) * ceil(y/by) * ceil(z/bz)` blocks laid out after
+/// the header. Block footprints range from 1 to 12 texels per axis.
+fn astc_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 16];
+    if source.read_at(file_start, &mut h)? < 16 {
+        return Ok(None);
+    }
+    if u32::from_le_bytes(h[0..4].try_into().unwrap()) != 0x5CA1_AB13 {
+        return Ok(None);
+    }
+    let (bx, by, bz) = (h[4] as u64, h[5] as u64, h[6] as u64);
+    if !(1..=12).contains(&bx) || !(1..=12).contains(&by) || !(1..=12).contains(&bz) {
+        return Ok(None);
+    }
+    let x = u32::from_le_bytes([h[7], h[8], h[9], 0]) as u64;
+    let y = u32::from_le_bytes([h[10], h[11], h[12], 0]) as u64;
+    let z = u32::from_le_bytes([h[13], h[14], h[15], 0]) as u64;
+    if x == 0 || y == 0 || z == 0 {
+        return Ok(None);
+    }
+    let blocks = x
+        .div_ceil(bx)
+        .saturating_mul(y.div_ceil(by))
+        .saturating_mul(z.div_ceil(bz));
+    let total = 16u64.saturating_add(blocks.saturating_mul(16));
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -6296,6 +6331,53 @@ mod tests {
         let v = dds(b"DX10", 256, 256, 1);
         let (_t, src) = source_of(&v);
         assert_eq!(dds_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build an ASTC file with the given block footprint and 2D dimensions.
+    fn astc(bx: u8, by: u8, x: u32, y: u32) -> Vec<u8> {
+        let bxu = bx as u32;
+        let byu = by as u32;
+        let blocks = x.div_ceil(bxu) * y.div_ceil(byu);
+        let mut v = vec![0u8; 16 + blocks as usize * 16];
+        v[0..4].copy_from_slice(&0x5CA1_AB13u32.to_le_bytes());
+        v[4] = bx;
+        v[5] = by;
+        v[6] = 1; // block_z
+        v[7..10].copy_from_slice(&x.to_le_bytes()[0..3]);
+        v[10..13].copy_from_slice(&y.to_le_bytes()[0..3]);
+        v[13..16].copy_from_slice(&1u32.to_le_bytes()[0..3]); // z = 1
+        v
+    }
+
+    #[test]
+    fn astc_length_computes_block_count() {
+        // 256x256 with 4x4 blocks -> 64*64 = 4096 blocks.
+        let v = astc(4, 4, 256, 256);
+        assert_eq!(v.len() as u64, 16 + 4096 * 16);
+        let (_t, src) = source_of(&v);
+        assert_eq!(
+            astc_length(&src, 0, src.size).unwrap(),
+            Some(v.len() as u64)
+        );
+        // 100x100 with 6x6 blocks -> 17*17 = 289 blocks (ceil rounding).
+        let v = astc(6, 6, 100, 100);
+        assert_eq!(v.len() as u64, 16 + 289 * 16);
+        let (_t, src) = source_of(&v);
+        assert_eq!(
+            astc_length(&src, 0, src.size).unwrap(),
+            Some(v.len() as u64)
+        );
+    }
+
+    #[test]
+    fn astc_length_rejects_bad_magic() {
+        let (_t, src) = source_of(&[0u8; 16]);
+        assert_eq!(astc_length(&src, 0, src.size).unwrap(), None);
+        // Valid magic but a zero block footprint is invalid.
+        let mut v = astc(4, 4, 64, 64);
+        v[4] = 0;
+        let (_t, src) = source_of(&v);
+        assert_eq!(astc_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
