@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **HDF5 data files are carved** — `scan` now recovers `.h5`/HDF5 files, the
+  dominant scientific and machine-learning data container (Keras models,
+  scientific datasets, NetCDF-4). The exact length is the end-of-file address in
+  the superblock, read for superblock versions 0–3 with 8-byte offsets; other
+  offset sizes or versions are skipped rather than mis-sized.
 - **Apache Avro containers are carved** — `scan` now recovers `.avro` files, the
   row-oriented object-container format used throughout modern data engineering
   (Kafka, Hadoop, data lakes). The exact length comes from walking the data

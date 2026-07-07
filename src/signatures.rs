@@ -135,6 +135,8 @@
 //!   contents.
 //! * [`Extent::Avro`] — Avro container: walk the data blocks by their
 //!   sync marker.
+//! * [`Extent::Hdf5`] — HDF5 data file: the end-of-file address in the
+//!   superblock.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -681,6 +683,13 @@ pub enum Extent {
     /// verifying the sync marker after each, to the last valid block. The magic
     /// and the per-block sync-marker check reject a coincidental match.
     Avro,
+    /// HDF5 data file (`.h5`) — the dominant scientific/ML container (Keras
+    /// models, scientific datasets, NetCDF-4). The 8-byte `\x89HDF\r\n\x1a\n`
+    /// signature opens a superblock whose end-of-file address is the exact file
+    /// size, stored as a little-endian offset at a version-dependent position
+    /// (superblock versions 0/1/2/3). Files with a non-8-byte offset size or an
+    /// unrecognised superblock version are skipped rather than mis-sized.
+    Hdf5,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2221,6 +2230,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 8 * GB,
     },
     Signature {
+        // HDF5 scientific/ML data file: "\x89HDF\r\n\x1a\n" magic, size from the
+        // superblock's end-of-file address.
+        name: "HDF5 data file",
+        ext: "h5",
+        magic: &[0x89, 0x48, 0x44, 0x46, 0x0D, 0x0A, 0x1A, 0x0A],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Hdf5,
+        max_size: 64 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2550,7 +2570,7 @@ pub fn category_of(ext: &str) -> Category {
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
-        | "dtb" | "trx" | "img" | "dtbo" | "journal" => Category::System,
+        | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" => Category::System,
         _ => Category::Other,
     }
 }
