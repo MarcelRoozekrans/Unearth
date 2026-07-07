@@ -596,6 +596,7 @@ fn file_length(
         Extent::Nifti => Ok(nifti_length(source, file_start, limit)?),
         Extent::Usdc => Ok(usdc_length(source, file_start, limit)?),
         Extent::Avro => Ok(avro_length(source, file_start, limit)?),
+        Extent::Hdf5 => Ok(hdf5_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3572,6 +3573,37 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
+/// superblock whose end-of-file address is the exact file size, stored as a
+/// little-endian offset. Its position depends on the superblock version: for
+/// versions 0 and 1 the "size of offsets" byte is at 0x0D and the address is at
+/// 0x28 (v0) or 0x2C (v1); for versions 2 and 3 the size byte is at 0x09 and the
+/// address is at 0x1C. Only the common 8-byte offset size is handled; other
+/// offset sizes or superblock versions are skipped rather than mis-sized.
+fn hdf5_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAGIC: [u8; 8] = [0x89, 0x48, 0x44, 0x46, 0x0D, 0x0A, 0x1A, 0x0A];
+    let mut h = [0u8; 56];
+    let n = source.read_at(file_start, &mut h)?;
+    if n < 36 || h[0..8] != MAGIC {
+        return Ok(None);
+    }
+    let (size_of_offsets, eof_off) = match h[8] {
+        0 => (h[0x0D], 0x28usize),
+        1 => (h[0x0D], 0x2Cusize),
+        2 | 3 => (h[0x09], 0x1Cusize),
+        _ => return Ok(None),
+    };
+    // Only 8-byte offsets are handled; the address positions above assume it.
+    if size_of_offsets != 8 || n < eof_off + 8 {
+        return Ok(None);
+    }
+    let total = u64::from_le_bytes(h[eof_off..eof_off + 8].try_into().unwrap());
+    if total < 36 || file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// Read an Avro `long` — a zig-zag variable-length integer — advancing `*pos`.
 /// Returns `None` on a short read, overrun, or an over-long varint.
 fn avro_long(source: &Source, pos: &mut u64, limit: u64) -> Result<Option<i64>> {
@@ -6143,6 +6175,52 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build an HDF5 file of the given superblock version whose end-of-file
+    /// address is `total`.
+    fn hdf5(version: u8, total: u64) -> Vec<u8> {
+        let mut v = vec![0u8; total as usize];
+        v[0..8].copy_from_slice(&[0x89, 0x48, 0x44, 0x46, 0x0D, 0x0A, 0x1A, 0x0A]);
+        v[8] = version;
+        match version {
+            0 => {
+                v[0x0D] = 8; // size of offsets
+                v[0x28..0x30].copy_from_slice(&total.to_le_bytes());
+            }
+            1 => {
+                v[0x0D] = 8;
+                v[0x2C..0x34].copy_from_slice(&total.to_le_bytes());
+            }
+            2 | 3 => {
+                v[0x09] = 8;
+                v[0x1C..0x24].copy_from_slice(&total.to_le_bytes());
+            }
+            _ => {}
+        }
+        v
+    }
+
+    #[test]
+    fn hdf5_length_reads_eof_address() {
+        for &ver in &[0u8, 1, 2, 3] {
+            let v = hdf5(ver, 8192);
+            let total = v.len() as u64;
+            let (_t, src) = source_of(&v);
+            assert_eq!(hdf5_length(&src, 0, src.size).unwrap(), Some(total));
+        }
+    }
+
+    #[test]
+    fn hdf5_length_rejects_bad_magic_and_offset_size() {
+        // Not an HDF5 file.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(hdf5_length(&src, 0, src.size).unwrap(), None);
+        // A non-8-byte offset size is not handled.
+        let mut v = hdf5(0, 8192);
+        v[0x0D] = 4;
+        let (_t, src) = source_of(&v);
+        assert_eq!(hdf5_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Encode an Avro `long` (zig-zag varint) into `v`.
