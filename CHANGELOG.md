@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **Apache Avro containers are carved** — `scan` now recovers `.avro` files, the
+  row-oriented object-container format used throughout modern data engineering
+  (Kafka, Hadoop, data lakes). The exact length comes from walking the data
+  blocks and verifying the file's 16-byte sync marker after each, so recovery
+  ends precisely at the last valid block.
 - **USD crate scenes are carved** — `scan` now recovers `.usdc` files, Pixar's
   binary Universal Scene Description format, the standard for 3D scene
   interchange in film/VFX and NVIDIA Omniverse. The exact length is the largest

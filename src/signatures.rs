@@ -133,6 +133,8 @@
 //!   `product(dims) × bytes-per-voxel`.
 //! * [`Extent::Usdc`] — USD crate scene: the largest section end in the table of
 //!   contents.
+//! * [`Extent::Avro`] — Avro container: walk the data blocks by their
+//!   sync marker.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -671,6 +673,14 @@ pub enum Extent {
     /// the largest section start-plus-size (or the end of the table). The 8-byte
     /// magic and a bounded section count reject a coincidental match.
     Usdc,
+    /// Apache Avro object container (`.avro`) — the row-oriented data format used
+    /// throughout modern data engineering (Kafka, Hadoop, data lakes). After the
+    /// `Obj\x01` magic a metadata map (variable-length "blocks") is followed by a
+    /// 16-byte sync marker, then data blocks — each an object count, a byte size,
+    /// the block data, and a copy of the sync marker. The blocks are walked,
+    /// verifying the sync marker after each, to the last valid block. The magic
+    /// and the per-block sync-marker check reject a coincidental match.
+    Avro,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2197,6 +2207,17 @@ pub static SIGNATURES: &[Signature] = &[
         magic_offset: 0,
         secondary: None,
         extent: Extent::Usdc,
+        max_size: 8 * GB,
+    },
+    Signature {
+        // Apache Avro object container: "Obj\x01" magic, size walked over the
+        // data blocks by the file's sync marker.
+        name: "Apache Avro container",
+        ext: "avro",
+        magic: b"Obj\x01",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Avro,
         max_size: 8 * GB,
     },
     Signature {
