@@ -594,6 +594,7 @@ fn file_length(
         Extent::E57 => Ok(e57_length(source, file_start, limit)?),
         Extent::Rf64 => Ok(rf64_length(source, file_start, limit)?),
         Extent::Nifti => Ok(nifti_length(source, file_start, limit)?),
+        Extent::Usdc => Ok(usdc_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3570,6 +3571,51 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// USD crate scene (`.usdc`) length. The bootstrap header (`PXR-USDC` magic)
+/// stores a table-of-contents offset as a u64 at 0x10. The table is a u64
+/// section count followed by 32-byte sections (a 16-byte name, a u64 start, and
+/// a u64 size). The file ends at the largest section start-plus-size, or the end
+/// of the table itself. The magic and a bounded section count reject a
+/// coincidental match.
+fn usdc_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut boot = [0u8; 0x18];
+    if source.read_at(file_start, &mut boot)? < 0x18 || &boot[0..8] != b"PXR-USDC" {
+        return Ok(None);
+    }
+    let toc_offset = u64::from_le_bytes(boot[0x10..0x18].try_into().unwrap());
+    if toc_offset < 0x20 {
+        return Ok(None);
+    }
+    let toc_pos = file_start.saturating_add(toc_offset);
+    let mut cbuf = [0u8; 8];
+    if toc_pos.saturating_add(8) > limit || source.read_at(toc_pos, &mut cbuf)? < 8 {
+        return Ok(None);
+    }
+    let count = u64::from_le_bytes(cbuf);
+    if count == 0 || count > 4096 {
+        return Ok(None);
+    }
+    // The table itself ends after its count and sections.
+    let mut end = toc_offset
+        .saturating_add(8)
+        .saturating_add(count.saturating_mul(32));
+    let mut pos = toc_pos + 8;
+    for _ in 0..count {
+        let mut sec = [0u8; 32];
+        if pos.saturating_add(32) > limit || source.read_at(pos, &mut sec)? < 32 {
+            return Ok(None);
+        }
+        let start = u64::from_le_bytes(sec[16..24].try_into().unwrap());
+        let size = u64::from_le_bytes(sec[24..32].try_into().unwrap());
+        end = end.max(start.saturating_add(size));
+        pos += 32;
+    }
+    if file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
+}
+
 /// NIfTI-1 neuroimaging volume (`.nii`) length. The 348-byte little-endian
 /// header opens with `sizeof_hdr` = 348 and ends with the `n+1\0` magic at
 /// offset 344. It records the dimensions (a `short[8]` at 0x28, where the first
@@ -5999,6 +6045,41 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a USD crate scene with a table of contents at `toc_offset`
+    /// describing the given `(start, size)` sections; the total is the largest
+    /// section end or the end of the table.
+    fn usdc(toc_offset: u64, sections: &[(u64, u64)]) -> Vec<u8> {
+        let toc_end = toc_offset + 8 + sections.len() as u64 * 32;
+        let max_sec = sections.iter().map(|&(s, z)| s + z).max().unwrap_or(0);
+        let total = toc_end.max(max_sec);
+        let mut v = vec![0u8; total as usize];
+        v[0..8].copy_from_slice(b"PXR-USDC");
+        v[0x10..0x18].copy_from_slice(&toc_offset.to_le_bytes());
+        let tp = toc_offset as usize;
+        v[tp..tp + 8].copy_from_slice(&(sections.len() as u64).to_le_bytes());
+        for (i, &(start, size)) in sections.iter().enumerate() {
+            let e = tp + 8 + i * 32;
+            v[e + 16..e + 24].copy_from_slice(&start.to_le_bytes());
+            v[e + 24..e + 32].copy_from_slice(&size.to_le_bytes());
+        }
+        v
+    }
+
+    #[test]
+    fn usdc_length_uses_toc_and_sections() {
+        // TOC at 0x2000; the table end (0x2048) is past the last section.
+        let v = usdc(0x2000, &[(0x100, 0xF00), (0x1000, 0x800)]);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(usdc_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn usdc_length_rejects_bad_magic() {
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(usdc_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build a NIfTI-1 volume with the given dimensions, bits-per-voxel, and

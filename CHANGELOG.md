@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **USD crate scenes are carved** — `scan` now recovers `.usdc` files, Pixar's
+  binary Universal Scene Description format, the standard for 3D scene
+  interchange in film/VFX and NVIDIA Omniverse. The exact length is the largest
+  section start-plus-size in the file's table of contents, behind the `PXR-USDC`
+  magic.
 - **NIfTI neuroimaging volumes are carved** — `scan` now recovers `.nii` files,
   the standard MRI/fMRI volumetric medical-imaging format used throughout
   research and clinical pipelines. The exact length is the data offset plus
