@@ -595,6 +595,7 @@ fn file_length(
         Extent::Rf64 => Ok(rf64_length(source, file_start, limit)?),
         Extent::Nifti => Ok(nifti_length(source, file_start, limit)?),
         Extent::Usdc => Ok(usdc_length(source, file_start, limit)?),
+        Extent::Avro => Ok(avro_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3571,6 +3572,103 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// Read an Avro `long` — a zig-zag variable-length integer — advancing `*pos`.
+/// Returns `None` on a short read, overrun, or an over-long varint.
+fn avro_long(source: &Source, pos: &mut u64, limit: u64) -> Result<Option<i64>> {
+    let mut result: u64 = 0;
+    let mut shift = 0u32;
+    // A 64-bit varint is at most 10 bytes.
+    for _ in 0..10 {
+        if *pos >= limit {
+            return Ok(None);
+        }
+        let mut b = [0u8; 1];
+        if source.read_at(*pos, &mut b)? < 1 {
+            return Ok(None);
+        }
+        *pos += 1;
+        result |= ((b[0] & 0x7F) as u64) << shift;
+        if b[0] & 0x80 == 0 {
+            // Zig-zag decode.
+            return Ok(Some(((result >> 1) as i64) ^ -((result & 1) as i64)));
+        }
+        shift += 7;
+    }
+    Ok(None)
+}
+
+/// Apache Avro object container (`.avro`) length. After the `Obj\x01` magic a
+/// metadata `map` (a series of length-prefixed blocks terminated by a zero
+/// count) is followed by a 16-byte sync marker, then data blocks — each an
+/// object count, a byte size, the block data, and a copy of the sync marker. The
+/// blocks are walked, verifying the trailing sync marker after each, so the file
+/// ends at the last block whose sync marker matches.
+fn avro_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut magic = [0u8; 4];
+    if source.read_at(file_start, &mut magic)? < 4 || magic != [b'O', b'b', b'j', 1] {
+        return Ok(None);
+    }
+    let mut pos = file_start + 4;
+    // Metadata map: blocks of (count, entries), terminated by a zero count.
+    loop {
+        let Some(count) = avro_long(source, &mut pos, limit)? else {
+            return Ok(None);
+        };
+        if count == 0 {
+            break;
+        }
+        let n = count.unsigned_abs();
+        if n > (1 << 20) {
+            return Ok(None);
+        }
+        if count < 0 {
+            // A negative count is followed by the block's byte size; skip it.
+            let Some(bsize) = avro_long(source, &mut pos, limit)? else {
+                return Ok(None);
+            };
+            if bsize < 0 || !gguf_skip(&mut pos, limit, bsize as u64) {
+                return Ok(None);
+            }
+        } else {
+            // Each entry is a string key and a bytes value: length + payload.
+            for _ in 0..n.saturating_mul(2) {
+                let Some(len) = avro_long(source, &mut pos, limit)? else {
+                    return Ok(None);
+                };
+                if len < 0 || !gguf_skip(&mut pos, limit, len as u64) {
+                    return Ok(None);
+                }
+            }
+        }
+    }
+    // The 16-byte sync marker that follows the metadata and every data block.
+    let mut sync = [0u8; 16];
+    if pos.saturating_add(16) > limit || source.read_at(pos, &mut sync)? < 16 {
+        return Ok(None);
+    }
+    pos += 16;
+    let mut end = pos;
+    // Data blocks: object count, byte size, data, then a copy of the sync marker.
+    loop {
+        if avro_long(source, &mut pos, limit)?.is_none() {
+            break; // no more objects
+        }
+        let Some(bsize) = avro_long(source, &mut pos, limit)? else {
+            break;
+        };
+        if bsize < 0 || !gguf_skip(&mut pos, limit, bsize as u64) {
+            break;
+        }
+        let mut sm = [0u8; 16];
+        if pos.saturating_add(16) > limit || source.read_at(pos, &mut sm)? < 16 || sm != sync {
+            break; // this block runs past the real end
+        }
+        pos += 16;
+        end = pos;
+    }
+    Ok(Some(end - file_start))
+}
+
 /// USD crate scene (`.usdc`) length. The bootstrap header (`PXR-USDC` magic)
 /// stores a table-of-contents offset as a u64 at 0x10. The table is a u64
 /// section count followed by 32-byte sections (a 16-byte name, a u64 start, and
@@ -6045,6 +6143,68 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Encode an Avro `long` (zig-zag varint) into `v`.
+    fn avro_encode_long(v: &mut Vec<u8>, n: i64) {
+        let mut zz = ((n << 1) ^ (n >> 63)) as u64;
+        loop {
+            let mut byte = (zz & 0x7F) as u8;
+            zz >>= 7;
+            if zz != 0 {
+                byte |= 0x80;
+            }
+            v.push(byte);
+            if zz == 0 {
+                break;
+            }
+        }
+    }
+
+    /// Build an Avro object container with the given sync marker and data blocks
+    /// of the given byte sizes; every block carries a valid trailing sync marker.
+    fn avro(sync: [u8; 16], blocks: &[u64]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"Obj\x01");
+        // Metadata map: one block with one entry, then the zero terminator.
+        avro_encode_long(&mut v, 1);
+        avro_encode_long(&mut v, 1);
+        v.push(b'x'); // key "x"
+        avro_encode_long(&mut v, 1);
+        v.push(b'y'); // value "y"
+        avro_encode_long(&mut v, 0);
+        v.extend_from_slice(&sync);
+        for &size in blocks {
+            avro_encode_long(&mut v, 5); // object count
+            avro_encode_long(&mut v, size as i64); // block byte size
+            v.extend(std::iter::repeat(0u8).take(size as usize));
+            v.extend_from_slice(&sync);
+        }
+        v
+    }
+
+    #[test]
+    fn avro_length_walks_data_blocks() {
+        let sync = [0xAB; 16];
+        let v = avro(sync, &[100, 200]);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(avro_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn avro_length_rejects_bad_magic_and_stops_at_bad_sync() {
+        // Not an Avro container.
+        let (_t, src) = source_of(&[0u8; 64]);
+        assert_eq!(avro_length(&src, 0, src.size).unwrap(), None);
+        // Trailing junk after a valid block doesn't carry the sync marker, so
+        // the file ends after the last verified block.
+        let sync = [0xCD; 16];
+        let mut v = avro(sync, &[100]);
+        let good_end = v.len() as u64;
+        v.extend_from_slice(&[0xEE; 64]);
+        let (_t, src) = source_of(&v);
+        assert_eq!(avro_length(&src, 0, src.size).unwrap(), Some(good_end));
     }
 
     /// Build a USD crate scene with a table of contents at `toc_offset`
