@@ -597,6 +597,7 @@ fn file_length(
         Extent::Usdc => Ok(usdc_length(source, file_start, limit)?),
         Extent::Avro => Ok(avro_length(source, file_start, limit)?),
         Extent::Hdf5 => Ok(hdf5_length(source, file_start, limit)?),
+        Extent::Dds => Ok(dds_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3573,6 +3574,75 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// DDS texture (`.dds`) length. The 128-byte header (magic `DDS `) records the
+/// height (0x0C), width (0x10), mip-map count (0x1C), and pixel format (`ddspf`
+/// at 0x4C: flags at 0x50, FourCC at 0x54, bit count at 0x58). The file is the
+/// header plus the mip-chain size: for block-compressed formats (DXT1/3/5,
+/// BC4/5) each level is `ceil(w/4) × ceil(h/4) × block_bytes`; for uncompressed
+/// RGB, `w × h × (bits/8)`. DX10-extended, cubemap, and volume textures, and
+/// unknown formats, are skipped rather than mis-sized.
+fn dds_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 128];
+    if source.read_at(file_start, &mut h)? < 128 || &h[0..4] != b"DDS " {
+        return Ok(None);
+    }
+    let u32_at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap()) as u64;
+    // dwSize (124) and ddspf.dwSize (32) are fixed.
+    if u32_at(4) != 124 || u32_at(76) != 32 {
+        return Ok(None);
+    }
+    let (height, width) = (u32_at(12), u32_at(16));
+    if !(1..=65536).contains(&width) || !(1..=65536).contains(&height) {
+        return Ok(None);
+    }
+    let mips = u32_at(28).max(1);
+    if mips > 20 {
+        return Ok(None);
+    }
+    // Reject cubemaps (DDSCAPS2_CUBEMAP) and volumes (DDSCAPS2_VOLUME).
+    if u32_at(112) & (0x200 | 0x20_0000) != 0 {
+        return Ok(None);
+    }
+    let pf_flags = u32_at(80);
+    // (block dimension, block bytes, bytes per pixel) — block==4 for compressed.
+    let (block, block_bytes, bpp): (u64, u64, u64) = if pf_flags & 0x4 != 0 {
+        // DDPF_FOURCC.
+        match &h[84..88] {
+            b"DXT1" => (4, 8, 0),
+            b"DXT2" | b"DXT3" | b"DXT4" | b"DXT5" => (4, 16, 0),
+            b"ATI1" | b"BC4U" | b"BC4S" => (4, 8, 0),
+            b"ATI2" | b"BC5U" | b"BC5S" => (4, 16, 0),
+            _ => return Ok(None), // DX10 or unknown FourCC
+        }
+    } else if pf_flags & 0x40 != 0 {
+        // DDPF_RGB (uncompressed).
+        let bitcount = u32_at(88);
+        if bitcount == 0 || bitcount % 8 != 0 || bitcount > 128 {
+            return Ok(None);
+        }
+        (1, 0, bitcount / 8)
+    } else {
+        return Ok(None);
+    };
+    let mut total = 128u64;
+    for i in 0..mips {
+        let w = (width >> i).max(1);
+        let hh = (height >> i).max(1);
+        let level = if block == 4 {
+            w.div_ceil(4)
+                .saturating_mul(hh.div_ceil(4))
+                .saturating_mul(block_bytes)
+        } else {
+            w.saturating_mul(hh).saturating_mul(bpp)
+        };
+        total = total.saturating_add(level);
+    }
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -6175,6 +6245,57 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a block-compressed DDS texture with the given FourCC, dimensions,
+    /// and mip count; the total is the 128-byte header plus the mip chain.
+    fn dds(fourcc: &[u8], width: u32, height: u32, mips: u32) -> Vec<u8> {
+        let block_bytes: u64 = match fourcc {
+            b"DXT1" | b"ATI1" | b"BC4U" => 8,
+            _ => 16,
+        };
+        let mut data = 0u64;
+        for i in 0..mips.max(1) {
+            let w = (width >> i).max(1) as u64;
+            let hh = (height >> i).max(1) as u64;
+            data += w.div_ceil(4) * hh.div_ceil(4) * block_bytes;
+        }
+        let total = 128 + data;
+        let mut v = vec![0u8; total as usize];
+        v[0..4].copy_from_slice(b"DDS ");
+        v[4..8].copy_from_slice(&124u32.to_le_bytes());
+        v[12..16].copy_from_slice(&height.to_le_bytes());
+        v[16..20].copy_from_slice(&width.to_le_bytes());
+        v[28..32].copy_from_slice(&mips.to_le_bytes());
+        v[76..80].copy_from_slice(&32u32.to_le_bytes()); // ddspf.dwSize
+        v[80..84].copy_from_slice(&0x4u32.to_le_bytes()); // DDPF_FOURCC
+        v[84..88].copy_from_slice(fourcc);
+        v
+    }
+
+    #[test]
+    fn dds_length_computes_compressed_mip_chain() {
+        // DXT1 256x256 with a full mip chain (9 levels).
+        let v = dds(b"DXT1", 256, 256, 9);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(dds_length(&src, 0, src.size).unwrap(), Some(total));
+        // DXT5 128x128, single level.
+        let v = dds(b"DXT5", 128, 128, 1);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(dds_length(&src, 0, src.size).unwrap(), Some(total));
+    }
+
+    #[test]
+    fn dds_length_rejects_bad_magic_and_dx10() {
+        // Not a DDS texture.
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(dds_length(&src, 0, src.size).unwrap(), None);
+        // A DX10-extended format needs the extra header; it is skipped here.
+        let v = dds(b"DX10", 256, 256, 1);
+        let (_t, src) = source_of(&v);
+        assert_eq!(dds_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
