@@ -593,6 +593,7 @@ fn file_length(
         Extent::GodotPck => Ok(godot_pck_length(source, file_start, limit)?),
         Extent::E57 => Ok(e57_length(source, file_start, limit)?),
         Extent::Rf64 => Ok(rf64_length(source, file_start, limit)?),
+        Extent::Nifti => Ok(nifti_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3569,6 +3570,52 @@ fn gguf_skip_value(source: &Source, pos: &mut u64, limit: u64, vtype: u32) -> Re
     }
 }
 
+/// NIfTI-1 neuroimaging volume (`.nii`) length. The 348-byte little-endian
+/// header opens with `sizeof_hdr` = 348 and ends with the `n+1\0` magic at
+/// offset 344. It records the dimensions (a `short[8]` at 0x28, where the first
+/// entry is the dimension count), the bits per voxel (a short at 0x48), and the
+/// data offset (a float at 0x6C). The file is the data offset plus
+/// `product(dims) × bytes-per-voxel`. `sizeof_hdr`, the magic, and sane
+/// dimensions and bit depth reject a coincidental match; big-endian volumes
+/// (whose `sizeof_hdr` reads wrong here) are skipped.
+fn nifti_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 352];
+    if source.read_at(file_start, &mut h)? < 352 {
+        return Ok(None);
+    }
+    // Little-endian sizeof_hdr of 348 and the single-file magic at offset 344.
+    if i32::from_le_bytes(h[0..4].try_into().unwrap()) != 348 || &h[344..348] != b"n+1\0" {
+        return Ok(None);
+    }
+    let i16_at = |o: usize| i16::from_le_bytes(h[o..o + 2].try_into().unwrap());
+    let ndim = i16_at(40);
+    if !(1..=7).contains(&ndim) {
+        return Ok(None);
+    }
+    let mut nvoxels: u64 = 1;
+    for i in 1..=ndim as usize {
+        let d = i16_at(40 + 2 * i);
+        if d < 1 {
+            return Ok(None);
+        }
+        nvoxels = nvoxels.saturating_mul(d as u64);
+    }
+    let bitpix = i16_at(72);
+    if bitpix <= 0 || bitpix % 8 != 0 || bitpix > 256 {
+        return Ok(None);
+    }
+    let vox_offset = f32::from_le_bytes(h[108..112].try_into().unwrap());
+    if !vox_offset.is_finite() || !(348.0..=1_073_741_824.0).contains(&vox_offset) {
+        return Ok(None);
+    }
+    let data_size = nvoxels.saturating_mul((bitpix / 8) as u64);
+    let total = (vox_offset as u64).saturating_add(data_size);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// RF64 / BW64 (`.rf64`) length. The large-file WAV variant opens with the
 /// `RF64` magic, a `0xFFFFFFFF` size placeholder, the `WAVE` form type, and a
 /// `ds64` chunk whose first field is the true 64-bit RIFF size at offset 0x14.
@@ -5952,6 +5999,45 @@ mod tests {
             file_length(&src, sig, 0, src.size, &mut Vec::new()).unwrap(),
             Some(end)
         );
+    }
+
+    /// Build a NIfTI-1 volume with the given dimensions, bits-per-voxel, and
+    /// data offset; the total is the offset plus `product(dims) × bitpix/8`.
+    fn nifti(dims: &[i16], bitpix: i16, vox_offset: u32) -> Vec<u8> {
+        let nvoxels: u64 = dims.iter().map(|&d| d as u64).product();
+        let total = vox_offset as u64 + nvoxels * (bitpix as u64 / 8);
+        let mut v = vec![0u8; total as usize];
+        v[0..4].copy_from_slice(&348i32.to_le_bytes()); // sizeof_hdr
+        v[40..42].copy_from_slice(&(dims.len() as i16).to_le_bytes()); // dim[0] = ndim
+        for (i, &d) in dims.iter().enumerate() {
+            v[42 + i * 2..44 + i * 2].copy_from_slice(&d.to_le_bytes()); // dim[1..]
+        }
+        v[72..74].copy_from_slice(&bitpix.to_le_bytes());
+        v[108..112].copy_from_slice(&(vox_offset as f32).to_le_bytes());
+        v[344..348].copy_from_slice(b"n+1\0");
+        v
+    }
+
+    #[test]
+    fn nifti_length_computes_volume() {
+        // A 64 x 64 x 40 int16 volume; data starts at 352.
+        let v = nifti(&[64, 64, 40], 16, 352);
+        let total = v.len() as u64;
+        let (_t, src) = source_of(&v);
+        assert_eq!(nifti_length(&src, 0, src.size).unwrap(), Some(total));
+        assert_eq!(total, 352 + 64 * 64 * 40 * 2);
+    }
+
+    #[test]
+    fn nifti_length_rejects_bad_magic_and_header() {
+        // Not a NIfTI volume.
+        let (_t, src) = source_of(&[0u8; 400]);
+        assert_eq!(nifti_length(&src, 0, src.size).unwrap(), None);
+        // A wrong sizeof_hdr (e.g. a big-endian volume) is rejected.
+        let mut v = nifti(&[64, 64, 40], 16, 352);
+        v[0..4].copy_from_slice(&100i32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(nifti_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an RF64 file whose ds64 chunk records `riff_size`; the total is

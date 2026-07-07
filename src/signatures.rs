@@ -129,6 +129,8 @@
 //! * [`Extent::E57`] — E57 point cloud: the physical file length in the header.
 //! * [`Extent::Rf64`] — RF64/BW64 audio: the 64-bit RIFF size from the `ds64`
 //!   chunk.
+//! * [`Extent::Nifti`] — NIfTI neuroimaging volume: the data offset plus
+//!   `product(dims) × bytes-per-voxel`.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -650,6 +652,15 @@ pub enum Extent {
     /// the true 64-bit RIFF size at offset 0x14; the file is that size plus 8.
     /// The three anchor strings reject a coincidental match.
     Rf64,
+    /// NIfTI-1 neuroimaging volume (`.nii`) — the standard format for MRI/fMRI
+    /// and other volumetric medical imaging, ubiquitous in research and clinical
+    /// pipelines. The 348-byte little-endian header ends with the `n+1\0` magic
+    /// at offset 344 and records the dimensions (a `short[8]` at 0x28), the bits
+    /// per voxel (0x48), and the data offset (a float at 0x6C). The file is the
+    /// data offset plus `product(dims) × bytes-per-voxel`. The `sizeof_hdr` of
+    /// 348, the magic, and sane dimensions/bit depth reject a coincidental match;
+    /// big-endian volumes are skipped.
+    Nifti,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2157,6 +2168,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 64 * GB,
     },
     Signature {
+        // NIfTI-1 neuroimaging volume: "n+1\0" magic at offset 344, size from
+        // the dimensions and bit depth in the header.
+        name: "NIfTI neuroimaging volume",
+        ext: "nii",
+        magic: b"n+1\0",
+        magic_offset: 344,
+        secondary: None,
+        extent: Extent::Nifti,
+        max_size: 4 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2470,7 +2492,7 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" | "ktx2"
-        | "raf" => Category::Image,
+        | "raf" | "nii" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" | "dsf" | "dff" | "sf2" | "qoa" | "rf64" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf" => {
