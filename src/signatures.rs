@@ -146,6 +146,8 @@
 //!   superblock times the block size.
 //! * [`Extent::Ktx1`] — KTX (v1) GPU texture: the header plus the mip levels,
 //!   each sized by its own explicit `imageSize` field.
+//! * [`Extent::Exr`] — OpenEXR image: the chunk offset table (whose first entry
+//!   reveals its own length) walked to the last chunk.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -740,6 +742,16 @@ pub enum Extent {
     /// layouts, whose per-face padding is ambiguous, are skipped). Multi-byte
     /// fields honour the header's endianness flag.
     Ktx1,
+    /// OpenEXR image (`.exr`) — the ILM/Academy high-dynamic-range format that
+    /// is the standard for film and VFX compositing. After the 4-byte magic and
+    /// a version/flags word comes a list of attributes terminated by an empty
+    /// name, then a chunk offset table of one `u64` per scanline block. The
+    /// table's first entry equals `header_end + count × 8`, which reveals the
+    /// table length without decoding the compression; the last entry locates
+    /// the final chunk, whose own `dataSize` field gives the file end. Only
+    /// single-part scanline images are sized — tiled, deep, and multi-part
+    /// files (flagged in the version word) are skipped rather than mis-sized.
+    Exr,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2346,6 +2358,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 2 * GB,
     },
     Signature {
+        // OpenEXR image: 0x76 0x2f 0x31 0x01 magic, size from the chunk offset
+        // table walked to the last chunk.
+        name: "OpenEXR image",
+        ext: "exr",
+        magic: &[0x76, 0x2F, 0x31, 0x01],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Exr,
+        max_size: 2 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2659,7 +2682,7 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" | "ktx2"
-        | "raf" | "nii" | "dds" | "astc" | "ktx" => Category::Image,
+        | "raf" | "nii" | "dds" | "astc" | "ktx" | "exr" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" | "dsf" | "dff" | "sf2" | "qoa" | "rf64" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf" => {
