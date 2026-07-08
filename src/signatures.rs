@@ -154,6 +154,8 @@
 //!   64-entry lump directory.
 //! * [`Extent::Qoi`] — QOI image: the chunk stream decoded to the pixel count,
 //!   then the 8-byte end marker.
+//! * [`Extent::Rpm`] — RPM package: the lead and padded signature header plus
+//!   the header/payload size recorded in the signature.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -782,6 +784,13 @@ pub enum Extent {
     /// decoded to count exactly `width × height` pixels — locating the end
     /// without searching for the marker, which may itself appear in pixel data.
     Qoi,
+    /// RPM package (`.rpm`) — the package format of Fedora, RHEL, openSUSE, and
+    /// related distributions. After a 96-byte lead comes a signature header (an
+    /// 8-byte-padded `header` structure) whose `RPMSIGTAG_SIZE`/`LONGSIZE` tag
+    /// records the combined size of the main header and the payload. The file
+    /// length is `96 + padded signature header + that size`. The `0xEDABEEDB`
+    /// lead magic and the `0x8EADE8` header magic reject a coincidental match.
+    Rpm,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2432,6 +2441,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * MB,
     },
     Signature {
+        // RPM package: 0xEDABEEDB lead magic, size from the lead plus the padded
+        // signature header plus the RPMSIGTAG_SIZE header/payload size.
+        name: "RPM package",
+        ext: "rpm",
+        magic: &[0xED, 0xAB, 0xEE, 0xDB],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Rpm,
+        max_size: 8 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2758,7 +2778,9 @@ pub fn category_of(ext: &str) -> Category {
         | "xls" | "ppt" | "msg" | "pst" | "ole" => Category::Document,
         "zip" | "7z" | "rar" | "cab" | "ar" | "tar" | "cpio" | "zst" | "lz4" | "jar" | "pak"
         | "zim" | "unity3d" | "vpk" | "pck" => Category::Archive,
-        "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
+        "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" | "rpm" => {
+            Category::Executable
+        }
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
         | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" => Category::System,

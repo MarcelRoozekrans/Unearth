@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **RPM packages are carved** — `scan` now recovers `.rpm` files, the package
+  format of Fedora, RHEL, openSUSE, and related distributions. After a 96-byte
+  lead comes the signature header (an 8-byte-padded `header` structure) whose
+  `RPMSIGTAG_SIZE`/`LONGSIZE` tag records the combined size of the main header
+  and payload, so the exact file length is `96 + padded signature header +
+  that size`. The `0xEDABEEDB` lead magic and `0x8EADE8` header magic reject a
+  coincidental match; packages whose signature omits the size tag are skipped
+  rather than mis-sized.
 - **QOI images are carved** — `scan` now recovers `.qoi` files, the "Quite OK
   Image" format (2021), a fast lossless codec adopted across game engines and
   image tooling. Each chunk's byte size is fixed by its tag alone (independent

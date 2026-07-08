@@ -606,6 +606,7 @@ fn file_length(
         Extent::Mcap => Ok(mcap_length(source, file_start, limit)?),
         Extent::Bsp => Ok(bsp_length(source, file_start, limit)?),
         Extent::Qoi => Ok(qoi_length(source, file_start, limit)?),
+        Extent::Rpm => Ok(rpm_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4068,6 +4069,74 @@ fn qoi_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(end))
 }
 
+/// RPM package (`.rpm`) length. After a 96-byte lead comes the signature
+/// header: a 16-byte intro (`0x8EADE8` magic, a version byte, 4 reserved bytes,
+/// a big-endian index count and data-store size), then `count` 16-byte index
+/// entries and the data store, the whole thing padded up to an 8-byte boundary.
+/// The signature's `RPMSIGTAG_SIZE` (1000, `INT32`) or `RPMSIGTAG_LONGSIZE`
+/// (270, `INT64`) tag holds the combined size of the main header and payload,
+/// so the file length is `96 + padded signature header + that size`.
+fn rpm_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const LEAD: usize = 96;
+    let mut buf = vec![0u8; 128 * 1024];
+    let n = source.read_at(file_start, &mut buf)?;
+    if n < LEAD + 16 || buf[0..4] != [0xED, 0xAB, 0xEE, 0xDB] {
+        return Ok(None);
+    }
+    // Signature header intro at the end of the lead.
+    if buf[LEAD..LEAD + 3] != [0x8E, 0xAD, 0xE8] {
+        return Ok(None);
+    }
+    let be32 = |o: usize| u32::from_be_bytes(buf[o..o + 4].try_into().unwrap());
+    let nindex = be32(LEAD + 8) as usize;
+    let hsize = be32(LEAD + 12) as usize;
+    if nindex == 0 || nindex > 65536 {
+        return Ok(None);
+    }
+    let index_start = LEAD + 16;
+    let data_start = index_start + nindex * 16;
+    // The whole signature header must be within the buffer to read the tag.
+    if data_start.saturating_add(hsize) > n {
+        return Ok(None);
+    }
+    let sig_hdr_size = 16 + nindex * 16 + hsize;
+    let padded = (sig_hdr_size + 7) & !7usize;
+    // Find RPMSIGTAG_SIZE (INT32) / RPMSIGTAG_LONGSIZE (INT64), preferring the
+    // 64-bit form when both are present.
+    let mut size32: Option<u64> = None;
+    let mut size64: Option<u64> = None;
+    for i in 0..nindex {
+        let e = index_start + i * 16;
+        let tag = be32(e);
+        let typ = be32(e + 4);
+        let off = be32(e + 8) as usize;
+        if tag == 270 && typ == 5 {
+            let p = data_start + off;
+            if p + 8 > n {
+                return Ok(None);
+            }
+            size64 = Some(u64::from_be_bytes(buf[p..p + 8].try_into().unwrap()));
+        } else if tag == 1000 && typ == 4 {
+            let p = data_start + off;
+            if p + 4 > n {
+                return Ok(None);
+            }
+            size32 = Some(be32(p) as u64);
+        }
+    }
+    let payload_and_header = match size64.or(size32) {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    let total = (LEAD as u64)
+        .saturating_add(padded as u64)
+        .saturating_add(payload_and_header);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7103,6 +7172,49 @@ mod tests {
         *v.last_mut().unwrap() = 0;
         let (_t, src) = source_of(&v);
         assert_eq!(qoi_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build an RPM package: a 96-byte lead, a signature header carrying a
+    /// single `RPMSIGTAG_SIZE` (tag 1000) entry whose value is `size_val`, then
+    /// `size_val` bytes standing in for the main header and payload. The
+    /// signature header is padded to an 8-byte boundary.
+    fn rpm(tag: u32, size_val: u32) -> Vec<u8> {
+        let mut v = vec![0u8; 96];
+        v[0..4].copy_from_slice(&[0xED, 0xAB, 0xEE, 0xDB]);
+        let mut sig = Vec::new();
+        sig.extend_from_slice(&[0x8E, 0xAD, 0xE8, 0x01, 0, 0, 0, 0]);
+        sig.extend_from_slice(&1u32.to_be_bytes()); // nindex
+        sig.extend_from_slice(&4u32.to_be_bytes()); // hsize (one INT32 value)
+        sig.extend_from_slice(&tag.to_be_bytes()); // tag
+        sig.extend_from_slice(&4u32.to_be_bytes()); // type INT32
+        sig.extend_from_slice(&0u32.to_be_bytes()); // offset
+        sig.extend_from_slice(&1u32.to_be_bytes()); // count
+        sig.extend_from_slice(&size_val.to_be_bytes()); // data store
+        while sig.len() % 8 != 0 {
+            sig.push(0);
+        }
+        v.extend_from_slice(&sig);
+        v.extend_from_slice(&vec![0u8; size_val as usize]);
+        v
+    }
+
+    #[test]
+    fn rpm_length_uses_signature_size() {
+        // sig header = 16 intro + 16 index + 4 data = 36, padded to 40.
+        let v = rpm(1000, 100);
+        assert_eq!(v.len() as u64, 96 + 40 + 100);
+        let (_t, src) = source_of(&v);
+        assert_eq!(rpm_length(&src, 0, src.size).unwrap(), Some(96 + 40 + 100));
+    }
+
+    #[test]
+    fn rpm_length_rejects_bad_magic_and_missing_size_tag() {
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(rpm_length(&src, 0, src.size).unwrap(), None);
+        // A signature header without the size tag cannot be sized.
+        let v = rpm(1234, 100);
+        let (_t, src) = source_of(&v);
+        assert_eq!(rpm_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
