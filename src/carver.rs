@@ -605,6 +605,7 @@ fn file_length(
         Extent::Exr => Ok(exr_length(source, file_start, limit)?),
         Extent::Mcap => Ok(mcap_length(source, file_start, limit)?),
         Extent::Bsp => Ok(bsp_length(source, file_start, limit)?),
+        Extent::Qoi => Ok(qoi_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3996,6 +3997,77 @@ fn bsp_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(end))
 }
 
+/// QOI image (`.qoi`) length. The 14-byte header gives the width, height,
+/// channel count, and colourspace; the pixel data is a stream of chunks and an
+/// 8-byte end marker. Each chunk's byte size is fixed by its tag alone (RGB is
+/// 4 bytes, RGBA 5, the 2-bit-tagged INDEX/DIFF/LUMA/RUN chunks 1–2), so the
+/// stream can be decoded — advancing by each chunk's size and counting the
+/// pixels it covers — until exactly `width × height` pixels are produced. That
+/// locates the end without searching for the marker (which can appear in pixel
+/// data); the trailing marker is then verified. Bytes are consumed through a
+/// sliding window so large images need no full-file buffer.
+fn qoi_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut hdr = [0u8; 14];
+    if source.read_at(file_start, &mut hdr)? < 14 || &hdr[0..4] != b"qoif" {
+        return Ok(None);
+    }
+    let width = u32::from_be_bytes(hdr[4..8].try_into().unwrap()) as u64;
+    let height = u32::from_be_bytes(hdr[8..12].try_into().unwrap()) as u64;
+    let channels = hdr[12];
+    let colorspace = hdr[13];
+    if width == 0 || height == 0 || !(3..=4).contains(&channels) || colorspace > 1 {
+        return Ok(None);
+    }
+    let total_pixels = width.saturating_mul(height);
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut win_start = 14u64;
+    let mut win_len = 0usize;
+    let mut parse = 14u64;
+    let mut pixels = 0u64;
+    while pixels < total_pixels {
+        // Keep at least a full 5-byte chunk buffered ahead of the cursor.
+        if parse < win_start || parse + 5 > win_start + win_len as u64 {
+            win_start = parse;
+            win_len = source.read_at(file_start + parse, &mut buf)?;
+        }
+        let idx = (parse - win_start) as usize;
+        if idx >= win_len {
+            return Ok(None); // truncated: no tag byte
+        }
+        let tag = buf[idx];
+        let (chunk_len, npix): (u64, u64) = if tag == 0xFE {
+            (4, 1) // QOI_OP_RGB
+        } else if tag == 0xFF {
+            (5, 1) // QOI_OP_RGBA
+        } else {
+            match tag & 0xC0 {
+                0x00 => (1, 1),                      // QOI_OP_INDEX
+                0x40 => (1, 1),                      // QOI_OP_DIFF
+                0x80 => (2, 1),                      // QOI_OP_LUMA
+                _ => (1, ((tag & 0x3F) as u64) + 1), // QOI_OP_RUN
+            }
+        };
+        if idx + chunk_len as usize > win_len {
+            return Ok(None); // truncated mid-chunk
+        }
+        parse = parse.saturating_add(chunk_len);
+        pixels = pixels.saturating_add(npix);
+        if file_start.saturating_add(parse) > limit {
+            return Ok(None);
+        }
+    }
+    // The pixel stream is followed by the 8-byte end marker.
+    let mut marker = [0u8; 8];
+    if source.read_at(file_start + parse, &mut marker)? < 8 || marker != [0, 0, 0, 0, 0, 0, 0, 1] {
+        return Ok(None);
+    }
+    let end = parse.saturating_add(8);
+    if file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -6971,6 +7043,66 @@ mod tests {
         v[4..8].copy_from_slice(&5i32.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(bsp_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a QOI image (4-channel) whose pixel data is `ops` (each a complete
+    /// chunk), followed by the 8-byte end marker.
+    fn qoi(width: u32, height: u32, ops: &[u8]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"qoif");
+        v.extend_from_slice(&width.to_be_bytes());
+        v.extend_from_slice(&height.to_be_bytes());
+        v.push(4); // channels
+        v.push(0); // colourspace
+        v.extend_from_slice(ops);
+        v.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 1]); // end marker
+        v
+    }
+
+    #[test]
+    fn qoi_length_decodes_chunk_stream() {
+        // 2x2 image as four QOI_OP_RGB chunks (4 bytes each).
+        let mut ops = Vec::new();
+        for _ in 0..4 {
+            ops.extend_from_slice(&[0xFE, 1, 2, 3]);
+        }
+        let v = qoi(2, 2, &ops);
+        assert_eq!(v.len() as u64, 14 + 16 + 8);
+        let (_t, src) = source_of(&v);
+        assert_eq!(qoi_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+        // 10x1 image as one RGB chunk plus a QOI_OP_RUN of 9 pixels.
+        let ops = [0xFE, 4, 5, 6, 0xC0 | 8];
+        let v = qoi(10, 1, &ops);
+        let (_t, src) = source_of(&v);
+        assert_eq!(qoi_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+    }
+
+    #[test]
+    fn qoi_length_spans_the_sliding_window() {
+        // 20000 single RGB pixels (~80 KB of data) forces a window refill.
+        let mut ops = Vec::new();
+        for _ in 0..20_000 {
+            ops.extend_from_slice(&[0xFE, 0, 0, 0]);
+        }
+        let v = qoi(20_000, 1, &ops);
+        assert!(v.len() > 64 * 1024);
+        let (_t, src) = source_of(&v);
+        assert_eq!(qoi_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+    }
+
+    #[test]
+    fn qoi_length_rejects_bad_magic_and_marker() {
+        let (_t, src) = source_of(&[0u8; 14]);
+        assert_eq!(qoi_length(&src, 0, src.size).unwrap(), None);
+        // Correct pixel count but a corrupted end marker.
+        let mut ops = Vec::new();
+        for _ in 0..4 {
+            ops.extend_from_slice(&[0xFE, 1, 2, 3]);
+        }
+        let mut v = qoi(2, 2, &ops);
+        *v.last_mut().unwrap() = 0;
+        let (_t, src) = source_of(&v);
+        assert_eq!(qoi_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

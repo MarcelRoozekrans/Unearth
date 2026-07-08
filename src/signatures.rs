@@ -152,6 +152,8 @@
 //!   plus the trailing magic.
 //! * [`Extent::Bsp`] — Source-engine BSP map: the furthest lump end in the
 //!   64-entry lump directory.
+//! * [`Extent::Qoi`] — QOI image: the chunk stream decoded to the pixel count,
+//!   then the 8-byte end marker.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -772,6 +774,14 @@ pub enum Extent {
     /// than the 1036-byte header). The `VBSP` magic and a sane version reject a
     /// coincidental match.
     Bsp,
+    /// QOI image (`.qoi`) — the "Quite OK Image" format (2021), a fast lossless
+    /// codec adopted across game engines and image tooling. The 14-byte header
+    /// (`qoif` magic, width/height, channels, colourspace) is followed by a
+    /// stream of chunks and an 8-byte end marker. Because every chunk's byte
+    /// size is fixed by its tag (independent of pixel values), the stream can be
+    /// decoded to count exactly `width × height` pixels — locating the end
+    /// without searching for the marker, which may itself appear in pixel data.
+    Qoi,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2411,6 +2421,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 2 * GB,
     },
     Signature {
+        // QOI image: "qoif" magic, size from decoding the chunk stream to the
+        // pixel count plus the 8-byte end marker.
+        name: "QOI image",
+        ext: "qoi",
+        magic: b"qoif",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Qoi,
+        max_size: 512 * MB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2724,7 +2745,7 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" | "ktx2"
-        | "raf" | "nii" | "dds" | "astc" | "ktx" | "exr" => Category::Image,
+        | "raf" | "nii" | "dds" | "astc" | "ktx" | "exr" | "qoi" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" | "dsf" | "dff" | "sf2" | "qoa" | "rf64" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf" => {
