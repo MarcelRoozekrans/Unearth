@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **OpenEXR images are carved** — `scan` now recovers `.exr` files, the
+  ILM/Academy high-dynamic-range format that is the standard for film and VFX
+  compositing. After the header's attribute list comes a chunk offset table
+  whose first entry equals `header_end + count × 8` — revealing the table's
+  length without decoding the compression — and whose last entry locates the
+  final chunk, whose own `dataSize` field gives the exact file end. Only
+  single-part scanline images are sized; tiled, deep, and multi-part files
+  (flagged in the version word) are skipped rather than mis-sized.
 - **KTX (v1) textures are carved** — `scan` now recovers `.ktx` files, the
   original Khronos GPU-texture container (WebGL/three.js, Android GPU textures,
   older glTF). After the 12-byte «KTX 11» identifier and a fixed 64-byte header

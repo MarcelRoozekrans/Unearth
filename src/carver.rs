@@ -602,6 +602,7 @@ fn file_length(
         Extent::Glb => Ok(glb_length(source, file_start, limit)?),
         Extent::Erofs => Ok(erofs_length(source, file_start, limit)?),
         Extent::Ktx1 => Ok(ktx1_length(source, file_start, limit)?),
+        Extent::Exr => Ok(exr_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3825,6 +3826,99 @@ fn ktx1_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
     Ok(Some(pos))
 }
 
+/// OpenEXR image (`.exr`) length. After the 4-byte magic comes a version/flags
+/// word, then a list of attributes (`name\0type\0`, a `u32` size, and that many
+/// value bytes) terminated by an empty name. The chunk offset table follows:
+/// one `u64` file offset per scanline block. Its first entry equals
+/// `header_end + count × 8`, which reveals the table's length without decoding
+/// the compression, and its last entry points at the final chunk, whose
+/// `dataSize` field (after a 4-byte `y` coordinate) gives the file end. Only
+/// single-part scanline images are handled; the tiled (`0x200`), deep
+/// (`0x800`), and multi-part (`0x1000`) flags in the version word cause a skip.
+fn exr_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut head = [0u8; 8];
+    if source.read_at(file_start, &mut head)? < 8 || head[0..4] != [0x76, 0x2F, 0x31, 0x01] {
+        return Ok(None);
+    }
+    let version_word = u32::from_le_bytes(head[4..8].try_into().unwrap());
+    if version_word & 0xFF != 2 {
+        return Ok(None);
+    }
+    // Tiled, deep (non-image), and multi-part files have different chunk layouts.
+    if version_word & (0x200 | 0x800 | 0x1000) != 0 {
+        return Ok(None);
+    }
+    // Parse the attribute list only far enough to find where the header ends.
+    let mut buf = vec![0u8; 64 * 1024];
+    let n = source.read_at(file_start, &mut buf)?;
+    let find_nul = |from: usize| -> Option<usize> {
+        buf[from..n].iter().position(|&b| b == 0).map(|i| from + i)
+    };
+    let mut p = 8usize;
+    let mut header_end = None;
+    for _ in 0..1000 {
+        if p >= n {
+            break;
+        }
+        if buf[p] == 0 {
+            header_end = Some(p + 1);
+            break;
+        }
+        let name_end = match find_nul(p) {
+            Some(e) => e,
+            None => break,
+        };
+        let type_end = match find_nul(name_end + 1) {
+            Some(e) => e,
+            None => break,
+        };
+        let size_at = type_end + 1;
+        if size_at + 4 > n {
+            break;
+        }
+        let size = u32::from_le_bytes(buf[size_at..size_at + 4].try_into().unwrap()) as usize;
+        p = size_at + 4 + size;
+    }
+    let header_end = match header_end {
+        Some(h) => h as u64,
+        None => return Ok(None),
+    };
+    // The offset table's first entry reveals its own length.
+    let mut o = [0u8; 8];
+    if source.read_at(file_start + header_end, &mut o)? < 8 {
+        return Ok(None);
+    }
+    let first_off = u64::from_le_bytes(o);
+    if first_off <= header_end || (first_off - header_end) % 8 != 0 {
+        return Ok(None);
+    }
+    let num_chunks = (first_off - header_end) / 8;
+    if num_chunks == 0 || num_chunks > (1u64 << 24) {
+        return Ok(None);
+    }
+    // The last table entry locates the final chunk.
+    let last_entry = header_end.saturating_add((num_chunks - 1).saturating_mul(8));
+    let mut lo = [0u8; 8];
+    if source.read_at(file_start + last_entry, &mut lo)? < 8 {
+        return Ok(None);
+    }
+    let last_off = u64::from_le_bytes(lo);
+    if last_off < first_off {
+        return Ok(None);
+    }
+    // Each scanline chunk is a 4-byte y coordinate, a 4-byte dataSize, then data.
+    let mut c = [0u8; 8];
+    if source.read_at(file_start + last_off, &mut c)? < 8 {
+        return Ok(None);
+    }
+    let data_size = u32::from_le_bytes(c[4..8].try_into().unwrap()) as u64;
+    let end = last_off.saturating_add(8).saturating_add(data_size);
+    if file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -6666,6 +6760,62 @@ mod tests {
         v[52..56].copy_from_slice(&6u32.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(ktx1_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a single-part scanline OpenEXR file with one chunk per entry in
+    /// `chunk_data_sizes`. The header carries one attribute; the chunk offset
+    /// table and the chunks (each a `y` coordinate, a `dataSize`, then data)
+    /// follow.
+    fn exr(chunk_data_sizes: &[u32]) -> Vec<u8> {
+        let mut v = vec![0x76, 0x2F, 0x31, 0x01, 0x02, 0, 0, 0];
+        // One attribute: name "compression", type "compression", 1-byte value.
+        v.extend_from_slice(b"compression\0");
+        v.extend_from_slice(b"compression\0");
+        v.extend_from_slice(&1u32.to_le_bytes());
+        v.push(0);
+        v.push(0); // empty name terminates the header
+        let header_end = v.len() as u64;
+        let count = chunk_data_sizes.len() as u64;
+        // Chunk i begins after the header and the whole offset table.
+        let mut off = header_end + count * 8;
+        let mut offsets = Vec::new();
+        for &ds in chunk_data_sizes {
+            offsets.push(off);
+            off += 8 + ds as u64; // y(4) + dataSize(4) + data
+        }
+        for &o in &offsets {
+            v.extend_from_slice(&o.to_le_bytes());
+        }
+        for &ds in chunk_data_sizes {
+            v.extend_from_slice(&0u32.to_le_bytes()); // y coordinate
+            v.extend_from_slice(&ds.to_le_bytes()); // dataSize
+            v.extend_from_slice(&vec![0u8; ds as usize]);
+        }
+        v
+    }
+
+    #[test]
+    fn exr_length_walks_offset_table() {
+        // Three scanline chunks.
+        let v = exr(&[32, 16, 8]);
+        let (_t, src) = source_of(&v);
+        assert_eq!(exr_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+        // A single chunk.
+        let v = exr(&[100]);
+        let (_t, src) = source_of(&v);
+        assert_eq!(exr_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+    }
+
+    #[test]
+    fn exr_length_rejects_bad_magic_and_multipart() {
+        let z = vec![0u8; 32];
+        let (_t, src) = source_of(&z);
+        assert_eq!(exr_length(&src, 0, src.size).unwrap(), None);
+        // The multi-part flag (0x1000) selects a different chunk layout: skip.
+        let mut v = exr(&[16]);
+        v[5] |= 0x10;
+        let (_t, src) = source_of(&v);
+        assert_eq!(exr_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

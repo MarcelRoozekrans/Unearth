@@ -678,6 +678,7 @@ alongside the per-file manifest.
 | cr3    | Canon CR3 raw image                              | ISO box (atom) walk         |
 | jxl    | JPEG XL image                                    | ISO box (atom) walk         |
 | ktx    | KTX GPU texture (WebGL / three.js / Android)    | header + per-level imageSize |
+| exr    | OpenEXR HDR image (film / VFX)                  | chunk offset table walk     |
 | ktx2   | KTX2 GPU texture (glTF / WebGPU)                | max section offset + length |
 | dds    | DDS GPU texture (DirectX, games)                | header + computed mip chain |
 | astc   | ASTC GPU texture (mobile / Vulkan)              | header + 16 bytes/block     |
