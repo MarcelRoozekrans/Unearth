@@ -600,6 +600,7 @@ fn file_length(
         Extent::Dds => Ok(dds_length(source, file_start, limit)?),
         Extent::Astc => Ok(astc_length(source, file_start, limit)?),
         Extent::Glb => Ok(glb_length(source, file_start, limit)?),
+        Extent::Erofs => Ok(erofs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3731,6 +3732,37 @@ fn glb_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(total))
 }
 
+/// EROFS filesystem image (`.erofs`) length. The superblock lives at a fixed
+/// offset of 1024 bytes and opens with the `0xE0F5E1E2` magic. It records the
+/// block-size shift `blkszbits` at offset 12 (a value of 0 means the historical
+/// default of 12, i.e. 4 KiB blocks) and the total block count `blocks` at
+/// offset 36. The image length is `blocks << blkszbits`.
+fn erofs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const SB_OFF: usize = 1024;
+    let mut h = [0u8; SB_OFF + 64];
+    if source.read_at(file_start, &mut h)? < h.len() {
+        return Ok(None);
+    }
+    if u32::from_le_bytes(h[SB_OFF..SB_OFF + 4].try_into().unwrap()) != 0xE0F5_E1E2 {
+        return Ok(None);
+    }
+    // blkszbits == 0 means the legacy fixed 4 KiB block size.
+    let raw = h[SB_OFF + 12];
+    let blkszbits: u32 = if raw == 0 { 12 } else { raw as u32 };
+    if !(9..=16).contains(&blkszbits) {
+        return Ok(None);
+    }
+    let blocks = u32::from_le_bytes(h[SB_OFF + 36..SB_OFF + 40].try_into().unwrap()) as u64;
+    if blocks == 0 {
+        return Ok(None);
+    }
+    let total = blocks.saturating_mul(1u64 << blkszbits);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -6484,6 +6516,44 @@ mod tests {
         v[16..20].copy_from_slice(b"BIN\0");
         let (_t, src) = source_of(&v);
         assert_eq!(glb_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build an EROFS image of `blocks` blocks with the given `blkszbits`
+    /// (0 selects the default 4 KiB block size). The superblock magic, block
+    /// shift, and block count are written at their fixed superblock offsets.
+    fn erofs(blkszbits: u8, blocks: u32) -> Vec<u8> {
+        let bits = if blkszbits == 0 { 12 } else { blkszbits as u32 };
+        let total = (blocks as u64) << bits;
+        let mut v = vec![0u8; total.max(1088) as usize];
+        v[1024..1028].copy_from_slice(&0xE0F5_E1E2u32.to_le_bytes());
+        v[1036] = blkszbits;
+        v[1060..1064].copy_from_slice(&blocks.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn erofs_length_uses_block_count() {
+        // 2 blocks of 4 KiB (blkszbits = 12).
+        let v = erofs(12, 2);
+        let (_t, src) = source_of(&v);
+        assert_eq!(erofs_length(&src, 0, src.size).unwrap(), Some(8192));
+        // blkszbits == 0 selects the default 4 KiB block size.
+        let v = erofs(0, 3);
+        let (_t, src) = source_of(&v);
+        assert_eq!(erofs_length(&src, 0, src.size).unwrap(), Some(12288));
+    }
+
+    #[test]
+    fn erofs_length_rejects_bad_magic_and_zero_blocks() {
+        // No superblock magic.
+        let z = vec![0u8; 1088];
+        let (_t, src) = source_of(&z);
+        assert_eq!(erofs_length(&src, 0, src.size).unwrap(), None);
+        // Valid magic but zero blocks.
+        let mut v = erofs(12, 4);
+        v[1060..1064].copy_from_slice(&0u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(erofs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

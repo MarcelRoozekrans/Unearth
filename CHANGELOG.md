@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **EROFS filesystem images are carved** — `scan` now recovers EROFS images, the
+  Enhanced Read-Only File System used for Android 10+ `system`/`vendor`
+  partitions and increasingly for container images. The superblock at the fixed
+  1024-byte offset (magic `0xE0F5E1E2`) records the block-size shift and the
+  total block count, so the exact image length is `blocks << blkszbits` (a zero
+  shift means the historical 4 KiB default). The magic at the fixed superblock
+  offset plus a sane block-size shift make a false match negligible.
 - **glTF binary 3D models are carved** — `scan` now recovers `.glb` files, the
   binary container for glTF 2.0, the standard runtime format for 3D assets in
   games, AR/VR, and `<model-viewer>`. The 12-byte header carries a `u32` total
