@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **Source-engine BSP maps are carved** — `scan` now recovers `.bsp` files, the
+  compiled level format for Valve's Source games (CS:GO, Team Fortress 2,
+  Portal 2, Garry's Mod) and their large modding communities. After the `VBSP`
+  magic and a `u32` version comes a directory of 64 lumps, each with a file
+  offset and length; the exact file end is the furthest `offset + length` across
+  the directory (never less than the 1036-byte header). The `VBSP` magic and a
+  sane version reject a coincidental match.
 - **MCAP logs are carved** — `scan` now recovers `.mcap` files, the modern
   container for robotics and autonomous-vehicle recordings (ROS 2, Foxglove).
   After the 8-byte magic the file is a stream of records, each a 1-byte opcode,
