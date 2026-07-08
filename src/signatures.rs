@@ -158,6 +158,8 @@
 //!   the header/payload size recorded in the signature.
 //! * [`Extent::Farbfeld`] — farbfeld image: a fixed header plus
 //!   `width × height × 8` bytes of pixel data.
+//! * [`Extent::Y4m`] — YUV4MPEG2 stream: the fixed-size frames walked from the
+//!   header's dimensions and colourspace.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -799,6 +801,15 @@ pub enum Extent {
     /// exactly `width × height` RGBA pixels of four 16-bit channels, i.e. 8
     /// bytes each. The file length is therefore `16 + width × height × 8`.
     Farbfeld,
+    /// YUV4MPEG2 stream (`.y4m`) — the uncompressed raw-video interchange format
+    /// piped between modern encoders and tools (FFmpeg, the AV1/VP9/x264/x265
+    /// reference encoders). A one-line header (`YUV4MPEG2` plus space-delimited
+    /// `W`/`H`/`C`… parameters, ending in `\n`) fixes the per-frame byte size
+    /// from the width, height, and colourspace. Each frame is a `FRAME…\n`
+    /// line plus that many bytes; walking the frames to the end gives an exact
+    /// length. Only the 8-bit `mono`/`420`/`422`/`444` colourspaces are sized;
+    /// higher bit depths and alpha variants are skipped rather than mis-sized.
+    Y4m,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2470,6 +2481,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * MB,
     },
     Signature {
+        // YUV4MPEG2 raw-video stream: "YUV4MPEG2" magic, size from walking the
+        // fixed-size frames.
+        name: "YUV4MPEG2 video",
+        ext: "y4m",
+        magic: b"YUV4MPEG2",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Y4m,
+        max_size: 16 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2786,9 +2808,8 @@ pub fn category_of(ext: &str) -> Category {
         | "raf" | "nii" | "dds" | "astc" | "ktx" | "exr" | "qoi" | "ff" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" | "dsf" | "dff" | "sf2" | "qoa" | "rf64" => Category::Audio,
-        "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf" => {
-            Category::Video
-        }
+        "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf"
+        | "y4m" => Category::Video,
         // The OOXML/OpenDocument/e-book types come from ZIP-content
         // classification; doc/xls/ppt/msg (and a generic OLE2 container) from
         // CFBF.

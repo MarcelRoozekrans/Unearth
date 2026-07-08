@@ -608,6 +608,7 @@ fn file_length(
         Extent::Qoi => Ok(qoi_length(source, file_start, limit)?),
         Extent::Rpm => Ok(rpm_length(source, file_start, limit)?),
         Extent::Farbfeld => Ok(farbfeld_length(source, file_start, limit)?),
+        Extent::Y4m => Ok(y4m_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4158,6 +4159,91 @@ fn farbfeld_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(Some(total))
 }
 
+/// YUV4MPEG2 stream (`.y4m`) length. The one-line header (`YUV4MPEG2` plus
+/// space-delimited parameters, ending in `\n`) fixes the per-frame byte size
+/// from the width (`W`), height (`H`), and colourspace (`C`, defaulting to
+/// 4:2:0). Each frame is a `FRAME…\n` line followed by exactly that many bytes;
+/// walking the `FRAME` markers to the end gives the length. Only the 8-bit
+/// `mono`/`420`/`422`/`444` colourspaces are handled — anything else (higher
+/// bit depths, alpha) returns `None` rather than a guessed size.
+fn y4m_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut buf = [0u8; 512];
+    let n = source.read_at(file_start, &mut buf)?;
+    if n < 10 || &buf[0..9] != b"YUV4MPEG2" {
+        return Ok(None);
+    }
+    let hdr_end = match buf[..n].iter().position(|&b| b == b'\n') {
+        Some(i) => i,
+        None => return Ok(None),
+    };
+    let parse_u64 = |s: &[u8]| -> Option<u64> {
+        if s.is_empty() {
+            return None;
+        }
+        let mut v: u64 = 0;
+        for &b in s {
+            if !b.is_ascii_digit() {
+                return None;
+            }
+            v = v.checked_mul(10)?.checked_add((b - b'0') as u64)?;
+        }
+        Some(v)
+    };
+    let mut width: Option<u64> = None;
+    let mut height: Option<u64> = None;
+    let mut cs: &[u8] = b"420"; // default colourspace is 4:2:0
+    for tok in buf[9..hdr_end].split(|&b| b == b' ') {
+        match tok.first() {
+            Some(b'W') => width = parse_u64(&tok[1..]),
+            Some(b'H') => height = parse_u64(&tok[1..]),
+            Some(b'C') => cs = &tok[1..],
+            _ => {}
+        }
+    }
+    let (w, h) = match (width, height) {
+        (Some(w), Some(h)) if w > 0 && h > 0 => (w, h),
+        _ => return Ok(None),
+    };
+    let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+    let frame = match cs {
+        b"mono" => w.saturating_mul(h),
+        b"420" | b"420jpeg" | b"420paldv" | b"420mpeg2" => w
+            .saturating_mul(h)
+            .saturating_add(cw.saturating_mul(ch).saturating_mul(2)),
+        b"422" => w
+            .saturating_mul(h)
+            .saturating_add(cw.saturating_mul(h).saturating_mul(2)),
+        b"444" => w.saturating_mul(h).saturating_mul(3),
+        _ => return Ok(None),
+    };
+    if frame == 0 {
+        return Ok(None);
+    }
+    let start = hdr_end as u64 + 1;
+    let mut pos = start;
+    let mut fbuf = [0u8; 128];
+    loop {
+        let got = source.read_at(file_start + pos, &mut fbuf)?;
+        if got < 5 || &fbuf[0..5] != b"FRAME" {
+            break;
+        }
+        // The FRAME line may carry parameters; it ends at the next newline.
+        let nl = match fbuf[..got].iter().position(|&b| b == b'\n') {
+            Some(i) => i,
+            None => return Ok(None),
+        };
+        pos = pos.saturating_add(nl as u64 + 1).saturating_add(frame);
+        if file_start.saturating_add(pos) > limit {
+            return Ok(None);
+        }
+    }
+    // A valid stream has at least one frame.
+    if pos == start {
+        return Ok(None);
+    }
+    Ok(Some(pos))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7269,6 +7355,45 @@ mod tests {
         v[12..16].copy_from_slice(&0u32.to_be_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(farbfeld_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a YUV4MPEG2 stream: `header_params` follows the magic, then
+    /// `frames` frames of a plain `FRAME\n` line plus `frame_size` data bytes.
+    fn y4m(header_params: &str, frames: usize, frame_size: usize) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"YUV4MPEG2");
+        v.extend_from_slice(header_params.as_bytes());
+        v.push(b'\n');
+        for _ in 0..frames {
+            v.extend_from_slice(b"FRAME\n");
+            v.extend_from_slice(&vec![0u8; frame_size]);
+        }
+        v
+    }
+
+    #[test]
+    fn y4m_length_walks_frames() {
+        // 4x4 4:2:0 → 16 (Y) + 2*(2*2) (U,V) = 24 bytes per frame, two frames.
+        let v = y4m(" W4 H4 F25:1 C420", 2, 24);
+        let (_t, src) = source_of(&v);
+        assert_eq!(y4m_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+        // A FRAME line carrying parameters must still be measured correctly.
+        let mut w = Vec::new();
+        w.extend_from_slice(b"YUV4MPEG2 W2 H2 C420\n");
+        w.extend_from_slice(b"FRAME Xhello\n");
+        w.extend_from_slice(&[0u8; 6]); // 2x2 4:2:0 = 4 + 2*(1*1)
+        let (_t, src) = source_of(&w);
+        assert_eq!(y4m_length(&src, 0, src.size).unwrap(), Some(w.len() as u64));
+    }
+
+    #[test]
+    fn y4m_length_rejects_bad_magic_and_high_bit_depth() {
+        let (_t, src) = source_of(&[0u8; 32]);
+        assert_eq!(y4m_length(&src, 0, src.size).unwrap(), None);
+        // A 10-bit colourspace is not handled and must be skipped.
+        let v = y4m(" W4 H4 C420p10", 1, 48);
+        let (_t, src) = source_of(&v);
+        assert_eq!(y4m_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
