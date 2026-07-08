@@ -746,6 +746,7 @@ alongside the per-file manifest.
 | eps    | Encapsulated PostScript (binary/DOS)            | section offset+length table  |
 | macho  | Mach-O binary (macOS/iOS)                        | segment + link-edit extents  |
 | dex    | Android Dalvik executable                        | file-size field in header   |
+| rpm    | RPM package (Fedora / RHEL / SUSE)              | lead + sig header + size tag |
 | wasm   | WebAssembly module                               | section (LEB128) walk        |
 | ttf    | TrueType font                                    | SFNT table-directory walk    |
 | otf    | OpenType font                                    | SFNT table-directory walk    |
