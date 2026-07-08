@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **farbfeld images are carved** — `scan` now recovers `.ff` files, the
+  deliberately minimal lossless image format from the suckless project. The
+  16-byte header is the `farbfeld` magic plus big-endian `u32` width and height,
+  and every pixel is four 16-bit channels (8 bytes), so the exact file length is
+  `16 + width × height × 8`.
 - **RPM packages are carved** — `scan` now recovers `.rpm` files, the package
   format of Fedora, RHEL, openSUSE, and related distributions. After a 96-byte
   lead comes the signature header (an 8-byte-padded `header` structure) whose

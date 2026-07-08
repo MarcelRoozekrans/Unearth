@@ -156,6 +156,8 @@
 //!   then the 8-byte end marker.
 //! * [`Extent::Rpm`] — RPM package: the lead and padded signature header plus
 //!   the header/payload size recorded in the signature.
+//! * [`Extent::Farbfeld`] — farbfeld image: a fixed header plus
+//!   `width × height × 8` bytes of pixel data.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -791,6 +793,12 @@ pub enum Extent {
     /// length is `96 + padded signature header + that size`. The `0xEDABEEDB`
     /// lead magic and the `0x8EADE8` header magic reject a coincidental match.
     Rpm,
+    /// farbfeld image (`.ff`) — the deliberately minimal lossless image format
+    /// from the suckless project. The 16-byte header is the `farbfeld` magic, a
+    /// big-endian `u32` width, and a big-endian `u32` height; the pixel data is
+    /// exactly `width × height` RGBA pixels of four 16-bit channels, i.e. 8
+    /// bytes each. The file length is therefore `16 + width × height × 8`.
+    Farbfeld,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2452,6 +2460,16 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 8 * GB,
     },
     Signature {
+        // farbfeld image: "farbfeld" magic, size = 16 + width*height*8.
+        name: "farbfeld image",
+        ext: "ff",
+        magic: b"farbfeld",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Farbfeld,
+        max_size: 512 * MB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2765,7 +2783,7 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" | "ktx2"
-        | "raf" | "nii" | "dds" | "astc" | "ktx" | "exr" | "qoi" => Category::Image,
+        | "raf" | "nii" | "dds" | "astc" | "ktx" | "exr" | "qoi" | "ff" => Category::Image,
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" | "dsf" | "dff" | "sf2" | "qoa" | "rf64" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf" => {
