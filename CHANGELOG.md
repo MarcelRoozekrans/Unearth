@@ -14,6 +14,15 @@ formats.
 
 ### Added
 
+- **KTX (v1) textures are carved** — `scan` now recovers `.ktx` files, the
+  original Khronos GPU-texture container (WebGL/three.js, Android GPU textures,
+  older glTF). After the 12-byte «KTX 11» identifier and a fixed 64-byte header
+  comes the key/value data and then one block per mip level, each introduced by
+  its own explicit `imageSize` field and padded to a 4-byte boundary — so the
+  exact length is found by walking the levels, with no pixel-format table
+  required. Only ordinary non-array, single-face textures are sized; array and
+  cubemap layouts, whose per-face padding is ambiguous, are skipped rather than
+  mis-sized. Multi-byte fields honour the header's endianness flag.
 - **EROFS filesystem images are carved** — `scan` now recovers EROFS images, the
   Enhanced Read-Only File System used for Android 10+ `system`/`vendor`
   partitions and increasingly for container images. The superblock at the fixed

@@ -601,6 +601,7 @@ fn file_length(
         Extent::Astc => Ok(astc_length(source, file_start, limit)?),
         Extent::Glb => Ok(glb_length(source, file_start, limit)?),
         Extent::Erofs => Ok(erofs_length(source, file_start, limit)?),
+        Extent::Ktx1 => Ok(ktx1_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3763,6 +3764,67 @@ fn erofs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u
     Ok(Some(total))
 }
 
+/// KTX v1 GPU texture (`.ktx`) length. After the 12-byte «KTX 11» identifier a
+/// fixed 64-byte header records — honouring the endianness flag at offset 12 —
+/// the array/face/mip counts and the size of the key/value block. The image
+/// data then follows as one block per mip level, each opening with its own
+/// `imageSize` field and padded up to a 4-byte boundary, so the total size is
+/// found by walking the levels. Because each level's byte count is explicit, no
+/// pixel-format knowledge is required. Only ordinary non-array (`numberOfArray
+/// Elements == 0`), single-face (`numberOfFaces == 1`) textures are sized;
+/// array and cubemap layouts, whose per-face padding is ambiguous, are skipped.
+fn ktx1_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAGIC: [u8; 12] = [
+        0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31, 0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+    ];
+    let mut h = [0u8; 64];
+    if source.read_at(file_start, &mut h)? < 64 || h[0..12] != MAGIC {
+        return Ok(None);
+    }
+    let little = match u32::from_le_bytes(h[12..16].try_into().unwrap()) {
+        0x0403_0201 => true,
+        0x0102_0304 => false,
+        _ => return Ok(None),
+    };
+    let rd = |o: usize| -> u32 {
+        let b = h[o..o + 4].try_into().unwrap();
+        if little {
+            u32::from_le_bytes(b)
+        } else {
+            u32::from_be_bytes(b)
+        }
+    };
+    let array_elements = rd(48);
+    let faces = rd(52);
+    let mip_levels = rd(56);
+    let kv_bytes = rd(60) as u64;
+    // Only ordinary non-array, single-face textures have unambiguous sizing here.
+    if array_elements != 0 || faces != 1 || mip_levels > 32 {
+        return Ok(None);
+    }
+    // A mip count of 0 means "generate mipmaps": the file still stores level 0.
+    let levels = mip_levels.max(1);
+    let mut pos = 64u64.saturating_add(kv_bytes);
+    for _ in 0..levels {
+        let mut sz = [0u8; 4];
+        if source.read_at(file_start + pos, &mut sz)? < 4 {
+            return Ok(None);
+        }
+        let image_size = if little {
+            u32::from_le_bytes(sz)
+        } else {
+            u32::from_be_bytes(sz)
+        } as u64;
+        // Each level's data is padded up to a 4-byte boundary.
+        let padded = image_size.div_ceil(4).saturating_mul(4);
+        pos = pos.saturating_add(4).saturating_add(padded);
+        if file_start.saturating_add(pos) > limit {
+            return Ok(None);
+        }
+    }
+    Ok(Some(pos))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -6554,6 +6616,56 @@ mod tests {
         v[1060..1064].copy_from_slice(&0u32.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(erofs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a little-endian KTX v1 texture: a 64-byte header (non-array,
+    /// single-face, no key/value data) followed by `mip_levels` levels, each an
+    /// `imageSize` field plus its 4-byte-padded data from `level_sizes`.
+    fn ktx1(mip_levels: u32, level_sizes: &[u32]) -> Vec<u8> {
+        let mut v = vec![0u8; 64];
+        v[0..12].copy_from_slice(&[
+            0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31, 0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+        ]);
+        v[12..16].copy_from_slice(&0x0403_0201u32.to_le_bytes()); // little-endian
+        v[36..40].copy_from_slice(&1u32.to_le_bytes()); // pixelWidth
+        v[52..56].copy_from_slice(&1u32.to_le_bytes()); // numberOfFaces
+        v[56..60].copy_from_slice(&mip_levels.to_le_bytes());
+        for &sz in level_sizes {
+            v.extend_from_slice(&sz.to_le_bytes());
+            v.extend_from_slice(&vec![0u8; (sz.div_ceil(4) * 4) as usize]);
+        }
+        v
+    }
+
+    #[test]
+    fn ktx1_length_walks_mip_levels() {
+        // Three mip levels, sizes already 4-aligned.
+        let v = ktx1(3, &[64, 16, 4]);
+        let (_t, src) = source_of(&v);
+        assert_eq!(
+            ktx1_length(&src, 0, src.size).unwrap(),
+            Some(v.len() as u64)
+        );
+        // A single level whose imageSize needs padding to a 4-byte boundary.
+        let v = ktx1(1, &[10]);
+        assert_eq!(v.len() as u64, 64 + 4 + 12);
+        let (_t, src) = source_of(&v);
+        assert_eq!(
+            ktx1_length(&src, 0, src.size).unwrap(),
+            Some(v.len() as u64)
+        );
+    }
+
+    #[test]
+    fn ktx1_length_rejects_bad_magic_and_cubemap() {
+        let z = vec![0u8; 64];
+        let (_t, src) = source_of(&z);
+        assert_eq!(ktx1_length(&src, 0, src.size).unwrap(), None);
+        // Cubemap (numberOfFaces == 6) is skipped rather than mis-sized.
+        let mut v = ktx1(1, &[16]);
+        v[52..56].copy_from_slice(&6u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(ktx1_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
