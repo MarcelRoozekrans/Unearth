@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **QOI images are carved** — `scan` now recovers `.qoi` files, the "Quite OK
+  Image" format (2021), a fast lossless codec adopted across game engines and
+  image tooling. Each chunk's byte size is fixed by its tag alone (independent
+  of pixel values), so the chunk stream is decoded — counting the pixels each
+  chunk covers — until exactly `width × height` pixels are produced, locating
+  the end without searching for the 8-byte marker (which can appear in pixel
+  data); the trailing marker is then verified. A sliding window keeps large
+  images from needing a full-file buffer.
 - **Source-engine BSP maps are carved** — `scan` now recovers `.bsp` files, the
   compiled level format for Valve's Source games (CS:GO, Team Fortress 2,
   Portal 2, Garry's Mod) and their large modding communities. After the `VBSP`
