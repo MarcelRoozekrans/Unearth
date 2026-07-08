@@ -150,6 +150,8 @@
 //!   reveals its own length) walked to the last chunk.
 //! * [`Extent::Mcap`] — MCAP log: the record stream walked to the footer record
 //!   plus the trailing magic.
+//! * [`Extent::Bsp`] — Source-engine BSP map: the furthest lump end in the
+//!   64-entry lump directory.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -762,6 +764,14 @@ pub enum Extent {
     /// 8-byte trailing magic, gives the exact end — no reliance on the trailing
     /// magic (which is identical to the leading one) for detection.
     Mcap,
+    /// Source-engine BSP map (`.bsp`) — the compiled level format for Valve's
+    /// Source games (CS:GO, Team Fortress 2, Portal 2, Garry's Mod) and their
+    /// modding communities. After the `VBSP` magic and a `u32` version comes a
+    /// directory of 64 lumps, each recording a file offset and length. The file
+    /// end is the furthest `offset + length` across the directory (never less
+    /// than the 1036-byte header). The `VBSP` magic and a sane version reject a
+    /// coincidental match.
+    Bsp,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2388,6 +2398,17 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Mcap,
         max_size: 16 * GB,
+    },
+    Signature {
+        // Source-engine BSP map: "VBSP" magic, size from the furthest lump end
+        // in the 64-entry lump directory.
+        name: "Source BSP map",
+        ext: "bsp",
+        magic: b"VBSP",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Bsp,
+        max_size: 2 * GB,
     },
     Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the

@@ -604,6 +604,7 @@ fn file_length(
         Extent::Ktx1 => Ok(ktx1_length(source, file_start, limit)?),
         Extent::Exr => Ok(exr_length(source, file_start, limit)?),
         Extent::Mcap => Ok(mcap_length(source, file_start, limit)?),
+        Extent::Bsp => Ok(bsp_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3959,6 +3960,42 @@ fn mcap_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
     Ok(None)
 }
 
+/// Source-engine BSP map (`.bsp`) length. After the `VBSP` magic and a `u32`
+/// version comes a directory of 64 lumps, each a `(fileofs, filelen, version,
+/// fourCC)` entry of 16 bytes. The file end is the furthest `fileofs + filelen`
+/// across the directory, never less than the 1036-byte header. Negative offsets
+/// or lengths (from a bad match) cause a skip.
+fn bsp_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const HEADER: usize = 8 + 64 * 16;
+    let mut h = [0u8; HEADER];
+    if source.read_at(file_start, &mut h)? < HEADER || &h[0..4] != b"VBSP" {
+        return Ok(None);
+    }
+    // Source BSP versions span roughly 17–29; reject anything wildly off.
+    let version = i32::from_le_bytes(h[4..8].try_into().unwrap());
+    if !(17..=31).contains(&version) {
+        return Ok(None);
+    }
+    // The header (magic, version, 64 lumps, mapRevision) is 1036 bytes.
+    let mut end = 1036u64;
+    for i in 0..64 {
+        let base = 8 + i * 16;
+        let ofs = i32::from_le_bytes(h[base..base + 4].try_into().unwrap());
+        let len = i32::from_le_bytes(h[base + 4..base + 8].try_into().unwrap());
+        if ofs < 0 || len < 0 {
+            return Ok(None);
+        }
+        if len == 0 {
+            continue;
+        }
+        end = end.max((ofs as u64).saturating_add(len as u64));
+    }
+    if file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -6895,6 +6932,45 @@ mod tests {
         let v = mcap(&[(0x01, 10)]);
         let (_t, src) = source_of(&v);
         assert_eq!(mcap_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a Source BSP map with the given version and `(offset, length)`
+    /// lumps written into the 64-entry directory. The buffer is sized to the
+    /// furthest lump end.
+    fn bsp(version: i32, lumps: &[(u32, u32)]) -> Vec<u8> {
+        let mut total = 1036u32;
+        for &(ofs, len) in lumps {
+            total = total.max(ofs + len);
+        }
+        let mut v = vec![0u8; total as usize];
+        v[0..4].copy_from_slice(b"VBSP");
+        v[4..8].copy_from_slice(&version.to_le_bytes());
+        for (i, &(ofs, len)) in lumps.iter().enumerate() {
+            let base = 8 + i * 16;
+            v[base..base + 4].copy_from_slice(&ofs.to_le_bytes());
+            v[base + 4..base + 8].copy_from_slice(&len.to_le_bytes());
+        }
+        v
+    }
+
+    #[test]
+    fn bsp_length_uses_furthest_lump_end() {
+        let v = bsp(21, &[(1036, 100), (1136, 50)]);
+        assert_eq!(v.len() as u64, 1186);
+        let (_t, src) = source_of(&v);
+        assert_eq!(bsp_length(&src, 0, src.size).unwrap(), Some(1186));
+    }
+
+    #[test]
+    fn bsp_length_rejects_bad_magic_and_version() {
+        let z = vec![0u8; 1036];
+        let (_t, src) = source_of(&z);
+        assert_eq!(bsp_length(&src, 0, src.size).unwrap(), None);
+        // A version outside the Source range is rejected.
+        let mut v = bsp(21, &[(1036, 100)]);
+        v[4..8].copy_from_slice(&5i32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(bsp_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
