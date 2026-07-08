@@ -607,6 +607,7 @@ fn file_length(
         Extent::Bsp => Ok(bsp_length(source, file_start, limit)?),
         Extent::Qoi => Ok(qoi_length(source, file_start, limit)?),
         Extent::Rpm => Ok(rpm_length(source, file_start, limit)?),
+        Extent::Farbfeld => Ok(farbfeld_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4137,6 +4138,26 @@ fn rpm_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(total))
 }
 
+/// farbfeld image (`.ff`) length. The 16-byte header is the `farbfeld` magic, a
+/// big-endian `u32` width, and a big-endian `u32` height. Every pixel is four
+/// 16-bit channels (8 bytes), so the file is exactly `16 + width × height × 8`.
+fn farbfeld_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 16];
+    if source.read_at(file_start, &mut h)? < 16 || &h[0..8] != b"farbfeld" {
+        return Ok(None);
+    }
+    let width = u32::from_be_bytes(h[8..12].try_into().unwrap()) as u64;
+    let height = u32::from_be_bytes(h[12..16].try_into().unwrap()) as u64;
+    if width == 0 || height == 0 {
+        return Ok(None);
+    }
+    let total = 16u64.saturating_add(width.saturating_mul(height).saturating_mul(8));
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7215,6 +7236,39 @@ mod tests {
         let v = rpm(1234, 100);
         let (_t, src) = source_of(&v);
         assert_eq!(rpm_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a farbfeld image of the given dimensions (header plus 8 bytes per
+    /// pixel).
+    fn farbfeld(width: u32, height: u32) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"farbfeld");
+        v.extend_from_slice(&width.to_be_bytes());
+        v.extend_from_slice(&height.to_be_bytes());
+        v.extend_from_slice(&vec![0u8; (width as usize) * (height as usize) * 8]);
+        v
+    }
+
+    #[test]
+    fn farbfeld_length_computes_pixel_data() {
+        let v = farbfeld(4, 3);
+        assert_eq!(v.len() as u64, 16 + 4 * 3 * 8);
+        let (_t, src) = source_of(&v);
+        assert_eq!(
+            farbfeld_length(&src, 0, src.size).unwrap(),
+            Some(v.len() as u64)
+        );
+    }
+
+    #[test]
+    fn farbfeld_length_rejects_bad_magic_and_zero_dims() {
+        let (_t, src) = source_of(&[0u8; 16]);
+        assert_eq!(farbfeld_length(&src, 0, src.size).unwrap(), None);
+        // Valid magic but a zero dimension is invalid.
+        let mut v = farbfeld(2, 2);
+        v[12..16].copy_from_slice(&0u32.to_be_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(farbfeld_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
