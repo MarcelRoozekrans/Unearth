@@ -759,6 +759,7 @@ alongside the per-file manifest.
 | pcapng | pcapng network capture                           | block walk                  |
 | evtx   | Windows Event Log                                | chunk count in header       |
 | journal | systemd journal (Linux logs)                   | header size + arena size    |
+| mcap   | MCAP log (ROS 2 / robotics / AV)                | record walk to footer       |
 | regf   | Windows registry hive                            | base block + hive-bins size |
 | wim    | Windows Imaging (WIM/ESD)                        | resource-table extents      |
 | icc    | ICC colour profile                               | size field in profile header |

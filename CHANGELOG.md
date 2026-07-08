@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **MCAP logs are carved** — `scan` now recovers `.mcap` files, the modern
+  container for robotics and autonomous-vehicle recordings (ROS 2, Foxglove).
+  After the 8-byte magic the file is a stream of records, each a 1-byte opcode,
+  a `u64` length, and its payload; walking the records by their length to the
+  footer record (opcode `0x02`) and adding the trailing magic gives the exact
+  length. Detection never depends on the trailing magic, which is byte-for-byte
+  identical to the leading one.
 - **OpenEXR images are carved** — `scan` now recovers `.exr` files, the
   ILM/Academy high-dynamic-range format that is the standard for film and VFX
   compositing. After the header's attribute list comes a chunk offset table
