@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **YUV4MPEG2 video is carved** — `scan` now recovers `.y4m` files, the
+  uncompressed raw-video interchange format piped between modern encoders and
+  tools (FFmpeg, the AV1/VP9/x264/x265 reference encoders). A one-line header
+  fixes the per-frame byte size from the width, height, and colourspace; each
+  `FRAME…\n` line plus that many bytes is walked to the end for an exact length.
+  Only the 8-bit `mono`/`420`/`422`/`444` colourspaces are sized — higher bit
+  depths and alpha variants are skipped rather than mis-sized.
 - **farbfeld images are carved** — `scan` now recovers `.ff` files, the
   deliberately minimal lossless image format from the suckless project. The
   16-byte header is the `farbfeld` magic plus big-endian `u32` width and height,
