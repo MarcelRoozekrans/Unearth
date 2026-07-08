@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **glTF binary 3D models are carved** — `scan` now recovers `.glb` files, the
+  binary container for glTF 2.0, the standard runtime format for 3D assets in
+  games, AR/VR, and `<model-viewer>`. The 12-byte header carries a `u32` total
+  length spanning the whole file; that length is confirmed exact by walking the
+  chunk table (each an 8-byte `length`/`type` preamble plus padded data) and
+  checking the chunks begin with a `JSON` chunk and sum to precisely the
+  declared length — so a coincidental `glTF` magic is rejected rather than
+  mis-sized.
 - **ASTC textures are carved** — `scan` now recovers `.astc` files, the
   Adaptive Scalable Texture Compression format used by modern mobile GPUs and
   Vulkan pipelines. The 16-byte header records the block footprint and the

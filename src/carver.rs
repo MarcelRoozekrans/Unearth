@@ -599,6 +599,7 @@ fn file_length(
         Extent::Hdf5 => Ok(hdf5_length(source, file_start, limit)?),
         Extent::Dds => Ok(dds_length(source, file_start, limit)?),
         Extent::Astc => Ok(astc_length(source, file_start, limit)?),
+        Extent::Glb => Ok(glb_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3678,6 +3679,58 @@ fn astc_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
     Ok(Some(total))
 }
 
+/// glTF binary 3D model (`.glb`) length. The 12-byte header is `glTF` magic, a
+/// `u32` version (2 for glTF 2.0), and a `u32` total length spanning the whole
+/// file. The declared length is the answer, but to reject a coincidental
+/// `glTF` match the chunk table is walked: each chunk is an 8-byte
+/// (`length`, `type`) preamble followed by `length` bytes, and the chunks must
+/// begin with a `JSON` chunk and sum to exactly the declared length.
+fn glb_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 12];
+    if source.read_at(file_start, &mut h)? < 12 {
+        return Ok(None);
+    }
+    if &h[0..4] != b"glTF" {
+        return Ok(None);
+    }
+    if u32::from_le_bytes(h[4..8].try_into().unwrap()) != 2 {
+        return Ok(None);
+    }
+    let total = u32::from_le_bytes(h[8..12].try_into().unwrap()) as u64;
+    // A GLB has at least a header plus one 8-byte JSON chunk preamble.
+    if total < 20 || total % 4 != 0 || file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    // Walk the chunk table and confirm it sums to exactly `total`.
+    let mut pos = 12u64;
+    let mut first = true;
+    while pos < total {
+        // Need room for the 8-byte chunk preamble.
+        if pos.saturating_add(8) > total {
+            return Ok(None);
+        }
+        let mut c = [0u8; 8];
+        if source.read_at(file_start + pos, &mut c)? < 8 {
+            return Ok(None);
+        }
+        let clen = u32::from_le_bytes(c[0..4].try_into().unwrap()) as u64;
+        // Chunk data is 4-byte aligned per the glTF spec.
+        if clen % 4 != 0 {
+            return Ok(None);
+        }
+        // The first chunk must be the JSON scene description.
+        if first && &c[4..8] != b"JSON" {
+            return Ok(None);
+        }
+        first = false;
+        pos = pos.saturating_add(8).saturating_add(clen);
+    }
+    if pos != total {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -6378,6 +6431,59 @@ mod tests {
         v[4] = 0;
         let (_t, src) = source_of(&v);
         assert_eq!(astc_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a GLB with a JSON chunk and an optional BIN chunk of the given
+    /// (already 4-byte-aligned) data lengths.
+    fn glb(json_len: u32, bin_len: Option<u32>) -> Vec<u8> {
+        let mut chunks = Vec::new();
+        chunks.extend_from_slice(&json_len.to_le_bytes());
+        chunks.extend_from_slice(b"JSON");
+        chunks.extend_from_slice(&vec![0x20u8; json_len as usize]); // spaces
+        if let Some(bl) = bin_len {
+            chunks.extend_from_slice(&bl.to_le_bytes());
+            chunks.extend_from_slice(b"BIN\0");
+            chunks.extend_from_slice(&vec![0u8; bl as usize]);
+        }
+        let total = 12 + chunks.len() as u32;
+        let mut v = Vec::with_capacity(total as usize);
+        v.extend_from_slice(b"glTF");
+        v.extend_from_slice(&2u32.to_le_bytes());
+        v.extend_from_slice(&total.to_le_bytes());
+        v.extend_from_slice(&chunks);
+        v
+    }
+
+    #[test]
+    fn glb_length_walks_chunks() {
+        // JSON only.
+        let v = glb(16, None);
+        let (_t, src) = source_of(&v);
+        assert_eq!(glb_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+        // JSON + BIN.
+        let v = glb(24, Some(64));
+        let (_t, src) = source_of(&v);
+        assert_eq!(glb_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+    }
+
+    #[test]
+    fn glb_length_rejects_bad_version_and_chunk_mismatch() {
+        // Wrong version.
+        let mut v = glb(16, None);
+        v[4] = 1;
+        let (_t, src) = source_of(&v);
+        assert_eq!(glb_length(&src, 0, src.size).unwrap(), None);
+        // Declared total larger than the chunks actually present.
+        let mut v = glb(16, None);
+        let bad = (v.len() as u32 + 4).to_le_bytes();
+        v[8..12].copy_from_slice(&bad);
+        let (_t, src) = source_of(&v);
+        assert_eq!(glb_length(&src, 0, src.size).unwrap(), None);
+        // First chunk is not JSON.
+        let mut v = glb(16, None);
+        v[16..20].copy_from_slice(b"BIN\0");
+        let (_t, src) = source_of(&v);
+        assert_eq!(glb_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

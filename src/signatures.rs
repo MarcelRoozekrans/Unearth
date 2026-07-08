@@ -140,6 +140,8 @@
 //! * [`Extent::Dds`] — DDS texture: the header plus the computed mip-chain size.
 //! * [`Extent::Astc`] — ASTC texture: the 16-byte header plus 16 bytes per
 //!   block.
+//! * [`Extent::Glb`] — glTF binary 3D model: the total-length field in the
+//!   header, confirmed by a chunk walk.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -708,6 +710,14 @@ pub enum Extent {
     /// 16` where the block count is `ceil(x/bx) × ceil(y/by) × ceil(z/bz)`. The
     /// magic and sane block/texture dimensions reject a coincidental match.
     Astc,
+    /// glTF binary 3D model (`.glb`) — the binary container for glTF 2.0, the
+    /// standard runtime format for 3D assets (games, AR/VR, `<model-viewer>`).
+    /// The 12-byte header is `glTF` magic, a `u32` version, and a `u32` total
+    /// length covering the whole file. Chunks follow, each an 8-byte
+    /// (`length`, `type`) preamble plus padded data. The length field gives the
+    /// size directly; walking the chunks and confirming they sum to exactly
+    /// that length (with a leading `JSON` chunk) rejects a coincidental match.
+    Glb,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2278,6 +2288,16 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Astc,
         max_size: 512 * MB,
+    },
+    Signature {
+        // glTF binary 3D model: "glTF" magic, u32 total length at offset 8.
+        name: "glTF binary 3D model",
+        ext: "glb",
+        magic: b"glTF",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Glb,
+        max_size: 2 * GB,
     },
     Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
