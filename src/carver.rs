@@ -603,6 +603,7 @@ fn file_length(
         Extent::Erofs => Ok(erofs_length(source, file_start, limit)?),
         Extent::Ktx1 => Ok(ktx1_length(source, file_start, limit)?),
         Extent::Exr => Ok(exr_length(source, file_start, limit)?),
+        Extent::Mcap => Ok(mcap_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -3919,6 +3920,45 @@ fn exr_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(end))
 }
 
+/// MCAP log (`.mcap`) length. After the 8-byte magic the file is a stream of
+/// records, each a 1-byte opcode, a little-endian `u64` payload length, and
+/// that many payload bytes. Walking the records by their length to the footer
+/// record (opcode `0x02`) — then adding that record's own header and payload
+/// plus the 8-byte trailing magic — gives the exact end. Detection never relies
+/// on the trailing magic, which is byte-for-byte identical to the leading one.
+fn mcap_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const MAGIC_LEN: u64 = 8;
+    const FOOTER_OP: u8 = 0x02;
+    let mut pos = MAGIC_LEN;
+    // A well-formed file has far fewer records than this; the cap only guards
+    // against a corrupt length walking forever.
+    for _ in 0..100_000_000u64 {
+        let mut rec = [0u8; 9];
+        if pos.saturating_add(9) > limit || source.read_at(file_start + pos, &mut rec)? < 9 {
+            return Ok(None);
+        }
+        let op = rec[0];
+        // Opcode 0 is invalid; valid records are always non-zero.
+        if op == 0 {
+            return Ok(None);
+        }
+        let payload = u64::from_le_bytes(rec[1..9].try_into().unwrap());
+        if op == FOOTER_OP {
+            // Footer record header + payload, then the 8-byte trailing magic.
+            let total = pos
+                .saturating_add(9)
+                .saturating_add(payload)
+                .saturating_add(MAGIC_LEN);
+            if file_start.saturating_add(total) > limit {
+                return Ok(None);
+            }
+            return Ok(Some(total));
+        }
+        pos = pos.saturating_add(9).saturating_add(payload);
+    }
+    Ok(None)
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -6816,6 +6856,45 @@ mod tests {
         v[5] |= 0x10;
         let (_t, src) = source_of(&v);
         assert_eq!(exr_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    const MCAP_MAGIC: [u8; 8] = [0x89, 0x4D, 0x43, 0x41, 0x50, 0x30, 0x0D, 0x0A];
+
+    /// Build an MCAP file: the 8-byte magic, one record per `(opcode, payload
+    /// length)` spec, then the 8-byte trailing magic.
+    fn mcap(records: &[(u8, usize)]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(&MCAP_MAGIC);
+        for &(op, len) in records {
+            v.push(op);
+            v.extend_from_slice(&(len as u64).to_le_bytes());
+            v.extend_from_slice(&vec![0u8; len]);
+        }
+        v.extend_from_slice(&MCAP_MAGIC);
+        v
+    }
+
+    #[test]
+    fn mcap_length_walks_records_to_footer() {
+        // Header (0x01), a message (0x05), then the footer (0x02, 20-byte payload).
+        let v = mcap(&[(0x01, 5), (0x05, 30), (0x02, 20)]);
+        let (_t, src) = source_of(&v);
+        assert_eq!(
+            mcap_length(&src, 0, src.size).unwrap(),
+            Some(v.len() as u64)
+        );
+    }
+
+    #[test]
+    fn mcap_length_rejects_zero_opcode_and_missing_footer() {
+        // A zero opcode at the first record is invalid.
+        let z = vec![0u8; 40];
+        let (_t, src) = source_of(&z);
+        assert_eq!(mcap_length(&src, 0, src.size).unwrap(), None);
+        // No footer record: the walk runs into the trailing magic and stops.
+        let v = mcap(&[(0x01, 10)]);
+        let (_t, src) = source_of(&v);
+        assert_eq!(mcap_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

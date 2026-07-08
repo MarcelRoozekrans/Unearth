@@ -148,6 +148,8 @@
 //!   each sized by its own explicit `imageSize` field.
 //! * [`Extent::Exr`] — OpenEXR image: the chunk offset table (whose first entry
 //!   reveals its own length) walked to the last chunk.
+//! * [`Extent::Mcap`] — MCAP log: the record stream walked to the footer record
+//!   plus the trailing magic.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -752,6 +754,14 @@ pub enum Extent {
     /// single-part scanline images are sized — tiled, deep, and multi-part
     /// files (flagged in the version word) are skipped rather than mis-sized.
     Exr,
+    /// MCAP log (`.mcap`) — the modern container for robotics and
+    /// autonomous-vehicle recordings (ROS 2, Foxglove). After the 8-byte magic
+    /// the file is a stream of records, each a 1-byte opcode, a `u64` length,
+    /// and that many payload bytes. Walking the records by their length to the
+    /// footer record (opcode `0x02`), then adding the footer payload and the
+    /// 8-byte trailing magic, gives the exact end — no reliance on the trailing
+    /// magic (which is identical to the leading one) for detection.
+    Mcap,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2369,6 +2379,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 2 * GB,
     },
     Signature {
+        // MCAP log: "\x89MCAP0\r\n" magic, size from the record stream walked to
+        // the footer record plus the trailing magic.
+        name: "MCAP log",
+        ext: "mcap",
+        magic: &[0x89, 0x4D, 0x43, 0x41, 0x50, 0x30, 0x0D, 0x0A],
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Mcap,
+        max_size: 16 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2698,7 +2719,7 @@ pub fn category_of(ext: &str) -> Category {
         "elf" | "exe" | "macho" | "dex" | "wasm" | "apk" | "msi" | "pdb" => Category::Executable,
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
-        | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" => Category::System,
+        | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" => Category::System,
         _ => Category::Other,
     }
 }
