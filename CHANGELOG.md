@@ -14,6 +14,16 @@ formats.
 
 ### Added
 
+- **ReiserFS filesystem images are carved** — `scan` now recovers whole
+  `.reiserfs` images, Hans Reiser's journaling filesystem — the SUSE default and
+  a common choice on Linux through the 2000s (removed from the mainline kernel in
+  6.13). The **3.6** superblock sits 64 KiB into the volume and the older **3.5**
+  superblock 8 KiB in, each carrying a long ASCII magic at offset 0x34
+  (`ReIsEr2Fs`/`ReIsEr3Fs` for 3.6, `ReIsErFs` for 3.5), a block count at offset
+  0x00, and a block size at offset 0x2C, so the exact image length is
+  `block_count × block_size`. A missing magic, non-power-of-two block size, or
+  zero block count rejects a coincidental match. Complements the existing
+  ReiserFS *detection* used by `info`/`list_volumes`.
 - **HFS+ filesystem images are carved** — `scan` now recovers whole `.hfsplus`
   images, the Mac OS Extended filesystem — the macOS default before APFS and
   still used on many external and Time Machine drives. The volume header sits
