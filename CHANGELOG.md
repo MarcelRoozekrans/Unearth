@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **APFS container images are carved** — `scan` now recovers whole `.apfs`
+  images, the Apple File System that is the default on every Mac, iPhone, and
+  iPad since 2017. The container superblock opens the volume with the `NXSB`
+  magic at offset 32, a block size at offset 36, and a block count at offset 40,
+  so the exact image length is `block_count × block_size`; a non-power-of-two
+  block size or zero block count rejects a coincidental magic. Complements the
+  existing APFS *detection* used by `info`, which cannot undelete a
+  copy-on-write filesystem and points the user at `scan`.
 - **exFAT filesystem images are carved** — `scan` now recovers whole `.exfat`
   images, the Microsoft filesystem that is the default on SD/SDXC cards over
   32 GB, most cameras, and many phones and USB drives. The boot sector opens

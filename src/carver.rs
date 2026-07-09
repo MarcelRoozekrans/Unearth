@@ -616,6 +616,7 @@ fn file_length(
         Extent::Btrfs => Ok(btrfs_length(source, file_start, limit)?),
         Extent::Xfs => Ok(xfs_length(source, file_start, limit)?),
         Extent::Exfat => Ok(exfat_length(source, file_start, limit)?),
+        Extent::Apfs => Ok(apfs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4491,6 +4492,31 @@ fn exfat_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u
     Ok(Some(total))
 }
 
+/// APFS container image (`.apfs`) length. The container superblock opens the
+/// volume with a 32-byte `obj_phys_t` header, then the `NXSB` magic at offset
+/// 32, a `u32` block size at offset 36, and a `u64` block count at offset 40.
+/// The image length is `block_count × block_size`. A non-power-of-two or
+/// out-of-range block size, or a zero block count, rejects a coincidental magic.
+fn apfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut sb = [0u8; 48];
+    if source.read_at(file_start, &mut sb)? < 48 || &sb[32..36] != b"NXSB" {
+        return Ok(None);
+    }
+    let block_size = u32::from_le_bytes(sb[36..40].try_into().unwrap()) as u64;
+    if !block_size.is_power_of_two() || !(512..=1024 * 1024).contains(&block_size) {
+        return Ok(None);
+    }
+    let block_count = u64::from_le_bytes(sb[40..48].try_into().unwrap());
+    if block_count == 0 {
+        return Ok(None);
+    }
+    let total = block_count.saturating_mul(block_size);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7892,6 +7918,35 @@ mod tests {
         v[108] = 20;
         let (_t, src) = source_of(&v);
         assert_eq!(exfat_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build an APFS container image whose superblock reports the given block
+    /// size and block count.
+    fn apfs(block_size: u32, block_count: u64) -> Vec<u8> {
+        let total = (block_count * block_size as u64).max(48);
+        let mut v = vec![0u8; total as usize];
+        v[32..36].copy_from_slice(b"NXSB");
+        v[36..40].copy_from_slice(&block_size.to_le_bytes());
+        v[40..48].copy_from_slice(&block_count.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn apfs_length_uses_block_count() {
+        let v = apfs(4096, 64); // 256 KiB
+        let (_t, src) = source_of(&v);
+        assert_eq!(apfs_length(&src, 0, src.size).unwrap(), Some(0x40000));
+    }
+
+    #[test]
+    fn apfs_length_rejects_bad_magic_and_block_size() {
+        let (_t, src) = source_of(&[0u8; 48]);
+        assert_eq!(apfs_length(&src, 0, src.size).unwrap(), None);
+        // A non-power-of-two block size is rejected.
+        let mut v = apfs(4096, 64);
+        v[36..40].copy_from_slice(&4095u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(apfs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
