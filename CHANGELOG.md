@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **UFS1 filesystem images are carved** — `scan` now recovers whole `.ufs`
+  images, the Berkeley Fast File System traditional to the BSDs and Solaris. The
+  UFS1 superblock sits 8 KiB into the volume with the `0x00011954` magic at
+  offset 0x55C (little- or big-endian), and its early geometry records the total
+  size in fragments at offset 0x24 and the fragment size at offset 0x34, so the
+  exact image length is `fs_old_size × fs_fsize`. Only UFS1 is sized; UFS2
+  (whose size moved to a 64-bit field this layout leaves zero) has a different
+  magic and is not matched, so it is never mis-sized.
 - **JFS filesystem images are carved** — `scan` now recovers whole `.jfs`
   images, IBM's Journaled File System (from AIX/OS2, ported to Linux). The
   aggregate superblock sits 32 KiB into the volume and opens with the `JFS1`

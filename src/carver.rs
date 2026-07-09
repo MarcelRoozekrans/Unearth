@@ -623,6 +623,7 @@ fn file_length(
         Extent::Romfs => Ok(romfs_length(source, file_start, limit)?),
         Extent::Cramfs => Ok(cramfs_length(source, file_start, limit)?),
         Extent::Jfs => Ok(jfs_length(source, file_start, limit)?),
+        Extent::Ufs => Ok(ufs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4676,6 +4677,55 @@ fn jfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(total))
 }
 
+/// UFS1 filesystem image (`.ufs`) length. The UFS1 superblock sits 8 KiB into
+/// the volume with the `0x00011954` magic at offset 0x55C (little- or
+/// big-endian, taken from the magic). The early geometry records the block size
+/// at 0x30, the fragment size at 0x34, and the total size in fragments at 0x24,
+/// so the image length is `fs_old_size × fs_fsize`. Only UFS1 is handled; UFS2
+/// (whose size moved to a 64-bit field this layout leaves zero) has a different
+/// magic and is not matched, so it is never mis-sized.
+fn ufs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const SB: u64 = 8192;
+    const MAGIC_OFF: usize = 0x55C;
+    let mut h = [0u8; 0x560];
+    if source.read_at(file_start + SB, &mut h)? < 0x560 {
+        return Ok(None);
+    }
+    let m = h[MAGIC_OFF..MAGIC_OFF + 4].try_into().unwrap();
+    let big = if u32::from_le_bytes(m) == 0x0001_1954 {
+        false
+    } else if u32::from_be_bytes(m) == 0x0001_1954 {
+        true
+    } else {
+        return Ok(None);
+    };
+    let rd32 = |o: usize| -> u64 {
+        let a = h[o..o + 4].try_into().unwrap();
+        let v = if big {
+            u32::from_be_bytes(a)
+        } else {
+            u32::from_le_bytes(a)
+        };
+        v as u64
+    };
+    let bsize = rd32(0x30);
+    let fsize = rd32(0x34);
+    let frags = rd32(0x24);
+    if !bsize.is_power_of_two()
+        || !(512..=65536).contains(&bsize)
+        || !fsize.is_power_of_two()
+        || !(512..=65536).contains(&fsize)
+        || frags == 0
+    {
+        return Ok(None);
+    }
+    let total = frags.saturating_mul(fsize);
+    if total < SB || file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -8296,6 +8346,49 @@ mod tests {
         v[0x8000 + 0x18..0x8000 + 0x1C].copy_from_slice(&500u32.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(jfs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a UFS1 image whose superblock (8 KiB in) reports the given fragment
+    /// count, fragment size, and block size, in the given byte order.
+    fn ufs(frags: u32, fsize: u32, bsize: u32, big: bool) -> Vec<u8> {
+        let total = frags as usize * fsize as usize;
+        let mut v = vec![0u8; total];
+        let sb = 8192usize;
+        let e = |x: u32| {
+            if big {
+                x.to_be_bytes()
+            } else {
+                x.to_le_bytes()
+            }
+        };
+        v[sb + 0x24..sb + 0x28].copy_from_slice(&e(frags)); // fs_old_size
+        v[sb + 0x30..sb + 0x34].copy_from_slice(&e(bsize)); // fs_bsize
+        v[sb + 0x34..sb + 0x38].copy_from_slice(&e(fsize)); // fs_fsize
+        v[sb + 0x55C..sb + 0x560].copy_from_slice(&e(0x0001_1954)); // fs_magic
+        v
+    }
+
+    #[test]
+    fn ufs_length_uses_fragment_count() {
+        // 16 fragments of 1024 bytes => 16 KiB, both byte orders.
+        let v = ufs(16, 1024, 8192, false);
+        let (_t, src) = source_of(&v);
+        assert_eq!(ufs_length(&src, 0, src.size).unwrap(), Some(16 * 1024));
+        let v = ufs(16, 1024, 8192, true);
+        let (_t, src) = source_of(&v);
+        assert_eq!(ufs_length(&src, 0, src.size).unwrap(), Some(16 * 1024));
+    }
+
+    #[test]
+    fn ufs_length_rejects_bad_magic_and_geometry() {
+        let z = vec![0u8; 16 * 1024];
+        let (_t, src) = source_of(&z);
+        assert_eq!(ufs_length(&src, 0, src.size).unwrap(), None);
+        // Valid magic but a non-power-of-two fragment size.
+        let mut v = ufs(16, 1024, 8192, false);
+        v[8192 + 0x34..8192 + 0x38].copy_from_slice(&1000u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(ufs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

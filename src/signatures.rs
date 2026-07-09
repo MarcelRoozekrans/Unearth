@@ -186,6 +186,8 @@
 //! * [`Extent::Cramfs`] — cramfs image: the total-size field in the superblock.
 //! * [`Extent::Jfs`] — JFS filesystem image: the aggregate block count in the
 //!   superblock times the physical block size.
+//! * [`Extent::Ufs`] — UFS1 filesystem image: the fragment count in the
+//!   superblock times the fragment size.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -944,6 +946,15 @@ pub enum Extent {
     /// image length is `s_size × s_pbsize`. The magic plus a power-of-two block
     /// size reject a coincidental match.
     Jfs,
+    /// UFS1 filesystem image (`.ufs`) — the Berkeley Fast File System, the
+    /// traditional filesystem of the BSDs and Solaris. The UFS1 superblock sits
+    /// 8 KiB into the volume with the `0x00011954` magic at offset 0x55C
+    /// (little- or big-endian). The early geometry records the fragment size at
+    /// offset 0x34 and the total size in fragments at offset 0x24, so the image
+    /// length is `fs_old_size × fs_fsize`. Only UFS1 is sized; UFS2 (whose size
+    /// lives in a 64-bit field this layout leaves zero) is not carved, so it is
+    /// skipped rather than mis-sized.
+    Ufs,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2780,6 +2791,27 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 64 * GB,
     },
     Signature {
+        // UFS1 filesystem image (little-endian): 0x00011954 magic at 0x255C
+        // (superblock at 8 KiB + 0x55C), size = fragment count × fragment size.
+        name: "UFS filesystem image",
+        ext: "ufs",
+        magic: &[0x54, 0x19, 0x01, 0x00],
+        magic_offset: 0x255C,
+        secondary: None,
+        extent: Extent::Ufs,
+        max_size: 64 * GB,
+    },
+    Signature {
+        // UFS1 filesystem image (big-endian): 0x00011954 magic at 0x255C.
+        name: "UFS filesystem image",
+        ext: "ufs",
+        magic: &[0x00, 0x01, 0x19, 0x54],
+        magic_offset: 0x255C,
+        secondary: None,
+        extent: Extent::Ufs,
+        max_size: 64 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -3114,7 +3146,7 @@ pub fn category_of(ext: &str) -> Category {
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
         | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs"
         | "btrfs" | "xfs" | "exfat" | "apfs" | "refs" | "ntfs" | "swap" | "romfs" | "cramfs"
-        | "jfs" => Category::System,
+        | "jfs" | "ufs" => Category::System,
         _ => Category::Other,
     }
 }
