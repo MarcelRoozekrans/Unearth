@@ -624,6 +624,7 @@ fn file_length(
         Extent::Cramfs => Ok(cramfs_length(source, file_start, limit)?),
         Extent::Jfs => Ok(jfs_length(source, file_start, limit)?),
         Extent::Ufs => Ok(ufs_length(source, file_start, limit)?),
+        Extent::Befs => Ok(befs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4726,6 +4727,53 @@ fn ufs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(total))
 }
 
+/// BeFS filesystem image (`.befs`) length. The superblock sits 512 bytes into
+/// the volume and carries two magics — `BFS1` (0x42465331) at offset 0x20 and
+/// 0xDD121031 at offset 0x44 (little- or big-endian, resolved from the first) —
+/// plus a `u32` block size at offset 0x28 and a `u64` block count at offset
+/// 0x30. The image length is `num_blocks × block_size`. Both magics plus a
+/// power-of-two block size reject a coincidental match.
+fn befs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const SB: u64 = 512;
+    let mut h = [0u8; 0x48];
+    if source.read_at(file_start + SB, &mut h)? < 0x48 {
+        return Ok(None);
+    }
+    let rd_u32 = |o: usize, big: bool| -> u32 {
+        let a = h[o..o + 4].try_into().unwrap();
+        if big {
+            u32::from_be_bytes(a)
+        } else {
+            u32::from_le_bytes(a)
+        }
+    };
+    let big = if rd_u32(0x20, false) == 0x4246_5331 {
+        false
+    } else if rd_u32(0x20, true) == 0x4246_5331 {
+        true
+    } else {
+        return Ok(None);
+    };
+    if rd_u32(0x44, big) != 0xDD12_1031 {
+        return Ok(None);
+    }
+    let block_size = rd_u32(0x28, big) as u64;
+    let a = h[0x30..0x38].try_into().unwrap();
+    let num_blocks = if big {
+        u64::from_be_bytes(a)
+    } else {
+        u64::from_le_bytes(a)
+    };
+    if !block_size.is_power_of_two() || !(512..=65536).contains(&block_size) || num_blocks == 0 {
+        return Ok(None);
+    }
+    let total = num_blocks.saturating_mul(block_size);
+    if total < SB || file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -8389,6 +8437,56 @@ mod tests {
         v[8192 + 0x34..8192 + 0x38].copy_from_slice(&1000u32.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(ufs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a BeFS image whose superblock (512 bytes in) reports the given block
+    /// count and block size, in the given byte order.
+    fn befs(num_blocks: u64, block_size: u32, big: bool) -> Vec<u8> {
+        let total = (num_blocks * block_size as u64) as usize;
+        let mut v = vec![0u8; total.max(512 + 0x48)];
+        let sb = 512usize;
+        let e32 = |x: u32| {
+            if big {
+                x.to_be_bytes()
+            } else {
+                x.to_le_bytes()
+            }
+        };
+        let e64 = |x: u64| {
+            if big {
+                x.to_be_bytes()
+            } else {
+                x.to_le_bytes()
+            }
+        };
+        v[sb + 0x20..sb + 0x24].copy_from_slice(&e32(0x4246_5331)); // magic1 "BFS1"
+        v[sb + 0x28..sb + 0x2C].copy_from_slice(&e32(block_size));
+        v[sb + 0x30..sb + 0x38].copy_from_slice(&e64(num_blocks));
+        v[sb + 0x44..sb + 0x48].copy_from_slice(&e32(0xDD12_1031)); // magic2
+        v
+    }
+
+    #[test]
+    fn befs_length_uses_block_count() {
+        // 16 blocks of 1024 bytes => 16 KiB, both byte orders.
+        let v = befs(16, 1024, false);
+        let (_t, src) = source_of(&v);
+        assert_eq!(befs_length(&src, 0, src.size).unwrap(), Some(16 * 1024));
+        let v = befs(16, 1024, true);
+        let (_t, src) = source_of(&v);
+        assert_eq!(befs_length(&src, 0, src.size).unwrap(), Some(16 * 1024));
+    }
+
+    #[test]
+    fn befs_length_rejects_missing_second_magic() {
+        let z = vec![0u8; 512 + 0x48];
+        let (_t, src) = source_of(&z);
+        assert_eq!(befs_length(&src, 0, src.size).unwrap(), None);
+        // magic1 present but magic2 absent.
+        let mut v = befs(16, 1024, false);
+        v[512 + 0x44..512 + 0x48].copy_from_slice(&0u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(befs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

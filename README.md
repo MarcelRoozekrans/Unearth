@@ -731,6 +731,7 @@ alongside the per-file manifest.
 | cramfs | cramfs image (firmware / embedded)              | size field in superblock    |
 | jfs    | JFS image (IBM Journaled File System)           | block count × block size    |
 | ufs    | UFS1 image (BSD / Solaris FFS)                  | fragment count × frag size  |
+| befs   | BeFS image (BeOS / Haiku)                       | block count × block size    |
 | uimage | U-Boot uImage (router/IoT firmware)             | 64-byte header + data size  |
 | dtb    | Device Tree Blob (FDT, embedded Linux)          | totalsize field in header   |
 | trx    | TRX firmware (Broadcom/OpenWrt routers)         | len field in header         |
