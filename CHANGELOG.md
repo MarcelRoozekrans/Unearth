@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **XFS filesystem images are carved** — `scan` now recovers whole `.xfs`
+  images, the high-performance journaling filesystem that is the default on
+  RHEL, CentOS, and Rocky Linux. The superblock opens the volume with the
+  big-endian `XFSB` magic, a block size at offset 4, and a total data-block
+  count at offset 8, so the exact image length is `sb_dblocks × sb_blocksize`.
+  A non-power-of-two block size or zero block count rejects a coincidental
+  magic. Complements the existing XFS *detection* used by `info`.
 - **btrfs filesystem images are carved** — `scan` now recovers whole `.btrfs`
   images, the copy-on-write Linux filesystem that is the default on Fedora
   Workstation and openSUSE and is used by Synology NAS units. The superblock

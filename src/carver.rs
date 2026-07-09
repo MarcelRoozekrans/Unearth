@@ -614,6 +614,7 @@ fn file_length(
         Extent::Grib2 => Ok(grib2_length(source, file_start, limit)?),
         Extent::F2fs => Ok(f2fs_length(source, file_start, limit)?),
         Extent::Btrfs => Ok(btrfs_length(source, file_start, limit)?),
+        Extent::Xfs => Ok(xfs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4444,6 +4445,28 @@ fn btrfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u
     Ok(Some(total_bytes))
 }
 
+/// XFS filesystem image (`.xfs`) length. The superblock opens the volume with
+/// the big-endian `XFSB` magic, a `u32` block size at offset 4, and a `u64`
+/// total data-block count (`sb_dblocks`) at offset 8. The image length is
+/// `sb_dblocks × sb_blocksize`; a non-power-of-two or out-of-range block size,
+/// or a zero block count, rejects a coincidental magic.
+fn xfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 16];
+    if source.read_at(file_start, &mut h)? < 16 || &h[0..4] != b"XFSB" {
+        return Ok(None);
+    }
+    let blocksize = u32::from_be_bytes(h[4..8].try_into().unwrap()) as u64;
+    let dblocks = u64::from_be_bytes(h[8..16].try_into().unwrap());
+    if !(512..=65536).contains(&blocksize) || !blocksize.is_power_of_two() || dblocks == 0 {
+        return Ok(None);
+    }
+    let total = dblocks.saturating_mul(blocksize);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7785,6 +7808,35 @@ mod tests {
         v[0x1_0000 + 136..0x1_0000 + 144].copy_from_slice(&2u64.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(btrfs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build an XFS image whose superblock reports the given block size and
+    /// total data-block count (both big-endian).
+    fn xfs(blocksize: u32, dblocks: u64) -> Vec<u8> {
+        let total = (dblocks * blocksize as u64).max(16);
+        let mut v = vec![0u8; total as usize];
+        v[0..4].copy_from_slice(b"XFSB");
+        v[4..8].copy_from_slice(&blocksize.to_be_bytes());
+        v[8..16].copy_from_slice(&dblocks.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn xfs_length_uses_block_count() {
+        let v = xfs(4096, 64); // 256 KiB
+        let (_t, src) = source_of(&v);
+        assert_eq!(xfs_length(&src, 0, src.size).unwrap(), Some(0x40000));
+    }
+
+    #[test]
+    fn xfs_length_rejects_bad_magic_and_block_size() {
+        let (_t, src) = source_of(&[0u8; 16]);
+        assert_eq!(xfs_length(&src, 0, src.size).unwrap(), None);
+        // A non-power-of-two block size is rejected.
+        let mut v = xfs(4096, 64);
+        v[4..8].copy_from_slice(&4095u32.to_be_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(xfs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
