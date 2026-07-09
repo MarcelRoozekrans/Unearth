@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **Linux swap areas are carved** — `scan` now recovers `.swap` areas, a
+  formatted swap partition or file, which is a key forensics artifact because it
+  holds paged-out process memory. The header records a version at offset 1024
+  and a `last_page` index at offset 1028, with the `SWAPSPACE2` magic at
+  `page_size − 10`; matching it at offset 4086 fixes the page size at 4 KiB, so
+  the area length is `(last_page + 1) × 4096`. The 10-byte magic and a version
+  of 1 reject a coincidental match.
 - **NTFS filesystem images are carved** — `scan` now recovers whole `.ntfs`
   images, the dominant Windows filesystem. The boot sector opens with an
   `NTFS    ` OEM signature at offset 3 and records `BytesPerSector` at offset 11
