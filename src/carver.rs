@@ -613,6 +613,7 @@ fn file_length(
         Extent::Blp => Ok(blp_length(source, file_start, limit)?),
         Extent::Grib2 => Ok(grib2_length(source, file_start, limit)?),
         Extent::F2fs => Ok(f2fs_length(source, file_start, limit)?),
+        Extent::Btrfs => Ok(btrfs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4412,6 +4413,37 @@ fn f2fs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
     Ok(Some(total))
 }
 
+/// btrfs filesystem image (`.btrfs`) length. The primary superblock sits 64 KiB
+/// into the volume and carries the `_BHRfS_M` magic at offset 64. Its
+/// `total_bytes` field (at 0x70) is the size of the filesystem; for a
+/// single-device image (`num_devices == 1` at 0x88) that is the image length.
+/// Power-of-two sector (0x90) and node (0x94) sizes guard against a coincidental
+/// magic, and multi-device filesystems are skipped rather than over-sized.
+fn btrfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const SB_OFF: u64 = 0x1_0000;
+    let mut sb = [0u8; 256];
+    if source.read_at(file_start + SB_OFF, &mut sb)? < sb.len() || &sb[64..72] != b"_BHRfS_M" {
+        return Ok(None);
+    }
+    let total_bytes = u64::from_le_bytes(sb[112..120].try_into().unwrap());
+    let num_devices = u64::from_le_bytes(sb[136..144].try_into().unwrap());
+    let sectorsize = u32::from_le_bytes(sb[144..148].try_into().unwrap());
+    let nodesize = u32::from_le_bytes(sb[148..152].try_into().unwrap());
+    if total_bytes == 0 || num_devices != 1 {
+        return Ok(None);
+    }
+    if !sectorsize.is_power_of_two() || !(512..=65536).contains(&sectorsize) {
+        return Ok(None);
+    }
+    if !nodesize.is_power_of_two() || !(512..=262_144).contains(&nodesize) {
+        return Ok(None);
+    }
+    if file_start.saturating_add(total_bytes) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total_bytes))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7721,6 +7753,38 @@ mod tests {
         v[1024 + 0x24..1024 + 0x2C].copy_from_slice(&0u64.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(f2fs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a single-device btrfs image whose superblock (64 KiB in) reports
+    /// the given `total_bytes`.
+    fn btrfs(total_bytes: u64) -> Vec<u8> {
+        let mut v = vec![0u8; total_bytes.max(0x1_0100) as usize];
+        let sb = 0x1_0000usize;
+        v[sb + 64..sb + 72].copy_from_slice(b"_BHRfS_M");
+        v[sb + 112..sb + 120].copy_from_slice(&total_bytes.to_le_bytes());
+        v[sb + 136..sb + 144].copy_from_slice(&1u64.to_le_bytes()); // num_devices
+        v[sb + 144..sb + 148].copy_from_slice(&4096u32.to_le_bytes()); // sectorsize
+        v[sb + 148..sb + 152].copy_from_slice(&16384u32.to_le_bytes()); // nodesize
+        v
+    }
+
+    #[test]
+    fn btrfs_length_uses_total_bytes() {
+        let v = btrfs(0x40000); // 256 KiB
+        let (_t, src) = source_of(&v);
+        assert_eq!(btrfs_length(&src, 0, src.size).unwrap(), Some(0x40000));
+    }
+
+    #[test]
+    fn btrfs_length_rejects_bad_magic_and_multi_device() {
+        let z = vec![0u8; 0x1_0100];
+        let (_t, src) = source_of(&z);
+        assert_eq!(btrfs_length(&src, 0, src.size).unwrap(), None);
+        // Multi-device filesystems are skipped rather than over-sized.
+        let mut v = btrfs(0x40000);
+        v[0x1_0000 + 136..0x1_0000 + 144].copy_from_slice(&2u64.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(btrfs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

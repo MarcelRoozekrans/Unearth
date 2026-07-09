@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **btrfs filesystem images are carved** — `scan` now recovers whole `.btrfs`
+  images, the copy-on-write Linux filesystem that is the default on Fedora
+  Workstation and openSUSE and is used by Synology NAS units. The superblock
+  64 KiB into the volume (magic `_BHRfS_M`) records `total_bytes`, which is the
+  image length for a single-device filesystem; power-of-two sector/node sizes
+  reject a coincidental magic and multi-device filesystems are skipped rather
+  than over-sized. Complements the existing btrfs *detection* used by `info`,
+  which cannot undelete a copy-on-write filesystem and points the user at `scan`.
 - **F2FS filesystem images are carved** — `scan` now recovers whole `.f2fs`
   images, the Flash-Friendly File System that is the default internal-storage
   filesystem on most modern Android phones. The superblock at the fixed

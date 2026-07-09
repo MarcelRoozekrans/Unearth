@@ -720,6 +720,7 @@ alongside the per-file manifest.
 | squashfs | SquashFS image (Snap / AppImage / firmware)   | bytes_used in superblock    |
 | erofs  | EROFS image (Android 10+ system/vendor)         | block count × block size    |
 | f2fs   | F2FS image (Android internal storage)           | block count × block size    |
+| btrfs  | btrfs image (Fedora / openSUSE / NAS)           | total_bytes in superblock   |
 | uimage | U-Boot uImage (router/IoT firmware)             | 64-byte header + data size  |
 | dtb    | Device Tree Blob (FDT, embedded Linux)          | totalsize field in header   |
 | trx    | TRX firmware (Broadcom/OpenWrt routers)         | len field in header         |
