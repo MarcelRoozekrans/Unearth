@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **JFS filesystem images are carved** — `scan` now recovers whole `.jfs`
+  images, IBM's Journaled File System (from AIX/OS2, ported to Linux). The
+  aggregate superblock sits 32 KiB into the volume and opens with the `JFS1`
+  magic, then a `u64` aggregate size (in physical blocks) at offset 8 and a
+  `u32` physical block size at offset 0x18, so the exact image length is
+  `s_size × s_pbsize`. A non-power-of-two block size or zero block count rejects
+  a coincidental magic. Complements the existing JFS *detection* used by `info`.
 - **cramfs images are carved** — `scan` now recovers `.cramfs` images, the small
   compressed read-only Linux filesystem long used in firmware and embedded/boot
   images. The superblock carries the `0x28CD3D45` magic (little- or big-endian)
