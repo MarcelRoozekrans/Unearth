@@ -722,6 +722,7 @@ alongside the per-file manifest.
 | f2fs   | F2FS image (Android internal storage)           | block count × block size    |
 | btrfs  | btrfs image (Fedora / openSUSE / NAS)           | total_bytes in superblock   |
 | xfs    | XFS image (RHEL / CentOS / Rocky default)       | data-block count × block size |
+| exfat  | exFAT image (SD/SDXC cards, cameras)            | volume length × sector size |
 | uimage | U-Boot uImage (router/IoT firmware)             | 64-byte header + data size  |
 | dtb    | Device Tree Blob (FDT, embedded Linux)          | totalsize field in header   |
 | trx    | TRX firmware (Broadcom/OpenWrt routers)         | len field in header         |

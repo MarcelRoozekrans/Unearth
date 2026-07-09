@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **exFAT filesystem images are carved** — `scan` now recovers whole `.exfat`
+  images, the Microsoft filesystem that is the default on SD/SDXC cards over
+  32 GB, most cameras, and many phones and USB drives. The boot sector opens
+  with `EXFAT   ` at offset 3 and records `VolumeLength` (in sectors) and
+  `BytesPerSectorShift`, so the exact image length is
+  `VolumeLength << BytesPerSectorShift`; sane sector/cluster shifts reject a
+  coincidental magic. (`scan` carves the whole volume as one image; `undelete`
+  continues to recover individual named files from an exFAT volume.)
 - **XFS filesystem images are carved** — `scan` now recovers whole `.xfs`
   images, the high-performance journaling filesystem that is the default on
   RHEL, CentOS, and Rocky Linux. The superblock opens the volume with the

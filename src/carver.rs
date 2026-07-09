@@ -615,6 +615,7 @@ fn file_length(
         Extent::F2fs => Ok(f2fs_length(source, file_start, limit)?),
         Extent::Btrfs => Ok(btrfs_length(source, file_start, limit)?),
         Extent::Xfs => Ok(xfs_length(source, file_start, limit)?),
+        Extent::Exfat => Ok(exfat_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4467,6 +4468,29 @@ fn xfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(total))
 }
 
+/// exFAT filesystem image (`.exfat`) length. The boot sector opens with
+/// `EXFAT   ` at offset 3 and records `VolumeLength` (in sectors, a `u64` at
+/// offset 72) and `BytesPerSectorShift` (a `u8` at offset 108). The image
+/// length is `VolumeLength << BytesPerSectorShift`. Sane sector (9..=12) and
+/// combined sector+cluster (<= 25) shifts reject a coincidental magic.
+fn exfat_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut boot = [0u8; 128];
+    if source.read_at(file_start, &mut boot)? < 128 || &boot[3..11] != b"EXFAT   " {
+        return Ok(None);
+    }
+    let volume_length = u64::from_le_bytes(boot[72..80].try_into().unwrap());
+    let bps_shift = boot[108];
+    let spc_shift = boot[109];
+    if !(9..=12).contains(&bps_shift) || bps_shift + spc_shift > 25 || volume_length == 0 {
+        return Ok(None);
+    }
+    let total = volume_length.saturating_mul(1u64 << bps_shift);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7837,6 +7861,37 @@ mod tests {
         v[4..8].copy_from_slice(&4095u32.to_be_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(xfs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build an exFAT image whose boot sector reports the given volume length
+    /// (in sectors) and sector/cluster shifts.
+    fn exfat(volume_length: u64, bps_shift: u8, spc_shift: u8) -> Vec<u8> {
+        let total = (volume_length << bps_shift).max(128);
+        let mut v = vec![0u8; total as usize];
+        v[3..11].copy_from_slice(b"EXFAT   ");
+        v[72..80].copy_from_slice(&volume_length.to_le_bytes());
+        v[108] = bps_shift;
+        v[109] = spc_shift;
+        v
+    }
+
+    #[test]
+    fn exfat_length_uses_volume_length() {
+        // 512-byte sectors (shift 9), 512 sectors => 256 KiB.
+        let v = exfat(512, 9, 3);
+        let (_t, src) = source_of(&v);
+        assert_eq!(exfat_length(&src, 0, src.size).unwrap(), Some(512 << 9));
+    }
+
+    #[test]
+    fn exfat_length_rejects_bad_magic_and_shift() {
+        let (_t, src) = source_of(&[0u8; 128]);
+        assert_eq!(exfat_length(&src, 0, src.size).unwrap(), None);
+        // An out-of-range bytes-per-sector shift is rejected.
+        let mut v = exfat(512, 9, 3);
+        v[108] = 20;
+        let (_t, src) = source_of(&v);
+        assert_eq!(exfat_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

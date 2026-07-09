@@ -172,6 +172,8 @@
 //!   superblock (single-device images).
 //! * [`Extent::Xfs`] — XFS filesystem image: the data-block count in the
 //!   superblock times the block size.
+//! * [`Extent::Exfat`] — exFAT filesystem image: the volume length in the boot
+//!   sector times the sector size.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -869,6 +871,14 @@ pub enum Extent {
     /// The image length is `sb_dblocks × sb_blocksize`. The magic plus a
     /// power-of-two block size reject a coincidental match.
     Xfs,
+    /// exFAT filesystem image (`.exfat`) — the Microsoft filesystem that is the
+    /// default on SD/SDXC cards over 32 GB, most cameras, and many phones and
+    /// USB drives. Its boot sector opens with `EXFAT   ` at offset 3 and records
+    /// `VolumeLength` (in sectors) at offset 72 and `BytesPerSectorShift` at
+    /// offset 108. The image length is `VolumeLength << BytesPerSectorShift`.
+    /// The 8-byte magic plus sane sector/cluster shifts reject a coincidental
+    /// match. (`scan` carves the whole volume; `undelete` recovers named files.)
+    Exfat,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2617,6 +2627,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 64 * GB,
     },
     Signature {
+        // exFAT filesystem image: "EXFAT   " boot-sector magic at offset 3,
+        // size = VolumeLength << BytesPerSectorShift.
+        name: "exFAT filesystem image",
+        ext: "exfat",
+        magic: b"EXFAT   ",
+        magic_offset: 3,
+        secondary: None,
+        extent: Extent::Exfat,
+        max_size: 512 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2950,7 +2971,7 @@ pub fn category_of(ext: &str) -> Category {
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
         | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs"
-        | "btrfs" | "xfs" => Category::System,
+        | "btrfs" | "xfs" | "exfat" => Category::System,
         _ => Category::Other,
     }
 }
