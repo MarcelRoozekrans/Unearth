@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **GRIB2 weather data is carved** — `scan` now recovers `.grib2` files, the WMO
+  gridded-binary format that is the backbone of modern meteorology and climate
+  data (NOAA, ECMWF, NASA). A file is one or more self-delimiting messages, each
+  opening with `GRIB`, an edition byte, and a 64-bit total length, and closing
+  with a `7777` end marker. Messages are walked by their length — each validated
+  by confirming its trailing `7777` — for an exact size across any number of
+  concatenated messages.
 - **BLP2 textures are carved** — `scan` now recovers `.blp` files, the Blizzard
   texture format used by World of Warcraft. After the `BLP2` magic and a header
   of encoding flags and dimensions comes a directory of 16 mipmap offsets and

@@ -164,6 +164,8 @@
 //!   block-compressed mip chain.
 //! * [`Extent::Blp`] — BLP2 texture: the furthest mipmap end in the 16-entry
 //!   offset/length directory.
+//! * [`Extent::Grib2`] — GRIB2 weather data: the per-message total-length fields
+//!   walked (each validated by its `7777` end marker).
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -830,6 +832,14 @@ pub enum Extent {
     /// (never less than the 148-byte header). The `BLP2` magic and sane
     /// dimensions reject a coincidental match.
     Blp,
+    /// GRIB2 weather data (`.grib2`) — the WMO gridded-binary format that is the
+    /// backbone of modern meteorology and climate data (NOAA, ECMWF, NASA). A
+    /// file is one or more self-delimiting messages, each opening with `GRIB`, a
+    /// reserved field, a discipline byte, an edition byte (`2`), and a 64-bit
+    /// big-endian total length, and closing with a `7777` end marker. Messages
+    /// are walked by their length — each validated by its trailing `7777` — to
+    /// the end of the run, giving an exact size across concatenated messages.
+    Grib2,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2532,6 +2542,17 @@ pub static SIGNATURES: &[Signature] = &[
         secondary: None,
         extent: Extent::Blp,
         max_size: 256 * MB,
+    },
+    Signature {
+        // GRIB2 weather data: "GRIB" magic, size from walking the per-message
+        // 64-bit total lengths (each validated by a trailing "7777").
+        name: "GRIB2 weather data",
+        ext: "grib2",
+        magic: b"GRIB",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Grib2,
+        max_size: 16 * GB,
     },
     Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the

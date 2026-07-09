@@ -611,6 +611,7 @@ fn file_length(
         Extent::Y4m => Ok(y4m_length(source, file_start, limit)?),
         Extent::Pvr => Ok(pvr_length(source, file_start, limit)?),
         Extent::Blp => Ok(blp_length(source, file_start, limit)?),
+        Extent::Grib2 => Ok(grib2_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4345,6 +4346,41 @@ fn blp_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(end))
 }
 
+/// GRIB2 weather data (`.grib2`) length. A file is a run of self-delimiting
+/// messages, each opening with `GRIB`, a reserved field, a discipline byte, an
+/// edition byte (`2` for GRIB2), and a big-endian `u64` total length at offset
+/// 8, and closing with a `7777` end marker. Each message is walked by its
+/// length — and validated by confirming its trailing `7777` — until the next
+/// bytes are not another GRIB2 message, giving an exact size across any number
+/// of concatenated messages.
+fn grib2_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut pos = 0u64;
+    // A well-formed file has far fewer messages than this cap.
+    for _ in 0..10_000_000u64 {
+        let mut head = [0u8; 16];
+        if pos.saturating_add(16) > limit || source.read_at(file_start + pos, &mut head)? < 16 {
+            break;
+        }
+        if &head[0..4] != b"GRIB" || head[7] != 2 {
+            break;
+        }
+        let len = u64::from_be_bytes(head[8..16].try_into().unwrap());
+        if len < 16 || file_start.saturating_add(pos).saturating_add(len) > limit {
+            break;
+        }
+        // Validate the message's trailing "7777" end marker.
+        let mut tail = [0u8; 4];
+        if source.read_at(file_start + pos + len - 4, &mut tail)? < 4 || &tail != b"7777" {
+            break;
+        }
+        pos = pos.saturating_add(len);
+    }
+    if pos == 0 {
+        return Ok(None); // no complete, validated message
+    }
+    Ok(Some(pos))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7591,6 +7627,38 @@ mod tests {
         let v = blp(64, 64, &[]);
         let (_t, src) = source_of(&v);
         assert_eq!(blp_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a single GRIB2 message of the given total length: the `GRIB` magic,
+    /// edition byte 2, a big-endian `u64` length, and a trailing `7777` marker.
+    fn grib2_msg(len: u64) -> Vec<u8> {
+        let mut m = vec![0u8; len as usize];
+        m[0..4].copy_from_slice(b"GRIB");
+        m[7] = 2; // edition
+        m[8..16].copy_from_slice(&len.to_be_bytes());
+        let n = len as usize;
+        m[n - 4..n].copy_from_slice(b"7777");
+        m
+    }
+
+    #[test]
+    fn grib2_length_walks_messages() {
+        // Two concatenated messages of 32 and 48 bytes.
+        let mut v = grib2_msg(32);
+        v.extend(grib2_msg(48));
+        let (_t, src) = source_of(&v);
+        assert_eq!(grib2_length(&src, 0, src.size).unwrap(), Some(80));
+    }
+
+    #[test]
+    fn grib2_length_rejects_bad_magic_and_missing_end_marker() {
+        let (_t, src) = source_of(&[0u8; 16]);
+        assert_eq!(grib2_length(&src, 0, src.size).unwrap(), None);
+        // A message whose trailing "7777" is corrupt is not counted.
+        let mut v = grib2_msg(32);
+        v[28..32].copy_from_slice(b"XXXX");
+        let (_t, src) = source_of(&v);
+        assert_eq!(grib2_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
