@@ -183,6 +183,7 @@
 //! * [`Extent::Swap`] — Linux swap area: the last-page index in the header times
 //!   the page size.
 //! * [`Extent::Romfs`] — romfs image: the full-image-size field in the header.
+//! * [`Extent::Cramfs`] — cramfs image: the total-size field in the superblock.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -926,6 +927,14 @@ pub enum Extent {
     /// at offset 8, which is the image length directly. The 8-byte magic makes a
     /// false match negligible.
     Romfs,
+    /// cramfs image (`.cramfs`) — the small compressed read-only Linux
+    /// filesystem long used in firmware and embedded/boot images. The superblock
+    /// carries the `0x28CD3D45` magic at offset 0 (little- or big-endian) and the
+    /// 16-byte `Compressed ROMFS` signature at offset 0x10, with the total image
+    /// size as a `u32` at offset 4 (same endianness as the magic), which is the
+    /// image length directly. The 16-byte signature makes a false match
+    /// negligible.
+    Cramfs,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2740,6 +2749,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 4 * GB,
     },
     Signature {
+        // cramfs image: the 16-byte "Compressed ROMFS" signature at offset 0x10
+        // (endianness-independent); size = u32 at offset 4 (magic endianness).
+        name: "cramfs image",
+        ext: "cramfs",
+        magic: b"Compressed ROMFS",
+        magic_offset: 0x10,
+        secondary: None,
+        extent: Extent::Cramfs,
+        max_size: 4 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -3073,7 +3093,7 @@ pub fn category_of(ext: &str) -> Category {
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
         | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs"
-        | "btrfs" | "xfs" | "exfat" | "apfs" | "refs" | "ntfs" | "swap" | "romfs" => {
+        | "btrfs" | "xfs" | "exfat" | "apfs" | "refs" | "ntfs" | "swap" | "romfs" | "cramfs" => {
             Category::System
         }
         _ => Category::Other,

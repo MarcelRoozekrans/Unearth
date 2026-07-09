@@ -621,6 +621,7 @@ fn file_length(
         Extent::Ntfs => Ok(ntfs_length(source, file_start, limit)?),
         Extent::Swap => Ok(swap_length(source, file_start, limit)?),
         Extent::Romfs => Ok(romfs_length(source, file_start, limit)?),
+        Extent::Cramfs => Ok(cramfs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4619,6 +4620,37 @@ fn romfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u
     Ok(Some(size))
 }
 
+/// cramfs image (`.cramfs`) length. The superblock carries the `0x28CD3D45`
+/// magic at offset 0 (little- or big-endian) and the 16-byte `Compressed ROMFS`
+/// signature at offset 0x10, with the total image size as a `u32` at offset 4
+/// (same endianness as the magic), which is the image length directly. The
+/// endianness is taken from whichever orientation reads the magic; the 16-byte
+/// signature rejects a coincidental match.
+fn cramfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x20];
+    if source.read_at(file_start, &mut h)? < 0x20 || &h[0x10..0x20] != b"Compressed ROMFS" {
+        return Ok(None);
+    }
+    let m = h[0..4].try_into().unwrap();
+    let big = if u32::from_le_bytes(m) == 0x28CD_3D45 {
+        false
+    } else if u32::from_be_bytes(m) == 0x28CD_3D45 {
+        true
+    } else {
+        return Ok(None);
+    };
+    let s = h[4..8].try_into().unwrap();
+    let size = if big {
+        u32::from_be_bytes(s)
+    } else {
+        u32::from_le_bytes(s)
+    } as u64;
+    if size < 0x40 || file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -8165,6 +8197,48 @@ mod tests {
         v[8..12].copy_from_slice(&8u32.to_be_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(romfs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a cramfs image of the given size and byte order.
+    fn cramfs(size: u32, big: bool) -> Vec<u8> {
+        let mut v = vec![0u8; (size as usize).max(0x40)];
+        let m = if big {
+            0x28CD_3D45u32.to_be_bytes()
+        } else {
+            0x28CD_3D45u32.to_le_bytes()
+        };
+        v[0..4].copy_from_slice(&m);
+        let s = if big {
+            size.to_be_bytes()
+        } else {
+            size.to_le_bytes()
+        };
+        v[4..8].copy_from_slice(&s);
+        v[0x10..0x20].copy_from_slice(b"Compressed ROMFS");
+        v
+    }
+
+    #[test]
+    fn cramfs_length_reads_size_either_endian() {
+        // Little-endian.
+        let v = cramfs(8192, false);
+        let (_t, src) = source_of(&v);
+        assert_eq!(cramfs_length(&src, 0, src.size).unwrap(), Some(8192));
+        // Big-endian.
+        let v = cramfs(8192, true);
+        let (_t, src) = source_of(&v);
+        assert_eq!(cramfs_length(&src, 0, src.size).unwrap(), Some(8192));
+    }
+
+    #[test]
+    fn cramfs_length_rejects_bad_magic() {
+        let (_t, src) = source_of(&[0u8; 0x20]);
+        assert_eq!(cramfs_length(&src, 0, src.size).unwrap(), None);
+        // Signature present but the 0x28CD3D45 magic is absent.
+        let mut v = cramfs(8192, false);
+        v[0..4].copy_from_slice(&0u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(cramfs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
