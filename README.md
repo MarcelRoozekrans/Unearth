@@ -685,6 +685,7 @@ alongside the per-file manifest.
 | dds    | DDS GPU texture (DirectX, games)                | header + computed mip chain |
 | astc   | ASTC GPU texture (mobile / Vulkan)              | header + 16 bytes/block     |
 | pvr    | PVR GPU texture (PowerVR / mobile)              | header + block mip chain    |
+| blp    | BLP2 texture (World of Warcraft)                | furthest mipmap end         |
 | glb    | glTF binary 3D model (games, AR/VR)             | header length + chunk walk  |
 | tif    | TIFF / BigTIFF / raw (DNG/NEF/ARW)              | IFD / strip-tile walk       |
 | cr2    | Canon CR2 raw image                              | IFD / strip-tile walk       |
