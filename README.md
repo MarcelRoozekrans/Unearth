@@ -691,6 +691,7 @@ alongside the per-file manifest.
 | cr2    | Canon CR2 raw image                              | IFD / strip-tile walk       |
 | raf    | Fuji RAF raw image                               | max section offset + length |
 | nii    | NIfTI neuroimaging volume (MRI/fMRI)            | data offset + dims × bitpix |
+| grib2  | GRIB2 weather data (NOAA / ECMWF)               | per-message length walk     |
 | pdf    | PDF document                                     | `%%EOF`                     |
 | djvu   | DjVu document                                    | IFF FORM length             |
 | rtf    | Rich Text Format document                        | outer `{ }` group match     |
