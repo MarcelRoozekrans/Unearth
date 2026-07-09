@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **BeFS filesystem images are carved** — `scan` now recovers whole `.befs`
+  images, the Be File System from BeOS, still used by Haiku. The superblock sits
+  512 bytes into the volume and carries two magics — `BFS1` at offset 0x20 and
+  0xDD121031 at offset 0x44 (little- or big-endian) — plus a block size at
+  offset 0x28 and a block count at offset 0x30, so the exact image length is
+  `num_blocks × block_size`. The two magics plus a power-of-two block size
+  reject a coincidental match. Complements the existing BeFS *detection* used by
+  `info`.
 - **UFS1 filesystem images are carved** — `scan` now recovers whole `.ufs`
   images, the Berkeley Fast File System traditional to the BSDs and Solaris. The
   UFS1 superblock sits 8 KiB into the volume with the `0x00011954` magic at

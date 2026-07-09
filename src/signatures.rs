@@ -188,6 +188,8 @@
 //!   superblock times the physical block size.
 //! * [`Extent::Ufs`] — UFS1 filesystem image: the fragment count in the
 //!   superblock times the fragment size.
+//! * [`Extent::Befs`] — BeFS filesystem image: the block count in the superblock
+//!   times the block size.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -955,6 +957,14 @@ pub enum Extent {
     /// lives in a 64-bit field this layout leaves zero) is not carved, so it is
     /// skipped rather than mis-sized.
     Ufs,
+    /// BeFS filesystem image (`.befs`) — the Be File System from BeOS, still
+    /// used by Haiku. Its superblock sits 512 bytes into the volume and carries
+    /// two magics — `BFS1` (0x42465331) at offset 0x20 and 0xDD121031 at offset
+    /// 0x44 (little- or big-endian, resolved from the first) — plus a `u32`
+    /// block size at offset 0x28 and a `u64` block count at offset 0x30. The
+    /// image length is `num_blocks × block_size`. The two magics plus a
+    /// power-of-two block size reject a coincidental match.
+    Befs,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2812,6 +2822,27 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 64 * GB,
     },
     Signature {
+        // BeFS filesystem image (little-endian): "BFS1" magic at 0x220
+        // (superblock 512 + 0x20), size = block count × block size.
+        name: "BeFS filesystem image",
+        ext: "befs",
+        magic: &[0x31, 0x53, 0x46, 0x42],
+        magic_offset: 0x220,
+        secondary: None,
+        extent: Extent::Befs,
+        max_size: 64 * GB,
+    },
+    Signature {
+        // BeFS filesystem image (big-endian): "BFS1" magic at 0x220.
+        name: "BeFS filesystem image",
+        ext: "befs",
+        magic: &[0x42, 0x46, 0x53, 0x31],
+        magic_offset: 0x220,
+        secondary: None,
+        extent: Extent::Befs,
+        max_size: 64 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -3146,7 +3177,7 @@ pub fn category_of(ext: &str) -> Category {
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
         | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs"
         | "btrfs" | "xfs" | "exfat" | "apfs" | "refs" | "ntfs" | "swap" | "romfs" | "cramfs"
-        | "jfs" | "ufs" => Category::System,
+        | "jfs" | "ufs" | "befs" => Category::System,
         _ => Category::Other,
     }
 }
