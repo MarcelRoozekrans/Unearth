@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **BLP2 textures are carved** — `scan` now recovers `.blp` files, the Blizzard
+  texture format used by World of Warcraft. After the `BLP2` magic and a header
+  of encoding flags and dimensions comes a directory of 16 mipmap offsets and
+  16 mipmap lengths; the exact file end is the furthest `offset + length` across
+  that directory (never less than the 148-byte header). The `BLP2` magic and
+  sane dimensions reject a coincidental match.
 - **PVR textures are carved** — `scan` now recovers `.pvr` files, the PowerVR
   texture container from Imagination's PVRTexTool, widely used in iOS and
   Android game development. The 52-byte header records the pixel format,

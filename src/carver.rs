@@ -610,6 +610,7 @@ fn file_length(
         Extent::Farbfeld => Ok(farbfeld_length(source, file_start, limit)?),
         Extent::Y4m => Ok(y4m_length(source, file_start, limit)?),
         Extent::Pvr => Ok(pvr_length(source, file_start, limit)?),
+        Extent::Blp => Ok(blp_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4306,6 +4307,44 @@ fn pvr_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(total))
 }
 
+/// BLP2 texture (`.blp`) length. After the `BLP2` magic and a header of encoding
+/// flags and dimensions comes a directory of 16 mipmap offsets (at 0x14) and 16
+/// mipmap lengths (at 0x54), each a little-endian `u32`. The file end is the
+/// furthest `offset + length` across the directory, never less than the
+/// 148-byte header. A zero-length mipmap entry is unused and contributes
+/// nothing.
+fn blp_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const HEADER: usize = 0x94; // 148 bytes: header + 16 offsets + 16 lengths
+    let mut h = [0u8; HEADER];
+    if source.read_at(file_start, &mut h)? < HEADER || &h[0..4] != b"BLP2" {
+        return Ok(None);
+    }
+    let width = u32::from_le_bytes(h[12..16].try_into().unwrap());
+    let height = u32::from_le_bytes(h[16..20].try_into().unwrap());
+    if !(1..=65536).contains(&width) || !(1..=65536).contains(&height) {
+        return Ok(None);
+    }
+    let rd = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap()) as u64;
+    let mut end = HEADER as u64;
+    let mut any = false;
+    for i in 0..16 {
+        let ofs = rd(0x14 + i * 4);
+        let len = rd(0x54 + i * 4);
+        if len == 0 {
+            continue;
+        }
+        any = true;
+        end = end.max(ofs.saturating_add(len));
+    }
+    if !any {
+        return Ok(None);
+    }
+    if file_start.saturating_add(end) > limit {
+        return Ok(None);
+    }
+    Ok(Some(end))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7514,6 +7553,44 @@ mod tests {
         v[12..16].copy_from_slice(&1u32.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(pvr_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a BLP2 texture with the given dimensions and `(offset, length)`
+    /// mipmap directory entries; the buffer is sized to the furthest mip end.
+    fn blp(width: u32, height: u32, mips: &[(u32, u32)]) -> Vec<u8> {
+        let mut total = 0x94u32;
+        for &(o, l) in mips {
+            if l > 0 {
+                total = total.max(o + l);
+            }
+        }
+        let mut v = vec![0u8; total as usize];
+        v[0..4].copy_from_slice(b"BLP2");
+        v[12..16].copy_from_slice(&width.to_le_bytes());
+        v[16..20].copy_from_slice(&height.to_le_bytes());
+        for (i, &(o, l)) in mips.iter().enumerate() {
+            v[0x14 + i * 4..0x18 + i * 4].copy_from_slice(&o.to_le_bytes());
+            v[0x54 + i * 4..0x58 + i * 4].copy_from_slice(&l.to_le_bytes());
+        }
+        v
+    }
+
+    #[test]
+    fn blp_length_uses_furthest_mip_end() {
+        let v = blp(64, 64, &[(148, 4096), (4244, 1024)]);
+        assert_eq!(v.len() as u64, 5268);
+        let (_t, src) = source_of(&v);
+        assert_eq!(blp_length(&src, 0, src.size).unwrap(), Some(5268));
+    }
+
+    #[test]
+    fn blp_length_rejects_bad_magic_and_empty_directory() {
+        let (_t, src) = source_of(&[0u8; 0x94]);
+        assert_eq!(blp_length(&src, 0, src.size).unwrap(), None);
+        // Valid magic and dimensions but no mipmaps at all.
+        let v = blp(64, 64, &[]);
+        let (_t, src) = source_of(&v);
+        assert_eq!(blp_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

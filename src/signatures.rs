@@ -162,6 +162,8 @@
 //!   header's dimensions and colourspace.
 //! * [`Extent::Pvr`] — PVR v3 texture: the header, metadata, and the
 //!   block-compressed mip chain.
+//! * [`Extent::Blp`] — BLP2 texture: the furthest mipmap end in the 16-entry
+//!   offset/length directory.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -821,6 +823,13 @@ pub enum Extent {
     /// minimum-size rule), ASTC, uncompressed formats, and array/cube/volume
     /// textures are skipped rather than mis-sized.
     Pvr,
+    /// BLP2 texture (`.blp`) — the Blizzard texture format used by World of
+    /// Warcraft. After the `BLP2` magic and a header of encoding flags and
+    /// dimensions comes a directory of 16 mipmap offsets and 16 mipmap lengths.
+    /// The file end is the furthest `offset + length` across that directory
+    /// (never less than the 148-byte header). The `BLP2` magic and sane
+    /// dimensions reject a coincidental match.
+    Blp,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2514,6 +2523,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * MB,
     },
     Signature {
+        // BLP2 texture (World of Warcraft): "BLP2" magic, size from the furthest
+        // mipmap end in the 16-entry offset/length directory.
+        name: "BLP2 texture",
+        ext: "blp",
+        magic: b"BLP2",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Blp,
+        max_size: 256 * MB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2827,7 +2847,9 @@ pub fn category_of(ext: &str) -> Category {
         "jpg" | "png" | "gif" | "bmp" | "tif" | "webp" | "heic" | "avif" | "jp2" | "j2k"
         | "jxl" | "ico" | "cur" | "icns" | "cr2" | "cr3" | "psd" | "wmf" | "emf" | "djvu"
         | "ani" | "eps" | "fli" | "flc" | "dpx" | "cin" | "mng" | "jng" | "ras" | "ktx2"
-        | "raf" | "nii" | "dds" | "astc" | "ktx" | "exr" | "qoi" | "ff" | "pvr" => Category::Image,
+        | "raf" | "nii" | "dds" | "astc" | "ktx" | "exr" | "qoi" | "ff" | "pvr" | "blp" => {
+            Category::Image
+        }
         "mp3" | "aac" | "wav" | "aiff" | "aifc" | "ogg" | "mid" | "m4a" | "au" | "voc" | "amr"
         | "wv" | "ape" | "dsf" | "dff" | "sf2" | "qoa" | "rf64" => Category::Audio,
         "mp4" | "mov" | "m4v" | "3gp" | "mkv" | "avi" | "flv" | "asf" | "ts" | "mpg" | "ivf"
