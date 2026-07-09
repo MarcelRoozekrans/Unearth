@@ -726,6 +726,7 @@ alongside the per-file manifest.
 | apfs   | APFS container (macOS / iOS since 2017)         | block count × block size    |
 | refs   | ReFS image (Windows Server / Dev Drive)         | sector count × sector size  |
 | ntfs   | NTFS image (Windows volumes)                    | total sectors × sector size |
+| swap   | Linux swap area (forensics)                     | (last_page + 1) × page size |
 | uimage | U-Boot uImage (router/IoT firmware)             | 64-byte header + data size  |
 | dtb    | Device Tree Blob (FDT, embedded Linux)          | totalsize field in header   |
 | trx    | TRX firmware (Broadcom/OpenWrt routers)         | len field in header         |

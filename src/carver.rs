@@ -619,6 +619,7 @@ fn file_length(
         Extent::Apfs => Ok(apfs_length(source, file_start, limit)?),
         Extent::Refs => Ok(refs_length(source, file_start, limit)?),
         Extent::Ntfs => Ok(ntfs_length(source, file_start, limit)?),
+        Extent::Swap => Ok(swap_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4573,6 +4574,34 @@ fn ntfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
     Ok(Some(total))
 }
 
+/// Linux swap area (`.swap`) length. The first page is a header: a `u32` version
+/// at offset 1024, a `u32` `last_page` (the highest page index) at offset 1028,
+/// and the ASCII `SWAPSPACE2` magic at `page_size − 10`. Matching the magic at
+/// offset 4086 fixes the page size at 4 KiB, so the area length is
+/// `(last_page + 1) × 4096`. A version other than 1 or a missing magic rejects a
+/// coincidental match.
+fn swap_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const PAGE: u64 = 4096;
+    let mut magic = [0u8; 10];
+    if source.read_at(file_start + PAGE - 10, &mut magic)? < 10 || &magic != b"SWAPSPACE2" {
+        return Ok(None);
+    }
+    let mut hdr = [0u8; 8];
+    if source.read_at(file_start + 1024, &mut hdr)? < 8 {
+        return Ok(None);
+    }
+    let version = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
+    let last_page = u32::from_le_bytes(hdr[4..8].try_into().unwrap()) as u64;
+    if version != 1 || last_page == 0 {
+        return Ok(None);
+    }
+    let total = (last_page + 1).saturating_mul(PAGE);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -8064,6 +8093,35 @@ mod tests {
         v[11..13].copy_from_slice(&513u16.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(ntfs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a 4 KiB-page Linux swap area with the given `last_page` index.
+    fn swap(last_page: u32) -> Vec<u8> {
+        let total = ((last_page as u64 + 1) * 4096).max(4096);
+        let mut v = vec![0u8; total as usize];
+        v[1024..1028].copy_from_slice(&1u32.to_le_bytes()); // version
+        v[1028..1032].copy_from_slice(&last_page.to_le_bytes());
+        v[4086..4096].copy_from_slice(b"SWAPSPACE2");
+        v
+    }
+
+    #[test]
+    fn swap_length_uses_last_page() {
+        // last_page 63 => 64 pages => 256 KiB.
+        let v = swap(63);
+        let (_t, src) = source_of(&v);
+        assert_eq!(swap_length(&src, 0, src.size).unwrap(), Some(64 * 4096));
+    }
+
+    #[test]
+    fn swap_length_rejects_missing_magic_and_bad_version() {
+        let (_t, src) = source_of(&[0u8; 4096]);
+        assert_eq!(swap_length(&src, 0, src.size).unwrap(), None);
+        // Magic present but a version other than 1 (e.g. a truncated/older area).
+        let mut v = swap(63);
+        v[1024..1028].copy_from_slice(&2u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(swap_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
