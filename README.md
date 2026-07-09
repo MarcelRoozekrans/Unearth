@@ -238,6 +238,25 @@ resolves to the same exact, bounds-checked sizing the built-in carvers use, the
 worst a bad spec can do is fail to match — it can never over-read the source or
 emit a wrong length.
 
+#### Install as a Claude Code plugin
+
+This repo doubles as a [Claude Code](https://code.claude.com) **plugin
+marketplace**, so you can wire up the MCP server and the custom-carver skill in
+two commands instead of editing config by hand. First make sure the
+`filerecovery` binary is on your `PATH` (`cargo install filerecovery`, or drop a
+release binary somewhere on `PATH`) — the plugin launches it, it doesn't bundle
+it. Then, in Claude Code:
+
+```
+/plugin marketplace add marcelroozekrans/filerecovery
+/plugin install filerecovery@filerecovery-tools
+```
+
+That registers the `filerecovery` MCP server (all the tools above) and the
+`custom-carver` skill (which guides authoring `custom_carvers` specs). The skill
+is available as `/filerecovery:custom-carver`. Manage or remove it later with
+`/plugin`.
+
 ### Shell completions
 
 ```sh

@@ -24,6 +24,20 @@ on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
   extension, well-formed hex), and a bad spec is reported before the scan job
   starts. Two new length primitives (`Extent::Fixed`, `Extent::SizeField`) back
   the feature and generalise the existing header-size extents.
+- **Claude Code plugin & marketplace.** The repository now doubles as a Claude
+  Code plugin marketplace (`.claude-plugin/marketplace.json` +
+  `.claude-plugin/plugin.json` + `.mcp.json`), so the MCP server and the
+  `custom-carver` skill install in two commands
+  (`/plugin marketplace add marcelroozekrans/filerecovery` then
+  `/plugin install filerecovery@filerecovery-tools`) instead of hand-editing an
+  MCP config. The plugin launches the `filerecovery` binary from `PATH`; it does
+  not bundle it.
+- **Skill: authoring custom carvers.** A bundled Agent skill
+  (`skills/custom-carver/SKILL.md`) walks an agent through building a
+  `custom_carvers` spec safely — identify the magic, derive an *exact* size rule,
+  validate it reproduces a known sample's byte length, and abandon the carver if
+  the format can't be sized reliably — closing the authoring-layer gap the tool
+  itself can't police.
 
 ## [0.3.0] - 2026-07-09
 

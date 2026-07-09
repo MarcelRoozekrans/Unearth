@@ -1,5 +1,5 @@
 ---
-name: filerecovery-custom-carver
+name: custom-carver
 description: >-
   Author a custom carver for the filerecovery MCP `scan` tool so it can recover
   a file type it doesn't support natively. Use when someone wants to carve or
