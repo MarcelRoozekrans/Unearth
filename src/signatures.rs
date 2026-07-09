@@ -170,6 +170,8 @@
 //!   times the block size.
 //! * [`Extent::Btrfs`] — btrfs filesystem image: the `total_bytes` field in the
 //!   superblock (single-device images).
+//! * [`Extent::Xfs`] — XFS filesystem image: the data-block count in the
+//!   superblock times the block size.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -860,6 +862,13 @@ pub enum Extent {
     /// The magic plus power-of-two sector/node sizes reject a coincidental
     /// match; multi-device filesystems are skipped rather than over-sized.
     Btrfs,
+    /// XFS filesystem image (`.xfs`) — the high-performance journaling
+    /// filesystem that is the default on RHEL, CentOS, and Rocky Linux. Its
+    /// superblock opens the volume with the big-endian `XFSB` magic, a `u32`
+    /// block size at offset 4, and a `u64` total data-block count at offset 8.
+    /// The image length is `sb_dblocks × sb_blocksize`. The magic plus a
+    /// power-of-two block size reject a coincidental match.
+    Xfs,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2597,6 +2606,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 64 * GB,
     },
     Signature {
+        // XFS filesystem image: big-endian "XFSB" magic at offset 0, size =
+        // sb_dblocks × sb_blocksize.
+        name: "XFS filesystem image",
+        ext: "xfs",
+        magic: b"XFSB",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Xfs,
+        max_size: 64 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2930,7 +2950,7 @@ pub fn category_of(ext: &str) -> Category {
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
         | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs"
-        | "btrfs" => Category::System,
+        | "btrfs" | "xfs" => Category::System,
         _ => Category::Other,
     }
 }
