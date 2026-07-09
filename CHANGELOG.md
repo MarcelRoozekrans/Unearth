@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **PVR textures are carved** — `scan` now recovers `.pvr` files, the PowerVR
+  texture container from Imagination's PVRTexTool, widely used in iOS and
+  Android game development. The 52-byte header records the pixel format,
+  dimensions, mip count, and metadata size, so the file is the header plus the
+  metadata plus the block-compressed mip chain. Only plain 2D textures in the
+  4×4-block codecs whose block size is unambiguous (BC1–BC7, ETC1/ETC2, EAC) are
+  sized; PVRTC (with its minimum-size rule), ASTC, uncompressed formats, and
+  array/cube/volume textures are skipped rather than mis-sized.
 - **YUV4MPEG2 video is carved** — `scan` now recovers `.y4m` files, the
   uncompressed raw-video interchange format piped between modern encoders and
   tools (FFmpeg, the AV1/VP9/x264/x265 reference encoders). A one-line header

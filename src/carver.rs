@@ -609,6 +609,7 @@ fn file_length(
         Extent::Rpm => Ok(rpm_length(source, file_start, limit)?),
         Extent::Farbfeld => Ok(farbfeld_length(source, file_start, limit)?),
         Extent::Y4m => Ok(y4m_length(source, file_start, limit)?),
+        Extent::Pvr => Ok(pvr_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4244,6 +4245,67 @@ fn y4m_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
     Ok(Some(pos))
 }
 
+/// PVR v3 texture (`.pvr`) length. The 52-byte little-endian header (magic
+/// `0x03525650`) records the 64-bit pixel format, the dimensions, the surface/
+/// face/mip counts, and the metadata size. The file is the header plus the
+/// metadata plus the mip chain. Only plain 2D textures (`depth`, `numSurfaces`,
+/// and `numFaces` all 1) in the 4×4-block codecs whose block size is
+/// unambiguous — BC1–BC7, ETC1/ETC2, EAC — are sized; PVRTC, ASTC, uncompressed
+/// (channel-encoded) formats, and array/cube/volume textures return `None`.
+fn pvr_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 52];
+    if source.read_at(file_start, &mut h)? < 52 {
+        return Ok(None);
+    }
+    let rd = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap());
+    if rd(0) != 0x0352_5650 {
+        return Ok(None);
+    }
+    let pf_lo = rd(8);
+    let pf_hi = rd(12);
+    // A non-zero high word means a channel-encoded (uncompressed) format.
+    if pf_hi != 0 {
+        return Ok(None);
+    }
+    let height = rd(24) as u64;
+    let width = rd(28) as u64;
+    let depth = rd(32);
+    let num_surfaces = rd(36);
+    let num_faces = rd(40);
+    let num_mipmaps = rd(44);
+    let metadata = rd(48) as u64;
+    if width == 0 || height == 0 {
+        return Ok(None);
+    }
+    // Only plain 2D textures — no volumes, arrays, or cubemaps.
+    if depth != 1 || num_surfaces != 1 || num_faces != 1 {
+        return Ok(None);
+    }
+    if num_mipmaps == 0 || num_mipmaps > 32 {
+        return Ok(None);
+    }
+    // 4×4-block codecs whose block byte size is unambiguous.
+    let block_bytes: u64 = match pf_lo {
+        // ETC1, BC1/DXT1, BC4, ETC2_RGB, ETC2_RGB_A1, EAC_R11 → 8 bytes.
+        6 | 7 | 12 | 22 | 24 | 25 => 8,
+        // BC2/DXT3, BC3/DXT5, BC5, BC6H, BC7, ETC2_RGBA, EAC_RG11 → 16 bytes.
+        9 | 11 | 13 | 14 | 15 | 23 | 26 => 16,
+        _ => return Ok(None),
+    };
+    let mut data = 0u64;
+    for i in 0..num_mipmaps {
+        let mw = (width >> i).max(1);
+        let mh = (height >> i).max(1);
+        let blocks = mw.div_ceil(4).saturating_mul(mh.div_ceil(4));
+        data = data.saturating_add(blocks.saturating_mul(block_bytes));
+    }
+    let total = 52u64.saturating_add(metadata).saturating_add(data);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7394,6 +7456,64 @@ mod tests {
         let v = y4m(" W4 H4 C420p10", 1, 48);
         let (_t, src) = source_of(&v);
         assert_eq!(y4m_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a PVR v3 2D texture with the given pixel-format enum, dimensions,
+    /// mip count, and metadata length; the block-compressed mip chain is sized
+    /// to match `pvr_length`.
+    fn pvr(pf_lo: u32, width: u32, height: u32, mipmaps: u32, meta_len: usize) -> Vec<u8> {
+        let block: u64 = match pf_lo {
+            6 | 7 | 12 | 22 | 24 | 25 => 8,
+            _ => 16,
+        };
+        let mut data = 0u64;
+        for i in 0..mipmaps {
+            let mw = ((width >> i) as u64).max(1);
+            let mh = ((height >> i) as u64).max(1);
+            data += mw.div_ceil(4) * mh.div_ceil(4) * block;
+        }
+        let mut v = vec![0u8; 52];
+        v[0..4].copy_from_slice(&0x0352_5650u32.to_le_bytes());
+        v[8..12].copy_from_slice(&pf_lo.to_le_bytes());
+        v[24..28].copy_from_slice(&height.to_le_bytes());
+        v[28..32].copy_from_slice(&width.to_le_bytes());
+        v[32..36].copy_from_slice(&1u32.to_le_bytes()); // depth
+        v[36..40].copy_from_slice(&1u32.to_le_bytes()); // numSurfaces
+        v[40..44].copy_from_slice(&1u32.to_le_bytes()); // numFaces
+        v[44..48].copy_from_slice(&mipmaps.to_le_bytes());
+        v[48..52].copy_from_slice(&(meta_len as u32).to_le_bytes());
+        v.extend_from_slice(&vec![0u8; meta_len]);
+        v.extend_from_slice(&vec![0u8; data as usize]);
+        v
+    }
+
+    #[test]
+    fn pvr_length_computes_block_mip_chain() {
+        // BC1 (8-byte blocks), 8x8, single level: 2*2*8 = 32 bytes of data.
+        let v = pvr(7, 8, 8, 1, 0);
+        assert_eq!(v.len() as u64, 52 + 32);
+        let (_t, src) = source_of(&v);
+        assert_eq!(pvr_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+        // BC3 (16-byte blocks), full mip chain, plus a metadata block.
+        let v = pvr(11, 8, 8, 4, 12);
+        let (_t, src) = source_of(&v);
+        assert_eq!(pvr_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+    }
+
+    #[test]
+    fn pvr_length_rejects_bad_magic_and_unsupported() {
+        let (_t, src) = source_of(&[0u8; 52]);
+        assert_eq!(pvr_length(&src, 0, src.size).unwrap(), None);
+        // A cubemap (numFaces == 6) is skipped rather than mis-sized.
+        let mut v = pvr(7, 8, 8, 1, 0);
+        v[40..44].copy_from_slice(&6u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(pvr_length(&src, 0, src.size).unwrap(), None);
+        // An uncompressed (channel-encoded) format has a non-zero high word.
+        let mut v = pvr(7, 8, 8, 1, 0);
+        v[12..16].copy_from_slice(&1u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(pvr_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
