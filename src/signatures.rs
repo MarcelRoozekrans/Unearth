@@ -168,6 +168,8 @@
 //!   walked (each validated by its `7777` end marker).
 //! * [`Extent::F2fs`] — F2FS filesystem image: the block count in the superblock
 //!   times the block size.
+//! * [`Extent::Btrfs`] — btrfs filesystem image: the `total_bytes` field in the
+//!   superblock (single-device images).
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -850,6 +852,14 @@ pub enum Extent {
     /// `block_count << log_blocksize`. The magic at the fixed superblock offset
     /// plus a sane block size make a false match negligible.
     F2fs,
+    /// btrfs filesystem image (`.btrfs`) — the copy-on-write Linux filesystem
+    /// that is the default on Fedora Workstation and openSUSE and is used by
+    /// Synology NAS units. Its superblock sits at a fixed offset of 64 KiB
+    /// (magic `_BHRfS_M` at +64) and records `total_bytes` at +112. For a
+    /// single-device image (`num_devices == 1`) that field is the image length.
+    /// The magic plus power-of-two sector/node sizes reject a coincidental
+    /// match; multi-device filesystems are skipped rather than over-sized.
+    Btrfs,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2576,6 +2586,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 64 * GB,
     },
     Signature {
+        // btrfs filesystem image: "_BHRfS_M" superblock magic 64 KiB in (at
+        // +64), size = total_bytes for a single-device image.
+        name: "btrfs filesystem image",
+        ext: "btrfs",
+        magic: b"_BHRfS_M",
+        magic_offset: 0x1_0040,
+        secondary: None,
+        extent: Extent::Btrfs,
+        max_size: 64 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2908,9 +2929,8 @@ pub fn category_of(ext: &str) -> Category {
         }
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
-        | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs" => {
-            Category::System
-        }
+        | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs"
+        | "btrfs" => Category::System,
         _ => Category::Other,
     }
 }
