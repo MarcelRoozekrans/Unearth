@@ -213,7 +213,9 @@ fn tool_definitions() -> Json {
         "Start carving files from a source by signature into output_dir \
          (filesystem-agnostic). Runs as a background job (carving a large drive \
          is slow): returns a job_id — poll scan_status, and use scan_cancel to \
-         stop it.",
+         stop it. Extra file types the tool doesn't know natively can be injected \
+         for this scan via custom_carvers (a magic plus a declarative length \
+         rule).",
         schema(
             vec![
                 (
@@ -286,6 +288,29 @@ fn tool_definitions() -> Json {
                 (
                     "resume",
                     bool_prop("Resume from the checkpoint if present (default false)."),
+                ),
+                (
+                    "custom_carvers",
+                    obj(vec![
+                        ("type", s("array")),
+                        ("items", obj(vec![("type", s("object"))])),
+                        (
+                            "description",
+                            s("Extra carvers to use for this scan only, for file types not \
+                               built in. Each item is an object: {\"name\": str, \"ext\": str \
+                               (letters/digits/_/- , used as the output extension), \"magic\": \
+                               hex string (e.g. \"89 50 4E 47\"), \"magic_offset\": int \
+                               (default 0), optional \"secondary\": {\"offset\": int, \"bytes\": \
+                               hex}, \"max_size\": int (required cap in bytes), and \"length\": a \
+                               declarative size rule — one of: \
+                               {\"strategy\":\"fixed\",\"size\":N}; \
+                               {\"strategy\":\"size_field\",\"offset\":O,\"width\":8|16|32|64,\
+                               \"endian\":\"le\"|\"be\",\"mul\":M,\"add\":K} → size = value*mul+add; \
+                               or {\"strategy\":\"footer\",\"marker\":hex,\"trailing\":N}. The size \
+                               is always computed exactly and bounds-checked, so a custom carver \
+                               never emits a wrong length."),
+                        ),
+                    ]),
                 ),
             ],
             vec!["source", "output_dir"],
@@ -682,10 +707,18 @@ fn call_tool(name: &str, args: Option<&Json>) -> Result<Json, String> {
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .or_else(|| Some(format!("{output_dir}.checkpoint")));
+            // Runtime-injected custom carvers, parsed up front so a malformed
+            // spec is reported synchronously rather than failing the background
+            // job. Empty when the argument is absent.
+            let custom = match args.and_then(|a| a.get("custom_carvers")) {
+                Some(cc) => crate::custom::from_json(cc)?,
+                None => Vec::new(),
+            };
 
             let id = crate::job::start("scan", move |progress| {
                 let source = open(&source_path)?;
-                let active = signatures::select(&types).map_err(|e| e.to_string())?;
+                let mut active = signatures::select(&types).map_err(|e| e.to_string())?;
+                active.extend(custom.iter().copied());
                 let opts = carver::CarveOptions {
                     output_dir: output_dir.clone().into(),
                     start: 0,
@@ -1223,5 +1256,45 @@ mod tests {
         );
         let result = resp.get("result").unwrap();
         assert_eq!(result.get("isError").unwrap().as_bool(), Some(true));
+    }
+
+    #[test]
+    fn scan_accepts_valid_custom_carvers() {
+        // A well-formed custom carver parses up front, so `scan` starts a job
+        // (the bogus source only fails later, inside the background job).
+        let resp = call(
+            r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"scan",
+               "arguments":{"source":"/no/such/source","output_dir":"/tmp/fr-out-test",
+               "custom_carvers":[{"name":"Widget","ext":"wdg","magic":"57 44 47 31",
+               "max_size":4096,"length":{"strategy":"fixed","size":512}}]}}}"#,
+        );
+        let result = resp.get("result").unwrap();
+        assert_eq!(result.get("isError").unwrap().as_bool(), Some(false));
+        let text = result.get("content").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(json::parse(text).unwrap().get("job_id").is_some());
+    }
+
+    #[test]
+    fn scan_rejects_malformed_custom_carver_up_front() {
+        // A custom carver missing its max_size cap is reported in-band as an
+        // error before any job is started.
+        let resp = call(
+            r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"scan",
+               "arguments":{"source":"/no/such/source","output_dir":"/tmp/fr-out-test",
+               "custom_carvers":[{"name":"Bad","ext":"bad","magic":"AB",
+               "length":{"strategy":"fixed","size":1}}]}}}"#,
+        );
+        let result = resp.get("result").unwrap();
+        assert_eq!(result.get("isError").unwrap().as_bool(), Some(true));
+        let text = result.get("content").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(text.contains("custom_carvers[0]"), "got: {text}");
     }
 }
