@@ -166,6 +166,8 @@
 //!   offset/length directory.
 //! * [`Extent::Grib2`] — GRIB2 weather data: the per-message total-length fields
 //!   walked (each validated by its `7777` end marker).
+//! * [`Extent::F2fs`] — F2FS filesystem image: the block count in the superblock
+//!   times the block size.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -840,6 +842,14 @@ pub enum Extent {
     /// are walked by their length — each validated by its trailing `7777` — to
     /// the end of the run, giving an exact size across concatenated messages.
     Grib2,
+    /// F2FS filesystem image (`.f2fs`) — the Flash-Friendly File System, the
+    /// default internal-storage filesystem on most modern Android phones. Its
+    /// superblock sits at a fixed offset of 1024 bytes (magic `0xF2F52010`) and
+    /// records the block-size shift (`log_blocksize` at 0x10) and the total
+    /// block count (`block_count` at 0x24). The image length is
+    /// `block_count << log_blocksize`. The magic at the fixed superblock offset
+    /// plus a sane block size make a false match negligible.
+    F2fs,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2555,6 +2565,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 16 * GB,
     },
     Signature {
+        // F2FS filesystem image: 0xF2F52010 superblock magic at offset 1024,
+        // size = block count << block-size shift.
+        name: "F2FS filesystem image",
+        ext: "f2fs",
+        magic: &[0x10, 0x20, 0xF5, 0xF2],
+        magic_offset: 1024,
+        secondary: None,
+        extent: Extent::F2fs,
+        max_size: 64 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2887,7 +2908,9 @@ pub fn category_of(ext: &str) -> Category {
         }
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
-        | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" => Category::System,
+        | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs" => {
+            Category::System
+        }
         _ => Category::Other,
     }
 }
