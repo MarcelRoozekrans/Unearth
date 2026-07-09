@@ -190,6 +190,8 @@
 //!   superblock times the fragment size.
 //! * [`Extent::Befs`] — BeFS filesystem image: the block count in the superblock
 //!   times the block size.
+//! * [`Extent::HfsPlus`] — HFS+ filesystem image: the block count in the volume
+//!   header times the block size.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -965,6 +967,16 @@ pub enum Extent {
     /// image length is `num_blocks × block_size`. The two magics plus a
     /// power-of-two block size reject a coincidental match.
     Befs,
+    /// HFS+ filesystem image (`.hfsplus`) — the Mac OS Extended filesystem, the
+    /// macOS default before APFS and still used on many external and
+    /// Time Machine drives. Its volume header sits 1024 bytes into the volume
+    /// with a big-endian `H+` (HFS+, version 4) or `HX` (HFSX, version 5)
+    /// signature, then a `u32` allocation block size at offset 0x28 and a `u32`
+    /// total block count at offset 0x2C. The image length is
+    /// `totalBlocks × blockSize`. The signature/version pair plus a power-of-two
+    /// block size reject a coincidental match. (Only direct volumes are matched;
+    /// the rare HFS-wrapped layout is left to `info`.)
+    HfsPlus,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2843,6 +2855,27 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 64 * GB,
     },
     Signature {
+        // HFS+ volume header ("H+" signature + version 4) at offset 1024,
+        // size = total blocks × allocation block size.
+        name: "HFS+ filesystem image",
+        ext: "hfsplus",
+        magic: &[0x48, 0x2B, 0x00, 0x04],
+        magic_offset: 1024,
+        secondary: None,
+        extent: Extent::HfsPlus,
+        max_size: 512 * GB,
+    },
+    Signature {
+        // HFSX volume header ("HX" signature + version 5) at offset 1024.
+        name: "HFS+ filesystem image",
+        ext: "hfsplus",
+        magic: &[0x48, 0x58, 0x00, 0x05],
+        magic_offset: 1024,
+        secondary: None,
+        extent: Extent::HfsPlus,
+        max_size: 512 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -3177,7 +3210,7 @@ pub fn category_of(ext: &str) -> Category {
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
         | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs"
         | "btrfs" | "xfs" | "exfat" | "apfs" | "refs" | "ntfs" | "swap" | "romfs" | "cramfs"
-        | "jfs" | "ufs" | "befs" => Category::System,
+        | "jfs" | "ufs" | "befs" | "hfsplus" => Category::System,
         _ => Category::Other,
     }
 }

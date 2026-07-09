@@ -14,6 +14,15 @@ formats.
 
 ### Added
 
+- **HFS+ filesystem images are carved** — `scan` now recovers whole `.hfsplus`
+  images, the Mac OS Extended filesystem — the macOS default before APFS and
+  still used on many external and Time Machine drives. The volume header sits
+  1024 bytes into the volume with a big-endian `H+` (HFS+, v4) or `HX`
+  (HFSX, v5) signature, then a block size at offset 0x28 and a total block count
+  at offset 0x2C, so the exact image length is `totalBlocks × blockSize`. A
+  bad signature/version, non-power-of-two block size, or zero block count
+  rejects a coincidental match. Complements the existing HFS+ *detection* used
+  by `undelete`/`info`.
 - **BeFS filesystem images are carved** — `scan` now recovers whole `.befs`
   images, the Be File System from BeOS, still used by Haiku. The superblock sits
   512 bytes into the volume and carries two magics — `BFS1` at offset 0x20 and

@@ -625,6 +625,7 @@ fn file_length(
         Extent::Jfs => Ok(jfs_length(source, file_start, limit)?),
         Extent::Ufs => Ok(ufs_length(source, file_start, limit)?),
         Extent::Befs => Ok(befs_length(source, file_start, limit)?),
+        Extent::HfsPlus => Ok(hfsplus_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4774,6 +4775,35 @@ fn befs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
     Ok(Some(total))
 }
 
+/// HFS+ filesystem image (`.hfsplus`) length. The volume header sits 1024 bytes
+/// into the volume with a big-endian `H+` (HFS+) or `HX` (HFSX) signature, then
+/// a `u32` allocation block size at offset 0x28 and a `u32` total block count at
+/// offset 0x2C. The image length is `totalBlocks × blockSize`. A signature other
+/// than `H+`/`HX`, a non-power-of-two block size, or a zero block count rejects a
+/// coincidental match. Only direct volumes are handled (the rare HFS-wrapped
+/// layout is not matched, so it is never mis-sized).
+fn hfsplus_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const VH: u64 = 1024;
+    let mut h = [0u8; 0x30];
+    if source.read_at(file_start + VH, &mut h)? < 0x30 {
+        return Ok(None);
+    }
+    let sig = u16::from_be_bytes([h[0], h[1]]);
+    if sig != 0x482B && sig != 0x4858 {
+        return Ok(None);
+    }
+    let block_size = u32::from_be_bytes(h[0x28..0x2C].try_into().unwrap()) as u64;
+    let total_blocks = u32::from_be_bytes(h[0x2C..0x30].try_into().unwrap()) as u64;
+    if !block_size.is_power_of_two() || !(512..=65536).contains(&block_size) || total_blocks == 0 {
+        return Ok(None);
+    }
+    let total = total_blocks.saturating_mul(block_size);
+    if total < VH || file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -8487,6 +8517,44 @@ mod tests {
         v[512 + 0x44..512 + 0x48].copy_from_slice(&0u32.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(befs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build an HFS+/HFSX image whose volume header (1024 bytes in) reports the
+    /// given signature, allocation block size, and total block count (big-endian).
+    fn hfsplus(sig: u16, total_blocks: u32, block_size: u32) -> Vec<u8> {
+        let total = (total_blocks as u64 * block_size as u64) as usize;
+        let mut v = vec![0u8; total.max(1024 + 0x30)];
+        let vh = 1024usize;
+        v[vh..vh + 2].copy_from_slice(&sig.to_be_bytes());
+        let version: u16 = if sig == 0x4858 { 5 } else { 4 };
+        v[vh + 2..vh + 4].copy_from_slice(&version.to_be_bytes());
+        v[vh + 0x28..vh + 0x2C].copy_from_slice(&block_size.to_be_bytes());
+        v[vh + 0x2C..vh + 0x30].copy_from_slice(&total_blocks.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn hfsplus_length_uses_block_count() {
+        // HFS+ (H+): 16 blocks of 4096 bytes => 64 KiB.
+        let v = hfsplus(0x482B, 16, 4096);
+        let (_t, src) = source_of(&v);
+        assert_eq!(hfsplus_length(&src, 0, src.size).unwrap(), Some(16 * 4096));
+        // HFSX (HX).
+        let v = hfsplus(0x4858, 16, 4096);
+        let (_t, src) = source_of(&v);
+        assert_eq!(hfsplus_length(&src, 0, src.size).unwrap(), Some(16 * 4096));
+    }
+
+    #[test]
+    fn hfsplus_length_rejects_bad_signature_and_block_size() {
+        let z = vec![0u8; 1024 + 0x30];
+        let (_t, src) = source_of(&z);
+        assert_eq!(hfsplus_length(&src, 0, src.size).unwrap(), None);
+        // Valid signature but a non-power-of-two block size.
+        let mut v = hfsplus(0x482B, 16, 4096);
+        v[1024 + 0x28..1024 + 0x2C].copy_from_slice(&5000u32.to_be_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(hfsplus_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
