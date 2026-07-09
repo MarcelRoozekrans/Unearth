@@ -14,6 +14,12 @@ formats.
 
 ### Added
 
+- **cramfs images are carved** — `scan` now recovers `.cramfs` images, the small
+  compressed read-only Linux filesystem long used in firmware and embedded/boot
+  images. The superblock carries the `0x28CD3D45` magic (little- or big-endian)
+  and the 16-byte `Compressed ROMFS` signature at offset 0x10, with the total
+  image size as a `u32` at offset 4 in the magic's endianness, which is the
+  image length directly. The 16-byte signature rejects a coincidental match.
 - **romfs images are carved** — `scan` now recovers `.romfs` images, the tiny
   read-only filesystem long used for Linux initramfs and embedded/boot images.
   The header opens with the 8-byte `-rom1fs-` magic and a big-endian `u32`
