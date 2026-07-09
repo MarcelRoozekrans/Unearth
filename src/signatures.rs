@@ -174,6 +174,8 @@
 //!   superblock times the block size.
 //! * [`Extent::Exfat`] — exFAT filesystem image: the volume length in the boot
 //!   sector times the sector size.
+//! * [`Extent::Apfs`] — APFS container image: the block count in the container
+//!   superblock times the block size.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -879,6 +881,14 @@ pub enum Extent {
     /// The 8-byte magic plus sane sector/cluster shifts reject a coincidental
     /// match. (`scan` carves the whole volume; `undelete` recovers named files.)
     Exfat,
+    /// APFS container image (`.apfs`) — the Apple File System, the default on
+    /// every Mac, iPhone, and iPad since 2017. Its container superblock opens
+    /// the volume with an `obj_phys_t` header and the `NXSB` magic at offset 32,
+    /// followed by a `u32` block size (offset 36) and a `u64` block count
+    /// (offset 40). The image length is `block_count × block_size`. The magic at
+    /// the fixed offset plus a power-of-two block size reject a coincidental
+    /// match.
+    Apfs,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2638,6 +2648,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * GB,
     },
     Signature {
+        // APFS container image: "NXSB" superblock magic at offset 32, size =
+        // block count × block size.
+        name: "APFS container image",
+        ext: "apfs",
+        magic: b"NXSB",
+        magic_offset: 32,
+        secondary: None,
+        extent: Extent::Apfs,
+        max_size: 512 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -2971,7 +2992,7 @@ pub fn category_of(ext: &str) -> Category {
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
         | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs"
-        | "btrfs" | "xfs" | "exfat" => Category::System,
+        | "btrfs" | "xfs" | "exfat" | "apfs" => Category::System,
         _ => Category::Other,
     }
 }
