@@ -612,6 +612,7 @@ fn file_length(
         Extent::Pvr => Ok(pvr_length(source, file_start, limit)?),
         Extent::Blp => Ok(blp_length(source, file_start, limit)?),
         Extent::Grib2 => Ok(grib2_length(source, file_start, limit)?),
+        Extent::F2fs => Ok(f2fs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4381,6 +4382,36 @@ fn grib2_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u
     Ok(Some(pos))
 }
 
+/// F2FS filesystem image (`.f2fs`) length. The superblock lives at a fixed
+/// offset of 1024 bytes and opens with the `0xF2F52010` magic. It records the
+/// block-size shift `log_blocksize` at offset 0x10 and the total block count
+/// `block_count` at offset 0x24. The image length is `block_count <<
+/// log_blocksize`. (F2FS itself always uses 4 KiB blocks; a block-size shift
+/// outside 9..=16 is rejected.)
+fn f2fs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const SB_OFF: usize = 1024;
+    let mut h = [0u8; SB_OFF + 48];
+    if source.read_at(file_start, &mut h)? < h.len() {
+        return Ok(None);
+    }
+    if u32::from_le_bytes(h[SB_OFF..SB_OFF + 4].try_into().unwrap()) != 0xF2F5_2010 {
+        return Ok(None);
+    }
+    let log_blocksize = u32::from_le_bytes(h[SB_OFF + 0x10..SB_OFF + 0x14].try_into().unwrap());
+    if !(9..=16).contains(&log_blocksize) {
+        return Ok(None);
+    }
+    let block_count = u64::from_le_bytes(h[SB_OFF + 0x24..SB_OFF + 0x2C].try_into().unwrap());
+    if block_count == 0 {
+        return Ok(None);
+    }
+    let total = block_count.saturating_mul(1u64 << log_blocksize);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7659,6 +7690,37 @@ mod tests {
         v[28..32].copy_from_slice(b"XXXX");
         let (_t, src) = source_of(&v);
         assert_eq!(grib2_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build an F2FS image: superblock at offset 1024 with the given block-size
+    /// shift and block count.
+    fn f2fs(log_blocksize: u32, block_count: u64) -> Vec<u8> {
+        let total = block_count << log_blocksize;
+        let mut v = vec![0u8; total.max(1072) as usize];
+        v[1024..1028].copy_from_slice(&0xF2F5_2010u32.to_le_bytes());
+        v[1024 + 0x10..1024 + 0x14].copy_from_slice(&log_blocksize.to_le_bytes());
+        v[1024 + 0x24..1024 + 0x2C].copy_from_slice(&block_count.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn f2fs_length_uses_block_count() {
+        // 4 KiB blocks (log 12), 512 blocks => 2 MiB.
+        let v = f2fs(12, 512);
+        let (_t, src) = source_of(&v);
+        assert_eq!(f2fs_length(&src, 0, src.size).unwrap(), Some(512 * 4096));
+    }
+
+    #[test]
+    fn f2fs_length_rejects_bad_magic_and_geometry() {
+        let z = vec![0u8; 1072];
+        let (_t, src) = source_of(&z);
+        assert_eq!(f2fs_length(&src, 0, src.size).unwrap(), None);
+        // Magic present but zero blocks.
+        let mut v = f2fs(12, 4);
+        v[1024 + 0x24..1024 + 0x2C].copy_from_slice(&0u64.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(f2fs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

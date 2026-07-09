@@ -14,6 +14,13 @@ formats.
 
 ### Added
 
+- **F2FS filesystem images are carved** — `scan` now recovers whole `.f2fs`
+  images, the Flash-Friendly File System that is the default internal-storage
+  filesystem on most modern Android phones. The superblock at the fixed
+  1024-byte offset (magic `0xF2F52010`) records the block-size shift and total
+  block count, so the exact image length is `block_count << log_blocksize`.
+  Complements the existing F2FS *detection* used by `info`, which cannot undelete
+  a log-structured filesystem and points the user at `scan`.
 - **GRIB2 weather data is carved** — `scan` now recovers `.grib2` files, the WMO
   gridded-binary format that is the backbone of modern meteorology and climate
   data (NOAA, ECMWF, NASA). A file is one or more self-delimiting messages, each
