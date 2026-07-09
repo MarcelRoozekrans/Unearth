@@ -14,6 +14,15 @@ formats.
 
 ### Added
 
+- **NTFS filesystem images are carved** — `scan` now recovers whole `.ntfs`
+  images, the dominant Windows filesystem. The boot sector opens with an
+  `NTFS    ` OEM signature at offset 3 and records `BytesPerSector` at offset 11
+  and `TotalSectors` at offset 0x28, so the exact image length is
+  `TotalSectors × BytesPerSector` — the same computation the NTFS undelete
+  module uses. A non-power-of-two sector size or zero sector count rejects a
+  coincidental magic. (`scan` carves the whole volume as one image; `undelete`
+  continues to recover individual named files, folder paths, and fragmented
+  runs from an NTFS volume.)
 - **ReFS filesystem images are carved** — `scan` now recovers whole `.refs`
   images, Microsoft's copy-on-write Resilient File System (Windows Server,
   Storage Spaces, and the Dev Drive feature on Windows 11). The boot record

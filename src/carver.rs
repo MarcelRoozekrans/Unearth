@@ -618,6 +618,7 @@ fn file_length(
         Extent::Exfat => Ok(exfat_length(source, file_start, limit)?),
         Extent::Apfs => Ok(apfs_length(source, file_start, limit)?),
         Extent::Refs => Ok(refs_length(source, file_start, limit)?),
+        Extent::Ntfs => Ok(ntfs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4546,6 +4547,32 @@ fn refs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
     Ok(Some(total))
 }
 
+/// NTFS filesystem image (`.ntfs`) length. The boot sector opens with the
+/// `NTFS    ` OEM signature at offset 3 and records `BytesPerSector` (a `u16` at
+/// offset 11) and `TotalSectors` (a `u64` at offset 0x28). The image length is
+/// `TotalSectors × BytesPerSector` — the same computation the NTFS undelete
+/// module uses. A non-power-of-two or out-of-range sector size, or a zero
+/// sector count, rejects a coincidental magic.
+fn ntfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut boot = [0u8; 48];
+    if source.read_at(file_start, &mut boot)? < 48 || &boot[3..11] != b"NTFS    " {
+        return Ok(None);
+    }
+    let bytes_per_sector = u16::from_le_bytes([boot[11], boot[12]]) as u64;
+    let total_sectors = u64::from_le_bytes(boot[40..48].try_into().unwrap());
+    if !bytes_per_sector.is_power_of_two()
+        || !(256..=4096).contains(&bytes_per_sector)
+        || total_sectors == 0
+    {
+        return Ok(None);
+    }
+    let total = total_sectors.saturating_mul(bytes_per_sector);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -8007,6 +8034,36 @@ mod tests {
         v[0x10..0x14].copy_from_slice(b"XXXX");
         let (_t, src) = source_of(&v);
         assert_eq!(refs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build an NTFS image whose boot sector reports the given bytes-per-sector
+    /// and total-sectors count.
+    fn ntfs(bytes_per_sector: u16, total_sectors: u64) -> Vec<u8> {
+        let total = (total_sectors * bytes_per_sector as u64).max(48);
+        let mut v = vec![0u8; total as usize];
+        v[3..11].copy_from_slice(b"NTFS    ");
+        v[11..13].copy_from_slice(&bytes_per_sector.to_le_bytes());
+        v[40..48].copy_from_slice(&total_sectors.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn ntfs_length_uses_total_sectors() {
+        // 512-byte sectors, 512 sectors => 256 KiB.
+        let v = ntfs(512, 512);
+        let (_t, src) = source_of(&v);
+        assert_eq!(ntfs_length(&src, 0, src.size).unwrap(), Some(512 * 512));
+    }
+
+    #[test]
+    fn ntfs_length_rejects_bad_magic_and_sector_size() {
+        let (_t, src) = source_of(&[0u8; 48]);
+        assert_eq!(ntfs_length(&src, 0, src.size).unwrap(), None);
+        // A non-power-of-two sector size is rejected.
+        let mut v = ntfs(512, 512);
+        v[11..13].copy_from_slice(&513u16.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(ntfs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
