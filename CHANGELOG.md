@@ -14,6 +14,14 @@ formats.
 
 ### Added
 
+- **ReFS filesystem images are carved** — `scan` now recovers whole `.refs`
+  images, Microsoft's copy-on-write Resilient File System (Windows Server,
+  Storage Spaces, and the Dev Drive feature on Windows 11). The boot record
+  carries the `ReFS` signature at offset 3 and the `FSRS` structure identifier
+  at offset 0x10, then a sector count at 0x18 and a bytes-per-sector at 0x20, so
+  the exact image length is `NumberOfSectors × BytesPerSector`. The two
+  signatures plus a power-of-two sector size reject a coincidental match.
+  Complements the existing ReFS *detection* used by `info`.
 - **APFS container images are carved** — `scan` now recovers whole `.apfs`
   images, the Apple File System that is the default on every Mac, iPhone, and
   iPad since 2017. The container superblock opens the volume with the `NXSB`

@@ -617,6 +617,7 @@ fn file_length(
         Extent::Xfs => Ok(xfs_length(source, file_start, limit)?),
         Extent::Exfat => Ok(exfat_length(source, file_start, limit)?),
         Extent::Apfs => Ok(apfs_length(source, file_start, limit)?),
+        Extent::Refs => Ok(refs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4517,6 +4518,34 @@ fn apfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
     Ok(Some(total))
 }
 
+/// ReFS filesystem image (`.refs`) length. The boot record carries the `ReFS`
+/// file-system signature at offset 3 and the `FSRS` structure identifier at
+/// offset 0x10, then a `u64` sector count at 0x18 and a `u32` bytes-per-sector
+/// at 0x20. The image length is `NumberOfSectors × BytesPerSector`. Both
+/// signatures plus a power-of-two sector size reject a coincidental match.
+fn refs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 0x28];
+    if source.read_at(file_start, &mut h)? < 0x28
+        || &h[3..7] != b"ReFS"
+        || &h[0x10..0x14] != b"FSRS"
+    {
+        return Ok(None);
+    }
+    let num_sectors = u64::from_le_bytes(h[0x18..0x20].try_into().unwrap());
+    let bytes_per_sector = u32::from_le_bytes(h[0x20..0x24].try_into().unwrap()) as u64;
+    if !bytes_per_sector.is_power_of_two()
+        || !(512..=65536).contains(&bytes_per_sector)
+        || num_sectors == 0
+    {
+        return Ok(None);
+    }
+    let total = num_sectors.saturating_mul(bytes_per_sector);
+    if file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -7947,6 +7976,37 @@ mod tests {
         v[36..40].copy_from_slice(&4095u32.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(apfs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a ReFS image whose boot record reports the given sector count and
+    /// bytes-per-sector.
+    fn refs(num_sectors: u64, bytes_per_sector: u32) -> Vec<u8> {
+        let total = (num_sectors * bytes_per_sector as u64).max(0x28);
+        let mut v = vec![0u8; total as usize];
+        v[3..7].copy_from_slice(b"ReFS");
+        v[0x10..0x14].copy_from_slice(b"FSRS");
+        v[0x18..0x20].copy_from_slice(&num_sectors.to_le_bytes());
+        v[0x20..0x24].copy_from_slice(&bytes_per_sector.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn refs_length_uses_sector_count() {
+        // 512-byte sectors, 512 sectors => 256 KiB.
+        let v = refs(512, 512);
+        let (_t, src) = source_of(&v);
+        assert_eq!(refs_length(&src, 0, src.size).unwrap(), Some(512 * 512));
+    }
+
+    #[test]
+    fn refs_length_rejects_missing_second_signature() {
+        let (_t, src) = source_of(&[0u8; 0x28]);
+        assert_eq!(refs_length(&src, 0, src.size).unwrap(), None);
+        // "ReFS" present but the "FSRS" structure identifier is absent.
+        let mut v = refs(512, 512);
+        v[0x10..0x14].copy_from_slice(b"XXXX");
+        let (_t, src) = source_of(&v);
+        assert_eq!(refs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

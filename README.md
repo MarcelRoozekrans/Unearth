@@ -724,6 +724,7 @@ alongside the per-file manifest.
 | xfs    | XFS image (RHEL / CentOS / Rocky default)       | data-block count × block size |
 | exfat  | exFAT image (SD/SDXC cards, cameras)            | volume length × sector size |
 | apfs   | APFS container (macOS / iOS since 2017)         | block count × block size    |
+| refs   | ReFS image (Windows Server / Dev Drive)         | sector count × sector size  |
 | uimage | U-Boot uImage (router/IoT firmware)             | 64-byte header + data size  |
 | dtb    | Device Tree Blob (FDT, embedded Linux)          | totalsize field in header   |
 | trx    | TRX firmware (Broadcom/OpenWrt routers)         | len field in header         |
