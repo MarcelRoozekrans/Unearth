@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "filerecovery",
+  "displayName": "File Recovery",
+  "version": "0.4.0",
+  "description": "Recover deleted and lost files from disk images and devices with an AI agent: signature-based carving, filesystem-aware undelete (FAT/exFAT/NTFS/ext/HFS+), bad-sector-tolerant imaging, and volume triage — via the filerecovery MCP server. Includes a skill for authoring custom carvers. Requires the `filerecovery` binary on PATH.",
+  "author": {
+    "name": "Marcel Roozekrans"
+  },
+  "homepage": "https://github.com/marcelroozekrans/filerecovery",
+  "repository": "https://github.com/marcelroozekrans/filerecovery",
+  "license": "MIT",
+  "keywords": [
+    "file-recovery",
+    "data-recovery",
+    "forensics",
+    "carving",
+    "undelete",
+    "mcp"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/"
+}

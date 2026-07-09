@@ -6,6 +6,39 @@ on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Custom carvers can be injected at run time via the MCP `scan` tool.** A new
+  `custom_carvers` argument takes an array of carver specs — a magic number
+  (hex, at an optional offset, with an optional secondary tag) plus a
+  *declarative* length rule — so an AI agent can recover a file type the tool
+  doesn't know natively, for that scan only, without a rebuild. Three length
+  strategies are supported: `fixed` (a constant size), `size_field` (an
+  unsigned 8/16/32/64-bit integer at an offset, little- or big-endian, taken as
+  `value * mul + add`), and `footer` (ends a fixed number of bytes after a
+  marker sequence). To preserve the crate's core guarantee, a custom carver
+  carries no arbitrary code: every strategy computes an **exact** length that is
+  bounds-checked exactly like a built-in, so a malformed or over-eager spec can
+  only fail to match — it can never over-read the source or emit a wrong length.
+  Specs are validated up front (required size cap ≤ 1 TiB, filesystem-safe
+  extension, well-formed hex), and a bad spec is reported before the scan job
+  starts. Two new length primitives (`Extent::Fixed`, `Extent::SizeField`) back
+  the feature and generalise the existing header-size extents.
+- **Claude Code plugin & marketplace.** The repository now doubles as a Claude
+  Code plugin marketplace (`.claude-plugin/marketplace.json` +
+  `.claude-plugin/plugin.json` + `.mcp.json`), so the MCP server and the
+  `custom-carver` skill install in two commands
+  (`/plugin marketplace add marcelroozekrans/filerecovery` then
+  `/plugin install filerecovery@filerecovery-tools`) instead of hand-editing an
+  MCP config. The plugin launches the `filerecovery` binary from `PATH`; it does
+  not bundle it.
+- **Skill: authoring custom carvers.** A bundled Agent skill
+  (`skills/custom-carver/SKILL.md`) walks an agent through building a
+  `custom_carvers` spec safely — identify the magic, derive an *exact* size rule,
+  validate it reproduces a known sample's byte length, and abandon the carver if
+  the format can't be sized reliably — closing the authoring-layer gap the tool
+  itself can't police.
+
 ## [0.3.0] - 2026-07-09
 
 Recovery reach grows in several directions: every supported filesystem can now

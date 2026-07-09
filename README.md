@@ -192,6 +192,71 @@ the agent can reason over exactly what was recovered. All access is read-only on
 the source; the only writes are the recovered files in the output directory you
 specify.
 
+#### Inject custom carvers
+
+For a file type the tool doesn't recognise natively, `scan` takes an optional
+`custom_carvers` array that adds carvers **for that one scan** — no rebuild. Each
+entry is a magic number plus a *declarative* rule for how long a match is, so a
+custom carver is held to the same guarantee as a built-in one: the length is
+always computed exactly and bounds-checked, never guessed. A malformed spec is
+reported before the job starts.
+
+```jsonc
+{
+  "name": "scan",
+  "arguments": {
+    "source": "/dev/sdb", "output_dir": "/recovered",
+    "custom_carvers": [
+      {
+        "name": "Widget file", "ext": "wdg",
+        "magic": "57 44 47 31",          // hex; spaces/0x/':' allowed
+        "magic_offset": 0,                // where the magic sits in the file (default 0)
+        "max_size": 1048576,              // required hard cap (bytes)
+        "length": {                       // one declarative strategy:
+          "strategy": "size_field",       //   total = value * mul + add
+          "offset": 4, "width": 32,       //   read a u8/u16/u32/u64 here
+          "endian": "le", "mul": 1, "add": 0
+        }
+      }
+    ]
+  }
+}
+```
+
+The three length strategies:
+
+| `strategy` | Fields | Length |
+| ---------- | ------ | ------ |
+| `fixed` | `size` | exactly `size` bytes |
+| `size_field` | `offset`, `width` (8/16/32/64), `endian` (`le`/`be`), `mul`, `add` | `value * mul + add` |
+| `footer` | `marker` (hex), `trailing` | ends `trailing` bytes after the `marker` sequence |
+
+An optional `secondary` (`{ "offset", "bytes" }`) disambiguates formats that
+share a magic. `ext` is restricted to a short filesystem-safe token (it names the
+recovered files), and `max_size` is capped at 1 TiB. Because every strategy
+resolves to the same exact, bounds-checked sizing the built-in carvers use, the
+worst a bad spec can do is fail to match — it can never over-read the source or
+emit a wrong length.
+
+#### Install as a Claude Code plugin
+
+This repo doubles as a [Claude Code](https://code.claude.com) **plugin
+marketplace**, so you can wire up the MCP server and the custom-carver skill in
+two commands instead of editing config by hand. First make sure the
+`filerecovery` binary is on your `PATH` (`cargo install filerecovery`, or drop a
+release binary somewhere on `PATH`) — the plugin launches it, it doesn't bundle
+it. Then, in Claude Code:
+
+```
+/plugin marketplace add marcelroozekrans/filerecovery
+/plugin install filerecovery@filerecovery-tools
+```
+
+That registers the `filerecovery` MCP server (all the tools above) and the
+`custom-carver` skill (which guides authoring `custom_carvers` specs). The skill
+is available as `/filerecovery:custom-carver`. Manage or remove it later with
+`/plugin`.
+
 ### Shell completions
 
 ```sh

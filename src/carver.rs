@@ -458,6 +458,21 @@ fn file_length(
             }
             Ok(Some(size))
         }
+        Extent::Fixed { size } => {
+            if size == 0 || file_start.saturating_add(size) > limit {
+                return Ok(None);
+            }
+            Ok(Some(size))
+        }
+        Extent::SizeField {
+            offset,
+            width,
+            big_endian,
+            mul,
+            add,
+        } => Ok(sizefield_length(
+            source, file_start, limit, offset, width, big_endian, mul, add,
+        )?),
         Extent::RiffSize => {
             let mut tmp = [0u8; 8];
             if source.read_at(file_start, &mut tmp)? < 8 {
@@ -4843,6 +4858,58 @@ fn reiserfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Optio
     Ok(None)
 }
 
+/// Read an unsigned little- or big-endian integer of `bytes.len()` bytes (1..=8)
+/// into a `u64`.
+fn read_uint(bytes: &[u8], big_endian: bool) -> u64 {
+    let mut v = 0u64;
+    if big_endian {
+        for &b in bytes {
+            v = (v << 8) | b as u64;
+        }
+    } else {
+        for &b in bytes.iter().rev() {
+            v = (v << 8) | b as u64;
+        }
+    }
+    v
+}
+
+/// Length for a runtime-injected [`Extent::SizeField`] custom carver: read the
+/// `width`-bit unsigned integer at `offset` (byte order per `big_endian`),
+/// compute `value * mul + add`, and accept it only if it is non-zero and lands
+/// within `limit`. Any arithmetic overflow or short read yields no match, so a
+/// custom carver can never emit a length that runs past the source.
+#[allow(clippy::too_many_arguments)]
+fn sizefield_length(
+    source: &Source,
+    file_start: u64,
+    limit: u64,
+    offset: usize,
+    width: u8,
+    big_endian: bool,
+    mul: u64,
+    add: u64,
+) -> Result<Option<u64>> {
+    let nbytes = (width / 8) as usize;
+    let need = match offset.checked_add(nbytes) {
+        Some(n) => n,
+        None => return Ok(None),
+    };
+    let mut tmp = vec![0u8; need];
+    if source.read_at(file_start, &mut tmp)? < need {
+        return Ok(None);
+    }
+    let raw = read_uint(&tmp[offset..need], big_endian);
+    let size = match raw.checked_mul(mul).and_then(|v| v.checked_add(add)) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    if size == 0 || file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -8641,6 +8708,93 @@ mod tests {
         let v = reiserfs(0x10000, b"ReIsEr2Fs", 1_000_000, 4096, 256 * 1024);
         let (_t, src) = source_of(&v);
         assert_eq!(reiserfs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a bare `Signature` carrying `extent` and `max_size`, for exercising
+    /// the runtime custom-carver length arms (magic is unused by `file_length`).
+    fn custom_sig(extent: Extent, max_size: u64) -> Signature {
+        Signature {
+            name: "custom",
+            ext: "cst",
+            magic: b"CUST",
+            magic_offset: 0,
+            secondary: None,
+            extent,
+            max_size,
+        }
+    }
+
+    #[test]
+    fn fixed_extent_returns_exact_size_and_bounds_checks() {
+        let (_t, src) = source_of(&vec![0u8; 4096]);
+        let mut fb = Vec::new();
+        // Exact fixed length within the source.
+        let sig = custom_sig(Extent::Fixed { size: 512 }, 1 << 20);
+        assert_eq!(
+            file_length(&src, &sig, 0, src.size, &mut fb).unwrap(),
+            Some(512)
+        );
+        // A fixed size that overruns the source is skipped, not mis-sized.
+        let sig = custom_sig(Extent::Fixed { size: 8192 }, 1 << 20);
+        assert_eq!(file_length(&src, &sig, 0, src.size, &mut fb).unwrap(), None);
+    }
+
+    #[test]
+    fn sizefield_extent_reads_scales_and_bounds_checks() {
+        // A little-endian u32 = 100 at offset 4, mul 1 add 8 => 108 bytes.
+        let mut data = vec![0u8; 4096];
+        data[4..8].copy_from_slice(&100u32.to_le_bytes());
+        let (_t, src) = source_of(&data);
+        let mut fb = Vec::new();
+        let sig = custom_sig(
+            Extent::SizeField {
+                offset: 4,
+                width: 32,
+                big_endian: false,
+                mul: 1,
+                add: 8,
+            },
+            1 << 20,
+        );
+        assert_eq!(
+            file_length(&src, &sig, 0, src.size, &mut fb).unwrap(),
+            Some(108)
+        );
+
+        // Big-endian u16 = 2 at offset 0, scaled by 512 => 1024 bytes.
+        let mut data = vec![0u8; 4096];
+        data[0..2].copy_from_slice(&2u16.to_be_bytes());
+        let (_t, src) = source_of(&data);
+        let sig = custom_sig(
+            Extent::SizeField {
+                offset: 0,
+                width: 16,
+                big_endian: true,
+                mul: 512,
+                add: 0,
+            },
+            1 << 20,
+        );
+        assert_eq!(
+            file_length(&src, &sig, 0, src.size, &mut fb).unwrap(),
+            Some(1024)
+        );
+
+        // A field whose scaled value overruns the source is skipped.
+        let mut data = vec![0u8; 1024];
+        data[0..4].copy_from_slice(&1_000_000u32.to_le_bytes());
+        let (_t, src) = source_of(&data);
+        let sig = custom_sig(
+            Extent::SizeField {
+                offset: 0,
+                width: 32,
+                big_endian: false,
+                mul: 1,
+                add: 0,
+            },
+            1 << 20,
+        );
+        assert_eq!(file_length(&src, &sig, 0, src.size, &mut fb).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

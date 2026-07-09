@@ -1023,6 +1023,23 @@ pub enum Extent {
     /// sections present. The plain-text EPS form (no binary header) carries no
     /// length and is not carved.
     Eps,
+    /// Fixed-length record: the file is always exactly `size` bytes. Used by
+    /// runtime-injected custom carvers (see [`crate::custom`]) for formats with
+    /// a constant size; bounds-checked against the scan limit like every extent.
+    Fixed { size: u64 },
+    /// Custom size field: the total length is an unsigned integer stored at
+    /// `offset`, `width` bits wide (8/16/32/64), in the given byte order, scaled
+    /// and biased as `value * mul + add`. This generalises the built-in
+    /// [`Extent::HeaderSizeLe32`]/[`Extent::HeaderSizeBe32`] for runtime-injected
+    /// custom carvers. Overflow in the arithmetic yields no match, never a wrong
+    /// length.
+    SizeField {
+        offset: usize,
+        width: u8,
+        big_endian: bool,
+        mul: u64,
+        add: u64,
+    },
 }
 
 /// A recoverable file type.

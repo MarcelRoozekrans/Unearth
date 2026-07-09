@@ -1,0 +1,30 @@
+{
+  "name": "filerecovery-tools",
+  "owner": {
+    "name": "Marcel Roozekrans"
+  },
+  "description": "The filerecovery data-recovery tool, packaged for Claude Code.",
+  "plugins": [
+    {
+      "name": "filerecovery",
+      "source": "./",
+      "description": "Drive an AI agent through signature-based file carving, filesystem-aware undelete, disk imaging, and volume triage via the filerecovery MCP server, plus a skill for authoring custom carvers. Requires the `filerecovery` binary on PATH.",
+      "version": "0.4.0",
+      "author": {
+        "name": "Marcel Roozekrans"
+      },
+      "homepage": "https://github.com/marcelroozekrans/filerecovery",
+      "repository": "https://github.com/marcelroozekrans/filerecovery",
+      "license": "MIT",
+      "category": "data-recovery",
+      "keywords": [
+        "file-recovery",
+        "data-recovery",
+        "forensics",
+        "carving",
+        "undelete",
+        "mcp"
+      ]
+    }
+  ]
+}
