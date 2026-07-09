@@ -733,6 +733,7 @@ alongside the per-file manifest.
 | ufs    | UFS1 image (BSD / Solaris FFS)                  | fragment count × frag size  |
 | befs   | BeFS image (BeOS / Haiku)                       | block count × block size    |
 | hfsplus | HFS+ / HFSX image (Mac OS Extended)            | block count × block size    |
+| reiserfs | ReiserFS image (SUSE / Linux, 3.5 & 3.6)      | block count × block size    |
 | uimage | U-Boot uImage (router/IoT firmware)             | 64-byte header + data size  |
 | dtb    | Device Tree Blob (FDT, embedded Linux)          | totalsize field in header   |
 | trx    | TRX firmware (Broadcom/OpenWrt routers)         | len field in header         |

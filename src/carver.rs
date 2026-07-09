@@ -626,6 +626,7 @@ fn file_length(
         Extent::Ufs => Ok(ufs_length(source, file_start, limit)?),
         Extent::Befs => Ok(befs_length(source, file_start, limit)?),
         Extent::HfsPlus => Ok(hfsplus_length(source, file_start, limit)?),
+        Extent::Reiserfs => Ok(reiserfs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4804,6 +4805,44 @@ fn hfsplus_length(source: &Source, file_start: u64, limit: u64) -> Result<Option
     Ok(Some(total))
 }
 
+/// ReiserFS filesystem image length. The superblock sits 64 KiB into a 3.6
+/// volume or 8 KiB into an older 3.5 volume, carrying a long ASCII magic
+/// (`ReIsEr2Fs`/`ReIsEr3Fs` for 3.6, `ReIsErFs` for 3.5) at offset 0x34, a `u32`
+/// block count at 0x00, and a `u16` block size at 0x2C, all little-endian. The
+/// image length is `block_count × block_size`; the long magic plus a
+/// power-of-two block size reject a coincidental match. Both superblock
+/// locations are tried, and anything failing the geometry checks is skipped
+/// rather than mis-sized.
+fn reiserfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const SB_OFFSETS: [u64; 2] = [0x10000, 0x2000];
+    for &sb in &SB_OFFSETS {
+        let base = file_start.saturating_add(sb);
+        let mut h = [0u8; 0x3E];
+        if source.read_at(base, &mut h)? < h.len() {
+            continue;
+        }
+        let magic = &h[0x34..0x3E];
+        if !(magic.starts_with(b"ReIsEr2Fs")
+            || magic.starts_with(b"ReIsEr3Fs")
+            || magic.starts_with(b"ReIsErFs"))
+        {
+            continue;
+        }
+        let block_count = u32::from_le_bytes(h[0x00..0x04].try_into().unwrap()) as u64;
+        let block_size = u16::from_le_bytes(h[0x2C..0x2E].try_into().unwrap()) as u64;
+        if block_count == 0 || !block_size.is_power_of_two() || !(512..=65536).contains(&block_size)
+        {
+            continue;
+        }
+        let total = block_count.saturating_mul(block_size);
+        if total < sb || file_start.saturating_add(total) > limit {
+            continue;
+        }
+        return Ok(Some(total));
+    }
+    Ok(None)
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -8555,6 +8594,53 @@ mod tests {
         v[1024 + 0x28..1024 + 0x2C].copy_from_slice(&5000u32.to_be_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(hfsplus_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a ReiserFS image with a superblock at byte `sb` carrying `magic`,
+    /// the given block count and block size, padded to `total` bytes.
+    fn reiserfs(
+        sb: usize,
+        magic: &[u8],
+        block_count: u32,
+        block_size: u16,
+        total: usize,
+    ) -> Vec<u8> {
+        let mut v = vec![0u8; total];
+        v[sb..sb + 4].copy_from_slice(&block_count.to_le_bytes());
+        v[sb + 0x2C..sb + 0x2E].copy_from_slice(&block_size.to_le_bytes());
+        v[sb + 0x34..sb + 0x34 + magic.len()].copy_from_slice(magic);
+        v
+    }
+
+    #[test]
+    fn reiserfs_length_uses_block_count() {
+        // 3.6 superblock 64 KiB in: 32 blocks of 4096 bytes => 128 KiB.
+        let v = reiserfs(0x10000, b"ReIsEr2Fs", 32, 4096, 256 * 1024);
+        let (_t, src) = source_of(&v);
+        assert_eq!(reiserfs_length(&src, 0, src.size).unwrap(), Some(32 * 4096));
+        // Relocated-journal magic is accepted too.
+        let v = reiserfs(0x10000, b"ReIsEr3Fs", 32, 4096, 256 * 1024);
+        let (_t, src) = source_of(&v);
+        assert_eq!(reiserfs_length(&src, 0, src.size).unwrap(), Some(32 * 4096));
+        // Older 3.5 superblock 8 KiB in.
+        let v = reiserfs(0x2000, b"ReIsErFs", 16, 4096, 128 * 1024);
+        let (_t, src) = source_of(&v);
+        assert_eq!(reiserfs_length(&src, 0, src.size).unwrap(), Some(16 * 4096));
+    }
+
+    #[test]
+    fn reiserfs_length_rejects_bad_magic_and_block_size() {
+        // No magic anywhere.
+        let (_t, src) = source_of(&vec![0u8; 256 * 1024]);
+        assert_eq!(reiserfs_length(&src, 0, src.size).unwrap(), None);
+        // Valid magic but a non-power-of-two block size.
+        let v = reiserfs(0x10000, b"ReIsEr2Fs", 32, 5000, 256 * 1024);
+        let (_t, src) = source_of(&v);
+        assert_eq!(reiserfs_length(&src, 0, src.size).unwrap(), None);
+        // A block count that overruns the source is skipped, not mis-sized.
+        let v = reiserfs(0x10000, b"ReIsEr2Fs", 1_000_000, 4096, 256 * 1024);
+        let (_t, src) = source_of(&v);
+        assert_eq!(reiserfs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file

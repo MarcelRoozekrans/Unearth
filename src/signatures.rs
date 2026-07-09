@@ -192,6 +192,8 @@
 //!   times the block size.
 //! * [`Extent::HfsPlus`] — HFS+ filesystem image: the block count in the volume
 //!   header times the block size.
+//! * [`Extent::Reiserfs`] — ReiserFS filesystem image: the block count in the
+//!   superblock times the block size.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -977,6 +979,16 @@ pub enum Extent {
     /// block size reject a coincidental match. (Only direct volumes are matched;
     /// the rare HFS-wrapped layout is left to `info`.)
     HfsPlus,
+    /// ReiserFS filesystem image (`.reiserfs`) — Hans Reiser's journaling
+    /// filesystem, the SUSE default and a common choice on Linux through the
+    /// 2000s (removed from the mainline kernel in 6.13). The **3.6** superblock
+    /// sits 64 KiB into the volume and the older **3.5** superblock 8 KiB in,
+    /// each carrying a long ASCII magic at offset 0x34 — `ReIsEr2Fs` or
+    /// `ReIsEr3Fs` (3.6) / `ReIsErFs` (3.5) — plus a `u32` block count at
+    /// offset 0x00 and a `u16` block size at offset 0x2C, all little-endian. The
+    /// image length is `block_count × block_size`. The 8–9-byte magic plus a
+    /// power-of-two block size reject a coincidental match.
+    Reiserfs,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2876,6 +2888,38 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 512 * GB,
     },
     Signature {
+        // ReiserFS 3.6 filesystem image: "ReIsEr2Fs" magic at 0x10034
+        // (superblock 64 KiB + 0x34), size = block count × block size.
+        name: "ReiserFS filesystem image",
+        ext: "reiserfs",
+        magic: b"ReIsEr2Fs",
+        magic_offset: 0x10034,
+        secondary: None,
+        extent: Extent::Reiserfs,
+        max_size: 512 * GB,
+    },
+    Signature {
+        // ReiserFS 3.6 with a relocated journal: "ReIsEr3Fs" magic at 0x10034.
+        name: "ReiserFS filesystem image",
+        ext: "reiserfs",
+        magic: b"ReIsEr3Fs",
+        magic_offset: 0x10034,
+        secondary: None,
+        extent: Extent::Reiserfs,
+        max_size: 512 * GB,
+    },
+    Signature {
+        // ReiserFS 3.5 filesystem image: "ReIsErFs" magic at 0x2034
+        // (superblock 8 KiB + 0x34).
+        name: "ReiserFS filesystem image",
+        ext: "reiserfs",
+        magic: b"ReIsErFs",
+        magic_offset: 0x2034,
+        secondary: None,
+        extent: Extent::Reiserfs,
+        max_size: 512 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -3210,7 +3254,7 @@ pub fn category_of(ext: &str) -> Category {
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
         | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs"
         | "btrfs" | "xfs" | "exfat" | "apfs" | "refs" | "ntfs" | "swap" | "romfs" | "cramfs"
-        | "jfs" | "ufs" | "befs" | "hfsplus" => Category::System,
+        | "jfs" | "ufs" | "befs" | "hfsplus" | "reiserfs" => Category::System,
         _ => Category::Other,
     }
 }
