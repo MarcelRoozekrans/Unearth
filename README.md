@@ -729,6 +729,7 @@ alongside the per-file manifest.
 | swap   | Linux swap area (forensics)                     | (last_page + 1) × page size |
 | romfs  | romfs image (initramfs / embedded)              | full-size field in header   |
 | cramfs | cramfs image (firmware / embedded)              | size field in superblock    |
+| jfs    | JFS image (IBM Journaled File System)           | block count × block size    |
 | uimage | U-Boot uImage (router/IoT firmware)             | 64-byte header + data size  |
 | dtb    | Device Tree Blob (FDT, embedded Linux)          | totalsize field in header   |
 | trx    | TRX firmware (Broadcom/OpenWrt routers)         | len field in header         |

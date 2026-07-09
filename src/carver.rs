@@ -622,6 +622,7 @@ fn file_length(
         Extent::Swap => Ok(swap_length(source, file_start, limit)?),
         Extent::Romfs => Ok(romfs_length(source, file_start, limit)?),
         Extent::Cramfs => Ok(cramfs_length(source, file_start, limit)?),
+        Extent::Jfs => Ok(jfs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4651,6 +4652,30 @@ fn cramfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<
     Ok(Some(size))
 }
 
+/// JFS filesystem image (`.jfs`) length. The aggregate superblock sits 32 KiB
+/// into the volume and opens with the `JFS1` magic, then a `u64` aggregate size
+/// (in physical blocks) at offset 8 and a `u32` physical block size at offset
+/// 0x18. The image length is `s_size × s_pbsize`, which spans the whole
+/// aggregate (superblock included). A non-power-of-two block size or a zero
+/// block count rejects a coincidental magic.
+fn jfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    const SB: u64 = 0x8000;
+    let mut h = [0u8; 0x20];
+    if source.read_at(file_start + SB, &mut h)? < 0x20 || &h[0..4] != b"JFS1" {
+        return Ok(None);
+    }
+    let blocks = u64::from_le_bytes(h[0x08..0x10].try_into().unwrap());
+    let pbsize = u32::from_le_bytes(h[0x18..0x1C].try_into().unwrap()) as u64;
+    if blocks == 0 || !pbsize.is_power_of_two() || !(256..=65536).contains(&pbsize) {
+        return Ok(None);
+    }
+    let total = blocks.saturating_mul(pbsize);
+    if total < SB || file_start.saturating_add(total) > limit {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -8239,6 +8264,38 @@ mod tests {
         v[0..4].copy_from_slice(&0u32.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(cramfs_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a JFS image whose aggregate superblock (32 KiB in) reports the given
+    /// aggregate block count and physical block size.
+    fn jfs(blocks: u64, pbsize: u32) -> Vec<u8> {
+        let total = (blocks * pbsize as u64).max(0x8020);
+        let mut v = vec![0u8; total as usize];
+        let sb = 0x8000usize;
+        v[sb..sb + 4].copy_from_slice(b"JFS1");
+        v[sb + 0x08..sb + 0x10].copy_from_slice(&blocks.to_le_bytes());
+        v[sb + 0x18..sb + 0x1C].copy_from_slice(&pbsize.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn jfs_length_uses_block_count() {
+        // 1024 blocks of 512 bytes => 512 KiB.
+        let v = jfs(1024, 512);
+        let (_t, src) = source_of(&v);
+        assert_eq!(jfs_length(&src, 0, src.size).unwrap(), Some(1024 * 512));
+    }
+
+    #[test]
+    fn jfs_length_rejects_bad_magic_and_block_size() {
+        let z = vec![0u8; 0x8020];
+        let (_t, src) = source_of(&z);
+        assert_eq!(jfs_length(&src, 0, src.size).unwrap(), None);
+        // A non-power-of-two physical block size is rejected.
+        let mut v = jfs(1024, 512);
+        v[0x8000 + 0x18..0x8000 + 0x1C].copy_from_slice(&500u32.to_le_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(jfs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
