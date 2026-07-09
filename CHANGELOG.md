@@ -6,11 +6,15 @@ on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 
 ## [Unreleased]
 
-Recovery reach grows in three directions: every supported filesystem can now
+## [0.3.0] - 2026-07-09
+
+Recovery reach grows in several directions: every supported filesystem can now
 carve only its free space, Mac/Linux copy-on-write and encrypted volumes are
 recognised and described, lost partitions can be found and recovered without a
-partition table, and the carver gains modern archive/compression and image
-formats.
+partition table, the carver gains modern archive/compression and image formats,
+and `scan` can now reconstruct whole **filesystem images** — JFS, UFS1, BeFS,
+HFS+/HFSX, and ReiserFS — sizing each exactly from its superblock rather than
+guessing.
 
 ### Added
 
@@ -997,6 +1001,7 @@ the source.
 - Initial release: signature-based file carving (`scan`) with structural
   validation, content dedup, and recovery manifests.
 
-[Unreleased]: https://github.com/MarcelRoozekrans/FileRecovery/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/MarcelRoozekrans/FileRecovery/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/MarcelRoozekrans/FileRecovery/releases/tag/v0.3.0
 [0.2.0]: https://github.com/MarcelRoozekrans/FileRecovery/releases/tag/v0.2.0
 [0.1.0]: https://github.com/MarcelRoozekrans/FileRecovery/releases/tag/v0.1.0
