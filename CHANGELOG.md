@@ -14,6 +14,11 @@ formats.
 
 ### Added
 
+- **romfs images are carved** — `scan` now recovers `.romfs` images, the tiny
+  read-only filesystem long used for Linux initramfs and embedded/boot images.
+  The header opens with the 8-byte `-rom1fs-` magic and a big-endian `u32`
+  full-image-size field at offset 8, which is the image length directly; a size
+  smaller than the header rejects a coincidental match.
 - **Linux swap areas are carved** — `scan` now recovers `.swap` areas, a
   formatted swap partition or file, which is a key forensics artifact because it
   holds paged-out process memory. The header records a version at offset 1024

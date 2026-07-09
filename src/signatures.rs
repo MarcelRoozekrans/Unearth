@@ -182,6 +182,7 @@
 //!   boot sector times the sector size.
 //! * [`Extent::Swap`] — Linux swap area: the last-page index in the header times
 //!   the page size.
+//! * [`Extent::Romfs`] — romfs image: the full-image-size field in the header.
 //!
 //! Adding a new file type is just a matter of appending a [`Signature`] to
 //! [`SIGNATURES`].
@@ -919,6 +920,12 @@ pub enum Extent {
     /// `(last_page + 1) × 4096`. The 10-byte magic and a version of 1 reject a
     /// coincidental match.
     Swap,
+    /// romfs image (`.romfs`) — the tiny read-only filesystem long used for
+    /// Linux initramfs and embedded/boot images. The header opens with the
+    /// 8-byte `-rom1fs-` magic and then a big-endian `u32` full-image-size field
+    /// at offset 8, which is the image length directly. The 8-byte magic makes a
+    /// false match negligible.
+    Romfs,
     /// MPEG transport stream (`.ts`) — the container used by DVB/ATSC broadcast
     /// captures, HDHomeRun/DVR recordings, and many camcorders. The stream is a
     /// run of fixed **188-byte packets**, each beginning with the sync byte
@@ -2722,6 +2729,17 @@ pub static SIGNATURES: &[Signature] = &[
         max_size: 128 * GB,
     },
     Signature {
+        // romfs image: "-rom1fs-" magic at offset 0, full image size as a
+        // big-endian u32 at offset 8.
+        name: "romfs image",
+        ext: "romfs",
+        magic: b"-rom1fs-",
+        magic_offset: 0,
+        secondary: None,
+        extent: Extent::Romfs,
+        max_size: 4 * GB,
+    },
+    Signature {
         // Android DTBO / DTB image (dt_table_header): 0xD7B7AB1E magic with the
         // total image size as a big-endian u32 at offset 4.
         name: "Android DTBO image",
@@ -3055,7 +3073,9 @@ pub fn category_of(ext: &str) -> Category {
         "ttf" | "otf" | "woff" | "woff2" | "ttc" | "pcf" => Category::Font,
         "regf" | "evtx" | "wim" | "sqlite" | "pcap" | "pcapng" | "squashfs" | "iso" | "uimage"
         | "dtb" | "trx" | "img" | "dtbo" | "journal" | "h5" | "erofs" | "mcap" | "f2fs"
-        | "btrfs" | "xfs" | "exfat" | "apfs" | "refs" | "ntfs" | "swap" => Category::System,
+        | "btrfs" | "xfs" | "exfat" | "apfs" | "refs" | "ntfs" | "swap" | "romfs" => {
+            Category::System
+        }
         _ => Category::Other,
     }
 }

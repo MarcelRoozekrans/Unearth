@@ -620,6 +620,7 @@ fn file_length(
         Extent::Refs => Ok(refs_length(source, file_start, limit)?),
         Extent::Ntfs => Ok(ntfs_length(source, file_start, limit)?),
         Extent::Swap => Ok(swap_length(source, file_start, limit)?),
+        Extent::Romfs => Ok(romfs_length(source, file_start, limit)?),
         Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
@@ -4602,6 +4603,22 @@ fn swap_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
     Ok(Some(total))
 }
 
+/// romfs image (`.romfs`) length. The header opens with the 8-byte `-rom1fs-`
+/// magic followed by a big-endian `u32` full-image-size field at offset 8, which
+/// is the image length directly. A size smaller than the 16-byte header is
+/// rejected as a coincidental match.
+fn romfs_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+    let mut h = [0u8; 12];
+    if source.read_at(file_start, &mut h)? < 12 || &h[0..8] != b"-rom1fs-" {
+        return Ok(None);
+    }
+    let size = u32::from_be_bytes(h[8..12].try_into().unwrap()) as u64;
+    if size < 16 || file_start.saturating_add(size) > limit {
+        return Ok(None);
+    }
+    Ok(Some(size))
+}
+
 /// HDF5 data file (`.h5`) length. The `\x89HDF\r\n\x1a\n` signature opens a
 /// superblock whose end-of-file address is the exact file size, stored as a
 /// little-endian offset. Its position depends on the superblock version: for
@@ -8122,6 +8139,32 @@ mod tests {
         v[1024..1028].copy_from_slice(&2u32.to_le_bytes());
         let (_t, src) = source_of(&v);
         assert_eq!(swap_length(&src, 0, src.size).unwrap(), None);
+    }
+
+    /// Build a romfs image whose header reports the given full size (big-endian).
+    fn romfs(size: u32) -> Vec<u8> {
+        let mut v = vec![0u8; (size as usize).max(16)];
+        v[0..8].copy_from_slice(b"-rom1fs-");
+        v[8..12].copy_from_slice(&size.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn romfs_length_uses_full_size() {
+        let v = romfs(4096);
+        let (_t, src) = source_of(&v);
+        assert_eq!(romfs_length(&src, 0, src.size).unwrap(), Some(4096));
+    }
+
+    #[test]
+    fn romfs_length_rejects_bad_magic_and_tiny_size() {
+        let (_t, src) = source_of(&[0u8; 12]);
+        assert_eq!(romfs_length(&src, 0, src.size).unwrap(), None);
+        // Valid magic but a size smaller than the header is invalid.
+        let mut v = romfs(4096);
+        v[8..12].copy_from_slice(&8u32.to_be_bytes());
+        let (_t, src) = source_of(&v);
+        assert_eq!(romfs_length(&src, 0, src.size).unwrap(), None);
     }
 
     /// Build an HDF5 file of the given superblock version whose end-of-file
