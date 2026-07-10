@@ -550,7 +550,7 @@ fn file_length(
         Extent::Wmf => Ok(wmf_length(source, file_start, limit)?),
         Extent::Djvu => Ok(djvu_length(source, file_start, limit)?),
         Extent::Evtx => Ok(evtx_length(source, file_start, limit)?),
-        Extent::Rtf => Ok(rtf_length(source, file_start, limit)?),
+        Extent::Rtf => Ok(rtf_length(source, file_start, limit, footer_buf)?),
         Extent::Mp3 => Ok(mp3_length(source, file_start, limit)?),
         Extent::MachO => Ok(macho_length(source, file_start, limit)?),
         Extent::Regf => Ok(regf_length(source, file_start, limit)?),
@@ -570,8 +570,8 @@ fn file_length(
         Extent::PsxExe => Ok(psxexe_length(source, file_start, limit)?),
         Extent::AndroidSparse => Ok(android_sparse_length(source, file_start, limit)?),
         Extent::Mp3Raw => Ok(mp3_raw_length(source, file_start, limit)?),
-        Extent::Jpeg => Ok(jpeg_length(source, file_start, limit)?),
-        Extent::Zip => Ok(zip_length(source, file_start, limit)?),
+        Extent::Jpeg => Ok(jpeg_length(source, file_start, limit, footer_buf)?),
+        Extent::Zip => Ok(zip_length(source, file_start, limit, footer_buf)?),
         Extent::Gif => Ok(gif_length(source, file_start, limit)?),
         Extent::Wim => Ok(wim_length(source, file_start, limit)?),
         Extent::Swf => Ok(swf_length(source, file_start, limit)?),
@@ -642,7 +642,7 @@ fn file_length(
         Extent::Befs => Ok(befs_length(source, file_start, limit)?),
         Extent::HfsPlus => Ok(hfsplus_length(source, file_start, limit)?),
         Extent::Reiserfs => Ok(reiserfs_length(source, file_start, limit)?),
-        Extent::Mpegts => Ok(mpegts_length(source, file_start, limit)?),
+        Extent::Mpegts => Ok(mpegts_length(source, file_start, limit, footer_buf)?),
         Extent::Mpegps => Ok(mpegps_length(source, file_start, limit)?),
         Extent::Pdb => Ok(pdb_length(source, file_start, limit)?),
         Extent::Eps => Ok(eps_length(source, file_start, limit)?),
@@ -815,11 +815,17 @@ fn gif_skip_subblocks(
 /// search would wrongly stop at, and rejects a coincidental marker. A ZIP64
 /// archive (whose 32-bit geometry fields are `0xFFFFFFFF` sentinels) can't be
 /// validated this way, so the last such candidate is used as a best effort.
-fn zip_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+fn zip_length(
+    source: &Source,
+    file_start: u64,
+    limit: u64,
+    buf: &mut Vec<u8>,
+) -> Result<Option<u64>> {
     const EOCD: &[u8] = &[0x50, 0x4B, 0x05, 0x06];
     let window = 1024 * 1024usize;
     let overlap = EOCD.len() - 1;
-    let mut buf = vec![0u8; window + overlap];
+    // Reuse the caller's scratch buffer instead of a 1 MiB alloc per ZIP.
+    buf.resize(window + overlap, 0);
     let mut pos = file_start;
     let mut zip64_best: Option<u64> = None; // fallback end offset for ZIP64
     loop {
@@ -868,14 +874,21 @@ fn zip_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
 /// JPEG entropy-coded data an `FF` is always stuffed (`FF 00`) or a restart
 /// marker (`FF D0`–`FF D7`), so `FF D8`/`FF D9` only ever mark real image
 /// boundaries.
-fn jpeg_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+fn jpeg_length(
+    source: &Source,
+    file_start: u64,
+    limit: u64,
+    buf: &mut Vec<u8>,
+) -> Result<Option<u64>> {
     let mut soi = [0u8; 3];
     if source.read_at(file_start, &mut soi)? < 3 || soi[0] != 0xFF || soi[1] != 0xD8 {
         return Ok(None);
     }
     const WINDOW: usize = 1 << 20;
     const OVERLAP: usize = 1; // a marker is two bytes, so carry one byte over
-    let mut buf = vec![0u8; WINDOW + OVERLAP];
+                              // Reuse the caller's scratch buffer instead of allocating 1 MiB per JPEG:
+                              // heap profiling showed this was the carver's largest allocation source.
+    buf.resize(WINDOW + OVERLAP, 0);
     let mut pos = file_start + 2; // start scanning just past the outer SOI
     let mut depth: u32 = 0; // nested SOI/EOI pairs currently open
     loop {
@@ -1239,10 +1252,15 @@ fn lz4_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
 /// RTF document length. The whole document is a single `{ ... }` group; the
 /// file ends where the opening brace's match closes. A backslash escapes the
 /// next byte (`\{`, `\}`, `\\`), so those do not affect the brace depth.
-fn rtf_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+fn rtf_length(
+    source: &Source,
+    file_start: u64,
+    limit: u64,
+    buf: &mut Vec<u8>,
+) -> Result<Option<u64>> {
     const CHUNK: usize = 1 << 16;
     let avail = limit.saturating_sub(file_start);
-    let mut buf = vec![0u8; CHUNK];
+    buf.resize(CHUNK, 0);
     let mut pos = 0u64;
     let mut depth: i64 = 0;
     let mut after_backslash = false;
@@ -3021,11 +3039,16 @@ fn aac_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
 /// already required the sync at offsets 0 and 188, and `MIN_PACKETS` consecutive
 /// packets are required here, so the single-byte sync cannot trigger a false
 /// carve. Only the 188-byte form is carved (see [`Extent::Mpegts`]).
-fn mpegts_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+fn mpegts_length(
+    source: &Source,
+    file_start: u64,
+    limit: u64,
+    buf: &mut Vec<u8>,
+) -> Result<Option<u64>> {
     const PACKET: u64 = 188;
     const MIN_PACKETS: u64 = 8;
     let avail = limit.saturating_sub(file_start);
-    let mut buf = vec![0u8; 64 * 1024];
+    buf.resize(64 * 1024, 0);
     let mut pos = 0u64;
     let mut packets = 0u64;
     'walk: loop {

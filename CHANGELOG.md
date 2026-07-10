@@ -18,6 +18,12 @@ on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
   the slowdown that accrued as the signature table grew past 180 entries. Results
   are identical; a one-byte magic marks all 256 prefixes for its byte so the gate
   never hides a match. A `scan/noise` benchmark now guards this hot loop.
+- **Less allocation churn while carving.** The walk-style length finders
+  (`jpeg`, `zip`, `rtf`, `mpegts`) reuse the carver's shared scratch buffer
+  instead of allocating a fresh scan buffer on every match. Heap profiling
+  showed `jpeg_length` alone allocating a 1 MiB buffer per JPEG; the profiled
+  workload's total allocation dropped **~29% (114 MB → 81 MB)** and per-JPEG
+  allocations fell 32×, with identical output and no throughput change.
 
 ### Changed
 
