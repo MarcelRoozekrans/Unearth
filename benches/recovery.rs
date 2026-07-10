@@ -156,6 +156,44 @@ fn bench_carve(c: &mut Criterion) {
     g.finish();
 }
 
+/// Pure signature-matching throughput: scan several MiB of random noise with no
+/// embedded files and no output (dry-run), isolating the `SignatureIndex` /
+/// `match_at` hot loop from file I/O and hashing. This is the path the two-byte
+/// prefix gate optimises, so a regression here is a matcher regression.
+fn bench_scan_noise(c: &mut Criterion) {
+    let img = filler(7, 8 << 20); // 8 MiB of noise, no matches
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    tmp.as_file().write_all(&img).unwrap();
+    let source = Source::open(tmp.path()).unwrap();
+    let sigs = signatures::select(&[]).unwrap();
+
+    let mut g = c.benchmark_group("scan");
+    g.throughput(Throughput::Bytes(img.len() as u64));
+    g.bench_function("noise_all_signatures", |b| {
+        b.iter(|| {
+            let opts = CarveOptions {
+                output_dir: std::env::temp_dir(),
+                start: 0,
+                end: None,
+                min_size: 0,
+                max_size: None,
+                max_files: None,
+                allow_nested: false,
+                validate: true,
+                dedup: false,
+                progress: false,
+                checkpoint: None,
+                resume: false,
+                organize: false,
+                dry_run: true,
+                align: 1,
+            };
+            carver::carve(black_box(&source), black_box(&sigs), &opts, &NoProgress).unwrap()
+        });
+    });
+    g.finish();
+}
+
 fn bench_undelete(c: &mut Criterion) {
     let payload = filler(5, 32 * 1024);
     let vol = ext_volume("recovered.bin", &payload);
@@ -193,6 +231,7 @@ criterion_group!(
     bench_hash,
     bench_identify,
     bench_carve,
+    bench_scan_noise,
     bench_undelete
 );
 criterion_main!(benches);

@@ -959,6 +959,45 @@ The same content can also exist at several *separate* places on a device
 (SHA-256) and write byte-identical content only once; the run reports how many
 duplicate copies were skipped.
 
+## Performance
+
+`unearth` is built to stream: the source is read in fixed 8 MiB chunks, so
+**memory stays roughly constant regardless of source size** — carving a 4 TB
+drive uses about as much RAM as carving a 4 GB card. It is a single read pass,
+dependency-light, and read-only on the source.
+
+In practice a scan is **I/O-bound** — the source device or image read speed
+usually dominates. The tool's job is to keep the CPU from being the bottleneck,
+and it does: on the project's micro-benchmarks the pure signature matcher runs
+at **~175 MiB/s** with all ~190 built-in signatures active, so it comfortably
+outpaces typical HDD/SSD read rates. Two design details keep it there:
+
+- **Two-byte-prefix gate.** Every scan position is checked against a 65536-bit
+  set before any magic comparison, so a position that can't begin any signature
+  is rejected with a single lookup rather than walking the (sometimes dozen-deep)
+  bucket for a common leading byte. This roughly doubled matcher throughput as
+  the signature table grew.
+- **Buffer reuse.** The walk-style length finders reuse a shared scratch buffer
+  instead of allocating per match, keeping allocation low and steady (heap
+  profiling drove a ~29% cut in total allocation on the carve workload).
+
+End-to-end throughput (scan **and** validate, hash, and write files) on the
+in-memory benchmark lands around **45 MiB/s**; real runs vary with the storage,
+the file mix, and options like `--validate` and `--dedup`.
+
+**Measure it yourself.** The repo ships statistical benchmarks (Criterion) and an
+allocation profiler (dhat) — the Rust analogues of BenchmarkDotNet and dotMemory:
+
+```sh
+cargo bench                       # hash, identify, carve, scan/noise, undelete
+cargo run --profile profiling --features dhat-heap --example heap_profile
+```
+
+`cargo bench` reports mean/median/std-dev with throughput and compares against the
+previous run; the dhat example writes `dhat-heap.json` for the
+[dh_view](https://nnethercote.github.io/dh_view/dh_view.html) allocation viewer.
+The numbers above are indicative micro-benchmark figures and depend on hardware.
+
 ## Limitations
 
 Common to both strategies:
