@@ -6,9 +6,9 @@
 //! TIFF IFD walk, EBML/Ogg/ASF/Wasm walks, ICO directory) to run on hostile
 //! input. The only assertion is that nothing panics and `carve` returns `Ok`.
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures::{self, SIGNATURES};
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures::{self, SIGNATURES};
+use unearth::source::Source;
 
 /// Tiny deterministic xorshift PRNG so any failure reproduces.
 struct Rng(u64);

@@ -4,9 +4,9 @@
 
 use std::io::Write;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// A minimal but structurally valid PNG: signature, an IHDR chunk, and the IEND
 /// trailer, padded with `extra` zero bytes of (ignored) image data so the carved

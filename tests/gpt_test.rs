@@ -2,8 +2,8 @@
 //! MBR, a GPT header + entry array, and an ext4 volume inside one partition,
 //! then confirm `recover::detect` finds and recovers from it.
 
-use filerecovery::recover;
-use filerecovery::source::Source;
+use unearth::recover;
+use unearth::source::Source;
 
 const SS: usize = 512; // logical sector size
 

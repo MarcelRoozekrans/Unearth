@@ -6,9 +6,9 @@
 
 use std::io::Write;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 const FREE: u32 = 0xFFFF_FFFF;
 const EOC: u32 = 0xFFFF_FFFE;

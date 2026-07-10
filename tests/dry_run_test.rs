@@ -3,9 +3,9 @@
 
 use std::io::Write;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// A minimal BMP whose total size (200) is recorded in the header at offset 2.
 fn bmp(total: usize) -> Vec<u8> {

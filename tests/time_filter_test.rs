@@ -4,9 +4,9 @@
 
 mod common;
 
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::source::Source;
-use filerecovery::times::parse_date;
+use unearth::recover::{self, RecoverOptions};
+use unearth::source::Source;
+use unearth::times::parse_date;
 
 // Inode 11 (the deleted file) lives at EXT_ITAB(5)*EXT_BS(1024) + (11-1)*128 =
 // 6400; i_mtime is the u32 at inode offset 0x10.

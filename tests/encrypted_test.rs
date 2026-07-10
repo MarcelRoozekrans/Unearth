@@ -4,8 +4,8 @@
 
 use std::process::Command;
 
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::source::Source;
+use unearth::recover::{self, RecoverOptions};
+use unearth::source::Source;
 
 fn luks_image(version: u16) -> Vec<u8> {
     let mut v = vec![0u8; 1 << 20];
@@ -60,7 +60,7 @@ fn info_cli_reports_an_encrypted_volume() {
     let img = tmp.path().join("luks.img");
     std::fs::write(&img, luks_image(1)).unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_filerecovery"))
+    let out = Command::new(env!("CARGO_BIN_EXE_unearth"))
         .args(["info", img.to_str().unwrap()])
         .output()
         .unwrap();

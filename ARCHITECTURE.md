@@ -1,6 +1,6 @@
 # Architecture
 
-`filerecovery` is a small, dependency-light Rust tool with a library core
+`unearth` is a small, dependency-light Rust tool with a library core
 (`src/lib.rs`) and a thin CLI (`src/main.rs`, args in `src/cli.rs`). The source
 device or image is always accessed **read-only**.
 

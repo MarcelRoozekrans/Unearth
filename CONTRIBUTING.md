@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve `filerecovery`. This guide covers the development
+Thanks for helping improve `unearth`. This guide covers the development
 workflow and the most common contribution: teaching the carver a new file type.
 
 ## Development workflow
@@ -90,7 +90,7 @@ tests use avoids `0xFF` and accidental footers). New types are also worth adding
 to the end-to-end `tests/kitchen_sink_test.rs` when they exercise a new extent
 strategy.
 
-`filerecovery list-types` prints the table, so no extra wiring is needed for the
+`unearth list-types` prints the table, so no extra wiring is needed for the
 CLI.
 
 ## Adding filesystem support (undelete)

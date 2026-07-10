@@ -1,14 +1,26 @@
 # Changelog
 
-All notable changes to `filerecovery` are documented here. The format is based
+All notable changes to `unearth` are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed the project from `filerecovery` to `unearth`.** The generic name
+  undersold a tool that is now a full recovery & disk-forensics toolkit, so the
+  crate, binary, MCP server, Claude Code plugin, and repository were renamed
+  ahead of the first crates.io publish. The command is now `unearth …` (e.g.
+  `unearth scan …`); the crates.io description and README were reworked to
+  cover the whole toolkit (undelete, carving, filesystem/partition recovery,
+  imaging, and the MCP/agent interface) rather than carving alone. Earlier
+  changelog entries below use the new name for consistency; none of these
+  versions were published under the old one.
+
 ### Added
 
-- **Easier installation.** `cargo binstall filerecovery` now fetches the
+- **Easier installation.** `cargo binstall unearth` now fetches the
   prebuilt binary the release workflow attaches to each GitHub Release (via
   `[package.metadata.binstall]`) instead of compiling, and a POSIX `install.sh`
   (`curl … | sh`) downloads and installs the right binary on Linux/macOS with no
@@ -35,9 +47,9 @@ on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
   Code plugin marketplace (`.claude-plugin/marketplace.json` +
   `.claude-plugin/plugin.json` + `.mcp.json`), so the MCP server and the
   `custom-carver` skill install in two commands
-  (`/plugin marketplace add marcelroozekrans/filerecovery` then
-  `/plugin install filerecovery@filerecovery-tools`) instead of hand-editing an
-  MCP config. The plugin launches the `filerecovery` binary from `PATH`; it does
+  (`/plugin marketplace add marcelroozekrans/unearth` then
+  `/plugin install unearth@unearth-tools`) instead of hand-editing an
+  MCP config. The plugin launches the `unearth` binary from `PATH`; it does
   not bundle it.
 - **Skill: authoring custom carvers.** A bundled Agent skill
   (`skills/custom-carver/SKILL.md`) walks an agent through building a
@@ -1001,7 +1013,7 @@ guessing.
 
 ## [0.2.0] - 2026-06-23
 
-A large release that grows `filerecovery` from a signature carver into a
+A large release that grows `unearth` from a signature carver into a
 full recovery toolkit: filesystem-aware undelete, robust imaging, a one-pass
 combined mode, and an AI-agent interface — all dependency-light and read-only on
 the source.
@@ -1041,7 +1053,7 @@ the source.
 - Initial release: signature-based file carving (`scan`) with structural
   validation, content dedup, and recovery manifests.
 
-[Unreleased]: https://github.com/MarcelRoozekrans/FileRecovery/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/MarcelRoozekrans/FileRecovery/releases/tag/v0.3.0
-[0.2.0]: https://github.com/MarcelRoozekrans/FileRecovery/releases/tag/v0.2.0
-[0.1.0]: https://github.com/MarcelRoozekrans/FileRecovery/releases/tag/v0.1.0
+[Unreleased]: https://github.com/MarcelRoozekrans/unearth/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/MarcelRoozekrans/unearth/releases/tag/v0.3.0
+[0.2.0]: https://github.com/MarcelRoozekrans/unearth/releases/tag/v0.2.0
+[0.1.0]: https://github.com/MarcelRoozekrans/unearth/releases/tag/v0.1.0

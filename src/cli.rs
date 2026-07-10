@@ -8,7 +8,7 @@ use clap_complete::Shell;
 /// Recover deleted files from SD cards, hard drives, and disk images by
 /// signature-based file carving.
 #[derive(Parser)]
-#[command(name = "filerecovery", version, about, long_about = None)]
+#[command(name = "unearth", version, about, long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -64,7 +64,7 @@ pub enum Command {
     Mcp,
     /// Print a shell completion script (bash, zsh, fish, powershell, elvish).
     ///
-    /// Example: `filerecovery completions bash > /etc/bash_completion.d/filerecovery`.
+    /// Example: `unearth completions bash > /etc/bash_completion.d/unearth`.
     Completions(CompletionsArgs),
 }
 
@@ -234,11 +234,11 @@ pub struct RecoverArgs {
 
     /// Only recover files modified at/after this UTC date (the undelete pass),
     /// e.g. `2021-01-01` or `2021-01-01T12:00:00`.
-    #[arg(long, value_name = "DATE", value_parser = filerecovery::times::parse_date)]
+    #[arg(long, value_name = "DATE", value_parser = unearth::times::parse_date)]
     pub modified_after: Option<std::time::SystemTime>,
 
     /// Only recover files modified at/before this UTC date (the undelete pass).
-    #[arg(long, value_name = "DATE", value_parser = filerecovery::times::parse_date)]
+    #[arg(long, value_name = "DATE", value_parser = unearth::times::parse_date)]
     pub modified_before: Option<std::time::SystemTime>,
 
     /// Only recover files whose name matches this glob (the undelete pass),
@@ -275,7 +275,7 @@ pub struct RecoverArgs {
 
     /// Write a combined manifest of every recovered file (named and carved) to
     /// this path. `.json` for JSON, otherwise CSV. Verifiable with
-    /// `filerecovery verify <FILE> --base <OUTPUT>`.
+    /// `unearth verify <FILE> --base <OUTPUT>`.
     #[arg(long, value_name = "FILE")]
     pub report: Option<PathBuf>,
 
@@ -358,11 +358,11 @@ pub struct UndeleteArgs {
 
     /// Only recover files modified at/after this UTC date, e.g. `2021-01-01` or
     /// `2021-01-01T12:00:00`.
-    #[arg(long, value_name = "DATE", value_parser = filerecovery::times::parse_date)]
+    #[arg(long, value_name = "DATE", value_parser = unearth::times::parse_date)]
     pub modified_after: Option<std::time::SystemTime>,
 
     /// Only recover files modified at/before this UTC date.
-    #[arg(long, value_name = "DATE", value_parser = filerecovery::times::parse_date)]
+    #[arg(long, value_name = "DATE", value_parser = unearth::times::parse_date)]
     pub modified_before: Option<std::time::SystemTime>,
 
     /// Only recover files whose name matches this glob (case-insensitive `*`/`?`).

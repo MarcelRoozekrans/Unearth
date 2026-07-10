@@ -4,8 +4,8 @@
 
 use std::process::Command;
 
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::source::Source;
+use unearth::recover::{self, RecoverOptions};
+use unearth::source::Source;
 
 const SB_OFFSET: usize = 0x1_0000; // primary superblock at 64 KiB
 const MAGIC: usize = 64;
@@ -170,7 +170,7 @@ fn info_cli_shows_the_btrfs_label() {
     let img = tmp.path().join("b.img");
     std::fs::write(&img, btrfs_volume("backups", 1 << 30)).unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_filerecovery"))
+    let out = Command::new(env!("CARGO_BIN_EXE_unearth"))
         .args(["info", img.to_str().unwrap()])
         .output()
         .unwrap();

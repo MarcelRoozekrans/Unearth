@@ -16,10 +16,10 @@
 
 use std::time::Instant;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::recover::{self, RecoverOptions};
+use unearth::signatures;
+use unearth::source::Source;
 
 #[cfg(feature = "dhat-heap")]
 #[global_allocator]

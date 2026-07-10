@@ -298,7 +298,7 @@ fn write_checkpoint(
     seen: &HashSet<[u8; 32]>,
     dedup: bool,
 ) -> Result<()> {
-    let mut s = String::from("# filerecovery scan checkpoint v1\n");
+    let mut s = String::from("# unearth scan checkpoint v1\n");
     s.push_str(&format!("pos {pos}\n"));
     s.push_str(&format!("end {end}\n"));
     s.push_str(&format!("skip_until {skip_until}\n"));

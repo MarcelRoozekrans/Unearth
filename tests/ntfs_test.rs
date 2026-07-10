@@ -2,9 +2,9 @@
 //! by hand, mark file records as deleted, and verify recovery restores names,
 //! folder paths, and contents — for resident, non-resident, and nested files.
 
-use filerecovery::ntfs;
-use filerecovery::recover;
-use filerecovery::source::Source;
+use unearth::ntfs;
+use unearth::recover;
+use unearth::source::Source;
 
 const BPS: usize = 512;
 const SPC: usize = 1;
@@ -349,7 +349,7 @@ fn recovers_deleted_ntfs_files() {
         .recover_deleted(
             &source,
             &out_dir,
-            &filerecovery::recover::RecoverOptions::default(),
+            &unearth::recover::RecoverOptions::default(),
         )
         .unwrap();
     assert_eq!(stats.recovered, 3, "report.txt, photo.jpg, Docs/notes.txt");

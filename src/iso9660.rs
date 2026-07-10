@@ -2,7 +2,7 @@
 //! images).
 //!
 //! ISO 9660 is the classic optical-disc filesystem. Unlike UDF, its directory
-//! structure is simple and read-only, so `filerecovery` both recognises it (in
+//! structure is simple and read-only, so `unearth` both recognises it (in
 //! `info`/`list_volumes`, with size and label) *and* extracts its files with
 //! their original names and folder paths — which is far better than carving,
 //! which loses both. Extraction walks the directory tree from the Primary Volume

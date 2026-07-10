@@ -1,21 +1,21 @@
 #!/bin/sh
-# filerecovery installer — download a prebuilt binary from the latest GitHub
+# unearth installer — download a prebuilt binary from the latest GitHub
 # Release and drop it on your PATH. No Rust toolchain required.
 #
-#   curl -fsSL https://raw.githubusercontent.com/MarcelRoozekrans/FileRecovery/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/MarcelRoozekrans/unearth/main/install.sh | sh
 #
 # Environment overrides:
-#   FILERECOVERY_VERSION   tag to install (e.g. v0.4.0); default: latest release
-#   FILERECOVERY_BIN_DIR   install directory; default: $HOME/.local/bin
+#   UNEARTH_VERSION   tag to install (e.g. v0.4.0); default: latest release
+#   UNEARTH_BIN_DIR   install directory; default: $HOME/.local/bin
 #
 # POSIX sh; needs curl (or wget) and tar. For Windows, download the .zip asset
 # from the Releases page instead.
 
 set -eu
 
-REPO="MarcelRoozekrans/FileRecovery"
-BIN="filerecovery"
-BIN_DIR="${FILERECOVERY_BIN_DIR:-$HOME/.local/bin}"
+REPO="MarcelRoozekrans/unearth"
+BIN="unearth"
+BIN_DIR="${UNEARTH_BIN_DIR:-$HOME/.local/bin}"
 
 err() {
 	echo "install: $*" >&2
@@ -57,7 +57,7 @@ case "$os" in
 esac
 
 # --- resolve the version tag --------------------------------------------------
-tag="${FILERECOVERY_VERSION:-}"
+tag="${UNEARTH_VERSION:-}"
 if [ -z "$tag" ]; then
 	# Follow the /releases/latest redirect and read the tag from the final URL.
 	final="$(dl_head_location "https://github.com/$REPO/releases/latest")" ||

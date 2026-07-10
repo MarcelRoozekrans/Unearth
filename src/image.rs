@@ -358,7 +358,7 @@ fn parse_map(text: &str) -> ImageMap {
 /// Write the map file: a human-readable record of total size, the high-water
 /// mark, and each unreadable region (absolute source offsets).
 fn write_map(path: &std::path::Path, total: u64, pos: u64, bad: &[BadRegion]) -> Result<()> {
-    let mut s = String::from("# filerecovery image map v1\n");
+    let mut s = String::from("# unearth image map v1\n");
     s.push_str(&format!("total {total}\n"));
     s.push_str(&format!("pos {pos}\n"));
     for r in bad {

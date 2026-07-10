@@ -3,8 +3,8 @@
 
 use std::path::PathBuf;
 
-use filerecovery::fat;
-use filerecovery::source::Source;
+use unearth::fat;
+use unearth::source::Source;
 
 const BPS: usize = 512; // bytes per sector
 const SPC: usize = 1; // sectors per cluster
@@ -115,7 +115,7 @@ fn recovers_deleted_fat_file_with_long_name() {
         .recover_deleted(
             &source,
             &out_dir,
-            &filerecovery::recover::RecoverOptions::default(),
+            &unearth::recover::RecoverOptions::default(),
         )
         .unwrap();
     assert_eq!(stats.recovered, 1, "should recover the deleted file");
@@ -160,7 +160,7 @@ fn skips_short_name_first_char() {
         .recover_deleted(
             &source,
             &out_dir,
-            &filerecovery::recover::RecoverOptions::default(),
+            &unearth::recover::RecoverOptions::default(),
         )
         .unwrap();
     assert_eq!(stats.recovered, 1);

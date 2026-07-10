@@ -2,9 +2,9 @@
 //! its extent tree zeroed is recovered from an older copy of the inode-table
 //! block preserved in the journal.
 
-use filerecovery::ext4;
-use filerecovery::recover::RecoverOptions;
-use filerecovery::source::Source;
+use unearth::ext4;
+use unearth::recover::RecoverOptions;
+use unearth::source::Source;
 
 const BS: usize = 1024;
 const INODE_SIZE: usize = 128;

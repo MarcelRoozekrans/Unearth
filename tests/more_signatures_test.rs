@@ -4,9 +4,9 @@
 
 use std::io::Write;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 fn filler(seed: u64, n: usize) -> Vec<u8> {
     (0..n).map(|i| ((i as u64 + seed) % 251) as u8).collect()

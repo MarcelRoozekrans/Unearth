@@ -4,8 +4,8 @@
 
 use std::process::Command;
 
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::source::Source;
+use unearth::recover::{self, RecoverOptions};
+use unearth::source::Source;
 
 /// A minimal APFS container superblock (`nx_superblock_t`).
 fn apfs_container(block_size: u32, block_count: u64) -> Vec<u8> {
@@ -102,7 +102,7 @@ fn info_cli_shows_contained_apfs_volumes() {
     )
     .unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_filerecovery"))
+    let out = Command::new(env!("CARGO_BIN_EXE_unearth"))
         .args(["info", img.to_str().unwrap()])
         .output()
         .unwrap();
@@ -138,7 +138,7 @@ fn info_cli_lists_an_apfs_volume() {
     let img = tmp.path().join("c.img");
     std::fs::write(&img, apfs_container(4096, 8)).unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_filerecovery"))
+    let out = Command::new(env!("CARGO_BIN_EXE_unearth"))
         .args(["info", img.to_str().unwrap()])
         .output()
         .unwrap();

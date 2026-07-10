@@ -3,8 +3,8 @@
 
 use std::time::{Duration, UNIX_EPOCH};
 
-use filerecovery::ext4;
-use filerecovery::source::Source;
+use unearth::ext4;
+use unearth::source::Source;
 
 const BS: usize = 1024;
 const INODE_SIZE: usize = 128;
@@ -120,7 +120,7 @@ fn restores_modification_time() {
         .recover_deleted(
             &source,
             &out_dir,
-            &filerecovery::recover::RecoverOptions::default(),
+            &unearth::recover::RecoverOptions::default(),
         )
         .unwrap();
     assert_eq!(stats.recovered, 1);

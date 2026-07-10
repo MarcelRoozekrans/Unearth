@@ -52,7 +52,7 @@ fn volume_index_selects_one_volume() {
     std::fs::write(&img, two_volume_disk()).unwrap();
     let out = tmp.path().join("out");
 
-    let status = Command::new(env!("CARGO_BIN_EXE_filerecovery"))
+    let status = Command::new(env!("CARGO_BIN_EXE_unearth"))
         .args([
             "undelete",
             img.to_str().unwrap(),
@@ -78,7 +78,7 @@ fn out_of_range_volume_is_an_error() {
     let img = tmp.path().join("disk.img");
     std::fs::write(&img, two_volume_disk()).unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_filerecovery"))
+    let out = Command::new(env!("CARGO_BIN_EXE_unearth"))
         .args([
             "undelete",
             img.to_str().unwrap(),

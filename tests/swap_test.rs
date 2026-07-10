@@ -1,8 +1,8 @@
 //! Linux swap area detection: a swap partition is recognised (not shown as an
 //! unrecognised volume) and its size, UUID, and label are reported.
 
-use filerecovery::recover;
-use filerecovery::source::Source;
+use unearth::recover;
+use unearth::source::Source;
 
 const PAGE: usize = 4096;
 const SECTOR: usize = 512;
@@ -76,7 +76,7 @@ fn info_cli_reports_swap_uuid_and_label() {
     let path = tmp.path().join("swap.img");
     std::fs::write(&path, &img).unwrap();
 
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_filerecovery"))
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_unearth"))
         .args(["info", path.to_str().unwrap(), "--json"])
         .output()
         .unwrap();

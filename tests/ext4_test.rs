@@ -3,9 +3,9 @@
 //! containing stale/deleted entries in their slack), then verify recovery
 //! restores names, paths, and contents.
 
-use filerecovery::ext4;
-use filerecovery::recover;
-use filerecovery::source::Source;
+use unearth::ext4;
+use unearth::recover;
+use unearth::source::Source;
 
 const BS: usize = 1024; // block size
 const INODE_SIZE: usize = 128;
@@ -216,7 +216,7 @@ fn recovers_deleted_ext4_files() {
         .recover_deleted(
             &source,
             &out_dir,
-            &filerecovery::recover::RecoverOptions::default(),
+            &unearth::recover::RecoverOptions::default(),
         )
         .unwrap();
     assert_eq!(stats.recovered, 2, "photo.raw and logs/app.log");

@@ -30,7 +30,7 @@ use crate::json::{self, obj, s, Json};
 use crate::{carver, hash, manifest, recover, signatures, source::Source};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
-const SERVER_NAME: &str = "filerecovery";
+const SERVER_NAME: &str = "unearth";
 /// Cap on per-file records embedded in a tool result, to bound response size.
 const MAX_FILES_IN_RESULT: usize = 1000;
 
@@ -1152,7 +1152,7 @@ mod tests {
                 .get("name")
                 .unwrap()
                 .as_str(),
-            Some("filerecovery")
+            Some("unearth")
         );
         assert!(result.get("capabilities").unwrap().get("tools").is_some());
     }

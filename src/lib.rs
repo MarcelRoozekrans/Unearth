@@ -1,4 +1,4 @@
-//! `filerecovery` — recover deleted files from SD cards, hard drives, and disk
+//! `unearth` — recover deleted files from SD cards, hard drives, and disk
 //! images.
 //!
 //! Two complementary strategies are provided:
@@ -20,7 +20,7 @@
 //!
 //! ```no_run
 //! use std::path::PathBuf;
-//! use filerecovery::{carver, signatures, source::Source};
+//! use unearth::{carver, signatures, source::Source};
 //!
 //! let src = Source::open(std::path::Path::new("disk.img")).unwrap();
 //! let sigs = signatures::select(&["jpg".to_string()]).unwrap();

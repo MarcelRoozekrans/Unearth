@@ -3,7 +3,7 @@
 //! UDF (ECMA-167 / ISO 13346) is the filesystem of optical media (DVDs,
 //! Blu-ray) and is also used on many large USB drives and camcorder cards. Its
 //! copy-on-write-ish, descriptor-based metadata is not parsed here, so
-//! `filerecovery` does not recover deleted files from UDF directly — but
+//! `unearth` does not recover deleted files from UDF directly — but
 //! recognising and naming it is useful: a user who images a UDF disc gets a
 //! clear answer ("this is UDF — carve it") instead of a bare "no supported
 //! volumes" message. Recovery is a no-op; carving (`scan`) is the fallback.
