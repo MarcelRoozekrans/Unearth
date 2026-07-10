@@ -3,12 +3,26 @@ name = "filerecovery"
 version = "0.3.0"
 edition = "2021"
 rust-version = "1.75"
-description = "Recover deleted files from SD cards, hard drives, and disk images by signature-based file carving."
+description = "Recover deleted and lost files from disk images and devices: filesystem-aware undelete (FAT/exFAT/NTFS/ext/HFS+) plus signature carving of 150+ formats. Dependency-light and read-only on the source."
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/MarcelRoozekrans/FileRecovery"
 keywords = ["recovery", "forensics", "carving", "undelete", "data-recovery"]
 categories = ["command-line-utilities", "filesystem"]
+# Keep the published crate to the Rust sources and docs; the Claude Code plugin,
+# skills, installer, and CI live in the repo but aren't part of the package.
+exclude = [".github", ".claude-plugin", "skills", ".mcp.json", "install.sh"]
+
+# cargo-binstall: fetch the prebuilt binary the release workflow attaches to each
+# GitHub Release (asset name: filerecovery-v<version>-<target>.<ext>) instead of
+# compiling from source.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }{ archive-suffix }"
+pkg-fmt = "tgz"
+bin-dir = "{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [[bin]]
 name = "filerecovery"

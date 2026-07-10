@@ -113,19 +113,48 @@ offset where they were found.
   filerecovery scan card.img -o recovered
   ```
 
-## Install / build
+## Install
 
-Requires a Rust toolchain (1.75+).
+Pick whichever fits — no Rust toolchain is needed except for the last two.
+
+**Install script** (Linux/macOS — downloads the prebuilt binary):
 
 ```sh
-cargo build --release
-# binary at target/release/filerecovery
+curl -fsSL https://raw.githubusercontent.com/MarcelRoozekrans/FileRecovery/main/install.sh | sh
 ```
 
-Prebuilt binaries for Linux (glibc and static musl), macOS (Intel and Apple
-Silicon), and Windows are attached to each [GitHub Release](https://github.com/MarcelRoozekrans/FileRecovery/releases);
-they are built automatically by the release workflow when a `v*` tag is pushed.
+Installs to `~/.local/bin` by default (override with `FILERECOVERY_BIN_DIR`; pin a
+version with `FILERECOVERY_VERSION=v0.4.0`).
+
+**Prebuilt binaries** — Linux (glibc and static musl), macOS (Intel and Apple
+Silicon), and Windows are attached to each
+[GitHub Release](https://github.com/MarcelRoozekrans/FileRecovery/releases),
+built automatically when a `v*` tag is pushed.
+
+**[cargo-binstall](https://github.com/cargo-bins/cargo-binstall)** (fetches the
+prebuilt binary, no compile):
+
+```sh
+cargo binstall filerecovery
+```
+
+**From crates.io** (compiles; requires a Rust toolchain, 1.75+):
+
+```sh
+cargo install filerecovery
+```
+
+**From source:**
+
+```sh
+cargo build --release   # binary at target/release/filerecovery
+```
+
 See [CHANGELOG.md](CHANGELOG.md) for the version history.
+
+> **Prefer a deliberate install for a disk-recovery tool.** These paths install
+> the binary once, so you know exactly what's reading your devices — rather than
+> fetching-and-running it on the fly. All access is read-only on the source.
 
 ## Usage
 

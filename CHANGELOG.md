@@ -8,6 +8,13 @@ on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 
 ### Added
 
+- **Easier installation.** `cargo binstall filerecovery` now fetches the
+  prebuilt binary the release workflow attaches to each GitHub Release (via
+  `[package.metadata.binstall]`) instead of compiling, and a POSIX `install.sh`
+  (`curl … | sh`) downloads and installs the right binary on Linux/macOS with no
+  Rust toolchain. The crates.io description was refreshed to reflect the full
+  toolkit (filesystem-aware undelete plus carving, not carving alone), and the
+  published crate now excludes the plugin/skill/CI files.
 - **Custom carvers can be injected at run time via the MCP `scan` tool.** A new
   `custom_carvers` argument takes an array of carver specs — a magic number
   (hex, at an optional offset, with an optional secondary tag) plus a
