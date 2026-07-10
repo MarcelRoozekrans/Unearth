@@ -1,4 +1,4 @@
-//! `filerecovery` command-line entry point.
+//! `unearth` command-line entry point.
 
 mod cli;
 
@@ -11,10 +11,10 @@ use cli::{
     Cli, Command, CompletionsArgs, IdentifyArgs, ImageArgs, InfoArgs, RecoverArgs, ScanArgs,
     TriageArgs, UndeleteArgs, VerifyArgs,
 };
-use filerecovery::carver::{self, CarveOptions, ProgressSink};
-use filerecovery::recover;
-use filerecovery::signatures::{self, SIGNATURES};
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, ProgressSink};
+use unearth::recover;
+use unearth::signatures::{self, SIGNATURES};
+use unearth::source::Source;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
         Command::Mcp => {
             let stdin = std::io::stdin();
             let stdout = std::io::stdout();
-            filerecovery::mcp::serve(stdin.lock(), stdout.lock())
+            unearth::mcp::serve(stdin.lock(), stdout.lock())
         }
         Command::Completions(args) => {
             completions(args);
@@ -43,10 +43,10 @@ fn main() -> Result<()> {
     }
 }
 
-/// Print a shell completion script for `filerecovery` to stdout.
+/// Print a shell completion script for `unearth` to stdout.
 fn completions(args: CompletionsArgs) {
     let mut cmd = Cli::command();
-    clap_complete::generate(args.shell, &mut cmd, "filerecovery", &mut std::io::stdout());
+    clap_complete::generate(args.shell, &mut cmd, "unearth", &mut std::io::stdout());
 }
 
 fn verify(args: VerifyArgs) -> Result<()> {
@@ -57,7 +57,7 @@ fn verify(args: VerifyArgs) -> Result<()> {
         .extension()
         .map(|e| e.eq_ignore_ascii_case("json"))
         .unwrap_or(false);
-    let entries = filerecovery::manifest::parse(&text, is_json)?;
+    let entries = unearth::manifest::parse(&text, is_json)?;
 
     let mut ok = 0u64;
     let mut mismatched = 0u64;
@@ -81,7 +81,7 @@ fn verify(args: VerifyArgs) -> Result<()> {
                 continue;
             }
         };
-        let got = filerecovery::hash::to_hex(&filerecovery::hash::digest(&data));
+        let got = unearth::hash::to_hex(&unearth::hash::digest(&data));
         if got.eq_ignore_ascii_case(expected) {
             ok += 1;
         } else {
@@ -123,9 +123,9 @@ fn deleted_count(vol: &recover::Volume, source: &Source, requested: bool) -> Opt
 }
 
 fn triage(args: TriageArgs) -> Result<()> {
-    use filerecovery::json::{obj, s, Json};
+    use unearth::json::{obj, s, Json};
 
-    let sum = filerecovery::triage::summarize(&args.dir, args.top)?;
+    let sum = unearth::triage::summarize(&args.dir, args.top)?;
 
     if args.json {
         let by_type = Json::Obj(
@@ -262,15 +262,15 @@ fn triage(args: TriageArgs) -> Result<()> {
     if let (Some(oldest), Some(newest)) = (sum.oldest_mtime, sum.newest_mtime) {
         println!(
             "\nModified: {} .. {}",
-            filerecovery::times::format_utc(oldest),
-            filerecovery::times::format_utc(newest)
+            unearth::times::format_utc(oldest),
+            unearth::times::format_utc(newest)
         );
     }
     Ok(())
 }
 
 fn identify(args: IdentifyArgs) -> Result<()> {
-    use filerecovery::json::{obj, s, Json};
+    use unearth::json::{obj, s, Json};
 
     // Read up to 64 KiB from the start of a file (what the signature table and
     // its validators need).
@@ -293,7 +293,7 @@ fn identify(args: IdentifyArgs) -> Result<()> {
 
     let one_json = |path: &std::path::Path| -> Result<Json> {
         let head = read_head(path)?;
-        Ok(match filerecovery::identify::identify(&head) {
+        Ok(match unearth::identify::identify(&head) {
             Some(d) => obj(vec![
                 ("file", s(path.display().to_string())),
                 ("identified", Json::Bool(true)),
@@ -322,7 +322,7 @@ fn identify(args: IdentifyArgs) -> Result<()> {
 
     for path in &args.files {
         let head = read_head(path)?;
-        match filerecovery::identify::identify(&head) {
+        match unearth::identify::identify(&head) {
             Some(d) => {
                 let note = if d.validated {
                     "structurally validated"
@@ -355,7 +355,7 @@ fn info(args: InfoArgs) -> Result<()> {
             json_escape(&args.source.display().to_string())
         ));
         out.push_str(&format!("  \"source_bytes\": {},\n", source.size));
-        let table = filerecovery::partition::read(&source);
+        let table = unearth::partition::read(&source);
         out.push_str(&format!(
             "  \"partition_scheme\": \"{}\",\n",
             partition_scheme_str(table.scheme)
@@ -510,7 +510,7 @@ fn info(args: InfoArgs) -> Result<()> {
         human_bytes(source.size)
     );
 
-    let table = filerecovery::partition::read(&source);
+    let table = unearth::partition::read(&source);
     if !table.partitions.is_empty() {
         let from_backup = if table.from_backup {
             " (recovered from backup header; primary GPT is missing or corrupt)"
@@ -611,10 +611,10 @@ fn info(args: InfoArgs) -> Result<()> {
             println!("      inodes: {used} used / {total}");
         }
         if let Some(t) = vol.created_time() {
-            println!("      created: {}", filerecovery::times::format_utc(t));
+            println!("      created: {}", unearth::times::format_utc(t));
         }
         if let Some(t) = vol.written_time() {
-            println!("      last written: {}", filerecovery::times::format_utc(t));
+            println!("      last written: {}", unearth::times::format_utc(t));
         }
         if let Some(free) = free_bytes(vol, &source) {
             let pct = if vol.size() > 0 {
@@ -685,7 +685,7 @@ fn apply_exclude(
 }
 
 fn list_types() {
-    use filerecovery::signatures::{category_of, Category};
+    use unearth::signatures::{category_of, Category};
 
     // (category, display heading) in presentation order.
     let groups = [
@@ -729,8 +729,8 @@ fn list_types() {
 }
 
 /// Lowercase name of a partitioning scheme for output.
-fn partition_scheme_str(scheme: filerecovery::partition::Scheme) -> &'static str {
-    use filerecovery::partition::Scheme;
+fn partition_scheme_str(scheme: unearth::partition::Scheme) -> &'static str {
+    use unearth::partition::Scheme;
     match scheme {
         Scheme::Gpt => "gpt",
         Scheme::Mbr => "mbr",
@@ -1045,7 +1045,7 @@ fn undelete(args: UndeleteArgs) -> Result<()> {
         for f in &stats.files {
             let sha = f
                 .sha256
-                .map(|d| filerecovery::hash::to_hex(&d))
+                .map(|d| unearth::hash::to_hex(&d))
                 .unwrap_or_default();
             report_rows.push((
                 label.clone(),
@@ -1167,7 +1167,7 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
             };
             let sha = f
                 .sha256
-                .map(|d| filerecovery::hash::to_hex(&d))
+                .map(|d| unearth::hash::to_hex(&d))
                 .unwrap_or_default();
             report_rows.push(("named", rel, f.size, sha));
         }
@@ -1230,7 +1230,7 @@ fn recover_all(args: RecoverArgs) -> Result<()> {
                 "carved",
                 format!("carved/{}", f.name),
                 f.size,
-                filerecovery::hash::to_hex(&f.sha256),
+                unearth::hash::to_hex(&f.sha256),
             ));
         }
     };
@@ -1363,7 +1363,7 @@ fn write_recover_report(
 }
 
 fn image(args: ImageArgs) -> Result<()> {
-    use filerecovery::image::{self, ImageOptions};
+    use unearth::image::{self, ImageOptions};
 
     let started = std::time::Instant::now();
     let source = Source::open(&args.source)?;
@@ -1486,7 +1486,7 @@ fn hash_file(path: &std::path::Path) -> Result<String> {
     use std::io::Read;
     let mut f = std::fs::File::open(path)
         .map_err(|e| anyhow::anyhow!("opening {}: {e}", path.display()))?;
-    let mut hasher = filerecovery::hash::Sha256::new();
+    let mut hasher = unearth::hash::Sha256::new();
     let mut buf = vec![0u8; 1 << 20];
     loop {
         let n = f.read(&mut buf)?;
@@ -1495,7 +1495,7 @@ fn hash_file(path: &std::path::Path) -> Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(filerecovery::hash::to_hex(&hasher.finalize()))
+    Ok(unearth::hash::to_hex(&hasher.finalize()))
 }
 
 /// Seconds since the Unix epoch (0 if the clock is before it).
@@ -1631,7 +1631,7 @@ fn write_carve_report(path: &std::path::Path, files: &[carver::CarvedFile]) -> R
                 f.ext,
                 f.offset,
                 f.size,
-                filerecovery::hash::to_hex(&f.sha256),
+                unearth::hash::to_hex(&f.sha256),
                 comma
             ));
         }
@@ -1645,7 +1645,7 @@ fn write_carve_report(path: &std::path::Path, files: &[carver::CarvedFile]) -> R
                 f.ext,
                 f.offset,
                 f.size,
-                filerecovery::hash::to_hex(&f.sha256)
+                unearth::hash::to_hex(&f.sha256)
             ));
         }
     }

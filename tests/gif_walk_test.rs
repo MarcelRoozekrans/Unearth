@@ -5,9 +5,9 @@
 
 use std::io::Write;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// A minimal GIF89a with one image whose data sub-blocks deliberately contain a
 /// `00 3B` byte pair (which a naive footer carver would stop at).

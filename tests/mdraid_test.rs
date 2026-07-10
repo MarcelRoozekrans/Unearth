@@ -1,8 +1,8 @@
 //! Linux MD/RAID member detection through the unified `recover::detect` path:
 //! a RAID member partition is recognised with its level, UUID, and name.
 
-use filerecovery::recover;
-use filerecovery::source::Source;
+use unearth::recover;
+use unearth::source::Source;
 
 const SECTOR: usize = 512;
 const MD_MAGIC: u32 = 0xA92B_4EFC;

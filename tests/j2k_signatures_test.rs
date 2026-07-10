@@ -4,9 +4,9 @@
 
 use std::io::Write;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// A minimal J2K codestream: SOC (FF4F) + SIZ (FF51) + body + EOC (FFD9). The
 /// body uses constant 0x41 bytes so it carries no stray FF marker.

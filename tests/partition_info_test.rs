@@ -22,7 +22,7 @@ fn mbr_disk() -> Vec<u8> {
 }
 
 fn run(args: &[&str]) -> (bool, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_filerecovery"))
+    let out = Command::new(env!("CARGO_BIN_EXE_unearth"))
         .args(args)
         .output()
         .unwrap();

@@ -3,10 +3,10 @@
 
 use std::path::Path;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::recover::{self, RecoverOptions};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// Tiny deterministic xorshift PRNG so failures reproduce.
 struct Rng(u64);

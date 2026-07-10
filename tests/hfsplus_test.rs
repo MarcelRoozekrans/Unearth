@@ -2,8 +2,8 @@
 
 mod common;
 
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::source::Source;
+use unearth::recover::{self, RecoverOptions};
+use unearth::source::Source;
 
 fn write_img(bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
@@ -120,7 +120,7 @@ fn free_extents_reads_the_allocation_bitmap() {
     // allocated (MSB-first) and leaves the rest free.
     let (_tmp, img) = write_img(&common::hfsplus_volume("notes.txt", b"hi"));
     let src = Source::open(&img).unwrap();
-    let vol = filerecovery::hfsplus::Volume::parse(&src, 0).unwrap();
+    let vol = unearth::hfsplus::Volume::parse(&src, 0).unwrap();
 
     // createDate / modifyDate decode from the HFS epoch to Unix seconds.
     assert_eq!(vol.created_time(), Some(1_600_000_000));

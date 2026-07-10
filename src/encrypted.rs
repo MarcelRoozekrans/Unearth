@@ -1,7 +1,7 @@
 //! Detection of full-disk-encryption containers (LUKS and BitLocker).
 //!
 //! These volumes hold no readable filesystem until they are unlocked with the
-//! correct key, so `filerecovery` cannot recover from them directly. Detecting
+//! correct key, so `unearth` cannot recover from them directly. Detecting
 //! and naming them is still useful: a user who points the tool at an encrypted
 //! disk gets a clear answer ("this is LUKS / BitLocker — unlock it first with
 //! `cryptsetup` / Windows, then image the mapped device") instead of a bare

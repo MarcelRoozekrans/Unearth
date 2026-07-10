@@ -1,4 +1,4 @@
-//! End-to-end CLI tests: run the built `filerecovery` binary and check exit
+//! End-to-end CLI tests: run the built `unearth` binary and check exit
 //! codes, output, and side effects on the filesystem.
 
 mod common;
@@ -7,14 +7,14 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_filerecovery")
+    env!("CARGO_BIN_EXE_unearth")
 }
 
 fn run(args: &[&str]) -> Output {
     Command::new(bin())
         .args(args)
         .output()
-        .expect("failed to run filerecovery")
+        .expect("failed to run unearth")
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn image_hash_records_the_image_digest() {
 
     // For a clean, full copy the image equals the source, so its digest is the
     // source's digest. It is printed and recorded in the summary.
-    let expected = filerecovery::hash::to_hex(&filerecovery::hash::digest(&data));
+    let expected = unearth::hash::to_hex(&unearth::hash::digest(&data));
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains(&format!("SHA-256: {expected}")),
@@ -674,7 +674,7 @@ fn scan_report_manifest_carries_matching_sha256() {
     assert_eq!(entries.len(), 1);
     let carved = std::fs::read(entries[0].as_ref().unwrap().path()).unwrap();
     assert_eq!(carved, jpeg, "carved bytes match the planted JPEG");
-    let expected = filerecovery::hash::to_hex(&filerecovery::hash::digest(&carved));
+    let expected = unearth::hash::to_hex(&unearth::hash::digest(&carved));
 
     let json = std::fs::read_to_string(&report).unwrap();
     assert!(
@@ -713,7 +713,7 @@ fn report_manifest_carries_matching_sha256() {
     // The digest in the report must match a fresh hash of the recovered file.
     let recovered = std::fs::read(out_dir.join("notes.txt")).unwrap();
     assert_eq!(recovered, content);
-    let expected = filerecovery::hash::to_hex(&filerecovery::hash::digest(&recovered));
+    let expected = unearth::hash::to_hex(&unearth::hash::digest(&recovered));
 
     let json = std::fs::read_to_string(&report).unwrap();
     assert!(
@@ -761,7 +761,7 @@ fn completions_emit_a_script() {
     assert!(out.status.success());
     let script = String::from_utf8_lossy(&out.stdout);
     // The bash completion script references the binary name and registers it.
-    assert!(script.contains("filerecovery"), "{script}");
+    assert!(script.contains("unearth"), "{script}");
     assert!(script.contains("complete "), "{script}");
 
     // An invalid shell is rejected.

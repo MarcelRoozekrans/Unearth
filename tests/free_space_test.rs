@@ -3,9 +3,9 @@
 
 mod common;
 
-use filerecovery::recover;
-use filerecovery::source::Source;
 use std::process::Command;
+use unearth::recover;
+use unearth::source::Source;
 
 fn source_of(bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf, Source) {
     let tmp = tempfile::tempdir().unwrap();
@@ -16,7 +16,7 @@ fn source_of(bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf, Source) {
 }
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_filerecovery")
+    env!("CARGO_BIN_EXE_unearth")
 }
 
 #[test]

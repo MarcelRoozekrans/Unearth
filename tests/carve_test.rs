@@ -4,9 +4,9 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// Deterministic pseudo-random filler so the image looks like real noisy media.
 fn filler(seed: u64, len: usize) -> Vec<u8> {

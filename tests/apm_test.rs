@@ -3,9 +3,9 @@
 
 mod common;
 
-use filerecovery::partition::{self, Scheme};
-use filerecovery::recover;
-use filerecovery::source::Source;
+use unearth::partition::{self, Scheme};
+use unearth::recover;
+use unearth::source::Source;
 
 const BS: usize = 512;
 

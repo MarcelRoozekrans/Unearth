@@ -4,9 +4,9 @@
 
 use std::io::Write;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// A geometry-valid ZIP (so the carver accepts it) whose body contains `marker`
 /// — standing in for a member name like `word/document.xml`.

@@ -4,9 +4,9 @@
 
 use std::io::Write;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// Deterministic filler that never contains the byte `0xFF`, so it can hold no
 /// stray JPEG magic (`FF D8 FF`) or footer (`FF D9`) of its own. That keeps the

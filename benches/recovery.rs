@@ -16,10 +16,10 @@ use std::io::Write;
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::source::Source;
-use filerecovery::{hash, identify, signatures};
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::recover::{self, RecoverOptions};
+use unearth::source::Source;
+use unearth::{hash, identify, signatures};
 
 fn filler(seed: u64, n: usize) -> Vec<u8> {
     let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;

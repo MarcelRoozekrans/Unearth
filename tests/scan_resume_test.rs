@@ -5,8 +5,8 @@ mod common;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use filerecovery::carver::{self, CarveOptions, NoProgress, ProgressSink};
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress, ProgressSink};
+use unearth::source::Source;
 
 const MIB: usize = 1024 * 1024;
 
@@ -144,6 +144,6 @@ fn completed_scan_checkpoint_makes_resume_a_noop() {
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1);
 }
 
-fn all_sigs() -> Vec<&'static filerecovery::signatures::Signature> {
-    filerecovery::signatures::select(&[]).unwrap()
+fn all_sigs() -> Vec<&'static unearth::signatures::Signature> {
+    unearth::signatures::select(&[]).unwrap()
 }

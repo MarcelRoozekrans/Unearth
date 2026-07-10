@@ -1,8 +1,13 @@
-# filerecovery
+# unearth
 
-Recover deleted files from SD cards, USB sticks, hard drives, and disk images.
+`unearth` is a dependency-light, **read-only** data-recovery and disk-forensics
+toolkit in pure Rust. It brings back deleted and lost files — by
+**filesystem-aware undelete** and by **signature carving** of 150+ formats — and
+goes further: whole-filesystem and **lost-partition** recovery, bad-sector-tolerant
+**imaging**, volume triage across ~28 filesystems, and runtime-extensible custom
+carvers. Drive it from the shell or from an **AI agent over MCP**.
 
-`filerecovery` offers two complementary recovery strategies:
+At its core are two complementary recovery strategies:
 
 | Command    | Strategy                               | Restores names? | Works after format? |
 |------------|----------------------------------------|-----------------|---------------------|
@@ -45,7 +50,7 @@ recovery here reconstructs **fragmented** files correctly — not just contiguou
 ones — and small files stored inline in the MFT come back directly. Original
 folder paths are rebuilt by following each record's parent reference.
 
-For FAT/exFAT, `filerecovery` reads the surviving directory entries and recovers
+For FAT/exFAT, `unearth` reads the surviving directory entries and recovers
 each file under the **contiguous-allocation** assumption (the common case for
 cameras/SD cards; exFAT additionally follows the FAT for files flagged as
 fragmented), then restores them to their original folder paths.
@@ -54,7 +59,7 @@ fragmented), then restores them to their original folder paths.
 inode's link count is cleared and the directory entry is unlinked by folding its
 space into the previous entry — but the removed entry's **name and inode number**
 usually remain in the directory block's *slack space*, and the inode's **extent
-tree** (or ext2/3 block pointers) often survives. `filerecovery` walks the live
+tree** (or ext2/3 block pointers) often survives. `unearth` walks the live
 directory tree, scans that slack for stale entries, and recovers any whose inode
 is now deleted but still has a readable block map. When ext4 has *zeroed* the
 live inode's extent tree on deletion, it scans the filesystem **journal
@@ -68,7 +73,7 @@ a B-tree whose leaf nodes hold one record per object — its name, CNID, and the
 data fork's first eight extents inline. Deleting a file removes its record from
 the leaf node and shifts the rest down, but the removed record's bytes usually
 linger in the node's *free space* until the node is rewritten, and the data
-blocks stay put until reused. `filerecovery` reads the catalog, walks every leaf
+blocks stay put until reused. `unearth` reads the catalog, walks every leaf
 node, and scans the free space below the live records for stale **file records**
 that pass a strict structural check. (This is the catalog-slack analogue of the
 ext directory-slack technique.) Each recovered file is restored under its
@@ -109,8 +114,8 @@ offset where they were found.
   copy without stressing the (possibly failing) original. The built-in `image`
   command does this read-only, tolerating bad sectors and writing sparse output:
   ```sh
-  sudo filerecovery image /dev/sdb card.img
-  filerecovery scan card.img -o recovered
+  sudo unearth image /dev/sdb card.img
+  unearth scan card.img -o recovered
   ```
 
 ## Install
@@ -120,34 +125,34 @@ Pick whichever fits — no Rust toolchain is needed except for the last two.
 **Install script** (Linux/macOS — downloads the prebuilt binary):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/MarcelRoozekrans/FileRecovery/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MarcelRoozekrans/unearth/main/install.sh | sh
 ```
 
-Installs to `~/.local/bin` by default (override with `FILERECOVERY_BIN_DIR`; pin a
-version with `FILERECOVERY_VERSION=v0.4.0`).
+Installs to `~/.local/bin` by default (override with `UNEARTH_BIN_DIR`; pin a
+version with `UNEARTH_VERSION=v0.4.0`).
 
 **Prebuilt binaries** — Linux (glibc and static musl), macOS (Intel and Apple
 Silicon), and Windows are attached to each
-[GitHub Release](https://github.com/MarcelRoozekrans/FileRecovery/releases),
+[GitHub Release](https://github.com/MarcelRoozekrans/unearth/releases),
 built automatically when a `v*` tag is pushed.
 
 **[cargo-binstall](https://github.com/cargo-bins/cargo-binstall)** (fetches the
 prebuilt binary, no compile):
 
 ```sh
-cargo binstall filerecovery
+cargo binstall unearth
 ```
 
 **From crates.io** (compiles; requires a Rust toolchain, 1.75+):
 
 ```sh
-cargo install filerecovery
+cargo install unearth
 ```
 
 **From source:**
 
 ```sh
-cargo build --release   # binary at target/release/filerecovery
+cargo build --release   # binary at target/release/unearth
 ```
 
 See [CHANGELOG.md](CHANGELOG.md) for the version history.
@@ -159,7 +164,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the version history.
 ## Usage
 
 ```text
-filerecovery <COMMAND>
+unearth <COMMAND>
 
 Commands:
   undelete    Recover deleted files from FAT/exFAT/NTFS/ext/HFS+ (keeps names/paths)
@@ -177,7 +182,7 @@ Commands:
 
 ### Use from an AI agent (MCP server)
 
-`filerecovery mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
+`unearth mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
 server on stdin/stdout, exposing recovery as tools an AI agent (e.g. Claude) can
 call: `list_types`, `list_volumes`, `scan`, `scan_status`, `scan_cancel`,
 `image` (copy a device/image to an image file, read-only and bad-sector
@@ -201,7 +206,7 @@ Point an MCP client at the binary, for example in a Claude Desktop config:
 ```json
 {
   "mcpServers": {
-    "filerecovery": { "command": "filerecovery", "args": ["mcp"] }
+    "unearth": { "command": "unearth", "args": ["mcp"] }
   }
 }
 ```
@@ -272,26 +277,26 @@ emit a wrong length.
 This repo doubles as a [Claude Code](https://code.claude.com) **plugin
 marketplace**, so you can wire up the MCP server and the custom-carver skill in
 two commands instead of editing config by hand. First make sure the
-`filerecovery` binary is on your `PATH` (`cargo install filerecovery`, or drop a
+`unearth` binary is on your `PATH` (`cargo install unearth`, or drop a
 release binary somewhere on `PATH`) — the plugin launches it, it doesn't bundle
 it. Then, in Claude Code:
 
 ```
-/plugin marketplace add marcelroozekrans/filerecovery
-/plugin install filerecovery@filerecovery-tools
+/plugin marketplace add marcelroozekrans/unearth
+/plugin install unearth@unearth-tools
 ```
 
-That registers the `filerecovery` MCP server (all the tools above) and the
+That registers the `unearth` MCP server (all the tools above) and the
 `custom-carver` skill (which guides authoring `custom_carvers` specs). The skill
-is available as `/filerecovery:custom-carver`. Manage or remove it later with
+is available as `/unearth:custom-carver`. Manage or remove it later with
 `/plugin`.
 
 ### Shell completions
 
 ```sh
-filerecovery completions bash > /etc/bash_completion.d/filerecovery   # bash
-filerecovery completions zsh  > ~/.zfunc/_filerecovery                # zsh
-filerecovery completions fish > ~/.config/fish/completions/filerecovery.fish
+unearth completions bash > /etc/bash_completion.d/unearth   # bash
+unearth completions zsh  > ~/.zfunc/_unearth                # zsh
+unearth completions fish > ~/.config/fish/completions/unearth.fish
 ```
 
 Supported shells: `bash`, `zsh`, `fish`, `powershell`, `elvish`.
@@ -302,8 +307,8 @@ If the drive may be failing, copy it once and recover from the copy — every
 later pass then reads the image instead of stressing the dying hardware again:
 
 ```sh
-sudo filerecovery image /dev/sdb card.img      # read-only, bad-sector tolerant
-filerecovery scan card.img -o recovered        # then work on the copy
+sudo unearth image /dev/sdb card.img      # read-only, bad-sector tolerant
+unearth scan card.img -o recovered        # then work on the copy
 ```
 
 The copy is **read-only** on the source. A read that fails is retried at sector
@@ -318,9 +323,9 @@ runs; if it is interrupted, `--resume` continues from where it left off instead
 of starting over:
 
 ```sh
-sudo filerecovery image /dev/sdb card.img --map card.map
+sudo unearth image /dev/sdb card.img --map card.map
 # interrupted? pick up where it stopped:
-sudo filerecovery image /dev/sdb card.img --map card.map --resume
+sudo unearth image /dev/sdb card.img --map card.map --resume
 ```
 
 A failing drive often returns data on a later attempt. `--retry-bad <N>` makes
@@ -329,7 +334,7 @@ salvaging sectors the first pass had to zero-fill (it stops early once a pass
 recovers nothing):
 
 ```sh
-sudo filerecovery image /dev/sdb card.img --map card.map --retry-bad 3
+sudo unearth image /dev/sdb card.img --map card.map --retry-bad 3
 ```
 
 `image` options:
@@ -354,10 +359,10 @@ can re-check later. It reads the image back once, so it adds a pass.
 ### Inspect the layout of a disk or image
 
 ```sh
-filerecovery info disk.img
-filerecovery info disk.img --deleted   # also count recoverable deleted files
-filerecovery info disk.img --json      # machine-readable layout for scripting
-filerecovery info disk.img --scan      # find lost partitions (whole-disk signature scan)
+unearth info disk.img
+unearth info disk.img --deleted   # also count recoverable deleted files
+unearth info disk.img --json      # machine-readable layout for scripting
+unearth info disk.img --scan      # find lost partitions (whole-disk signature scan)
 ```
 
 The **partition table** is shown first when present: the scheme (GPT, MBR,
@@ -499,10 +504,10 @@ bcachefs, BeFS, UFS/UFS2, EROFS, cramfs, romfs, HFS+, HFS, APFS, Btrfs, LVM2, Li
 MD/RAID, Linux swap, and LUKS/BitLocker):
 
 ```sh
-filerecovery info disk.img --scan
+unearth info disk.img --scan
 # ... then recover from a found volume by its offset:
-filerecovery undelete disk.img --offset <OFFSET> -o recovered
-filerecovery scan     disk.img --start  <OFFSET> -o recovered
+unearth undelete disk.img --offset <OFFSET> -o recovered
+unearth scan     disk.img --start  <OFFSET> -o recovered
 ```
 
 Or skip the offsets entirely: `undelete --scan` and `recover --scan` run the
@@ -510,8 +515,8 @@ same signature scan and recover from **every** volume it finds, so a disk whose
 partition table is gone can be recovered in one command:
 
 ```sh
-filerecovery undelete disk.img --scan -o recovered   # all lost volumes at once
-filerecovery recover  disk.img --scan -o recovered   # undelete + carve
+unearth undelete disk.img --scan -o recovered   # all lost volumes at once
+unearth recover  disk.img --scan -o recovered   # undelete + carve
 ```
 
 A deep scan can take a while on a large device. With `--json`, the results are
@@ -524,9 +529,9 @@ misleading extension. `identify` reports a file's type from its bytes (the same
 signatures and structural checks carving uses):
 
 ```sh
-filerecovery identify recovered/00000007_0x00000000003c1a00.jpg
-filerecovery identify mystery.dat --json
-filerecovery identify recovered/*        # label many files at once
+unearth identify recovered/00000007_0x00000000003c1a00.jpg
+unearth identify mystery.dat --json
+unearth identify recovered/*        # label many files at once
 ```
 
 Several files can be given at once — one line each (or, with `--json`, a JSON
@@ -539,8 +544,8 @@ After recovering, get the shape of what came back — counts per category
 and empty files:
 
 ```sh
-filerecovery triage recovered
-filerecovery triage recovered --json   # machine-readable
+unearth triage recovered
+unearth triage recovered --json   # machine-readable
 ```
 
 `triage` also flags **content/extension mismatches** — files whose bytes
@@ -565,8 +570,8 @@ oldest and newest mtime — so you can see what period the data covers (e.g.
 ### Undelete from a FAT/exFAT/NTFS/ext/HFS+ card/image (keeps original names)
 
 ```sh
-filerecovery undelete card.img -o recovered
-sudo filerecovery undelete /dev/mmcblk0 -o recovered   # SD card, needs root
+unearth undelete card.img -o recovered
+sudo unearth undelete /dev/mmcblk0 -o recovered   # SD card, needs root
 ```
 
 The filesystem and volume are auto-detected (bare volume, or a GPT, MBR, APM, or
@@ -592,7 +597,7 @@ BSD partition table). Override the location with `--offset <BYTES>` if needed.
 Preview what is recoverable, and save a manifest, without touching the output:
 
 ```sh
-filerecovery undelete card.img --dry-run --report found.csv
+unearth undelete card.img --dry-run --report found.csv
 ```
 
 The report lists one row per deleted file: filesystem, volume offset, path,
@@ -609,8 +614,8 @@ SHA-256 of every recovered file. The `verify` command reads one back and
 re-hashes the files to confirm none were altered or lost:
 
 ```sh
-filerecovery scan card.img -o recovered --report recovered/manifest.csv
-filerecovery verify recovered/manifest.csv --base recovered
+unearth scan card.img -o recovered --report recovered/manifest.csv
+unearth verify recovered/manifest.csv --base recovered
 ```
 
 It resolves each manifest row's path relative to `--base` (default: the current
@@ -627,7 +632,7 @@ metadata could not. It writes named files under `<OUTPUT>/named/` and carved
 files under `<OUTPUT>/carved/`:
 
 ```sh
-filerecovery recover card.img -o recovered
+unearth recover card.img -o recovered
 ```
 
 The carving pass is **content-deduplicated against the undelete results** (by
@@ -649,7 +654,7 @@ still allocated to live files — so `carved/` holds deleted content with far le
 noise (no copies of files that still exist), and the scan is faster:
 
 ```sh
-filerecovery recover card.img -o recovered --unallocated
+unearth recover card.img -o recovered --unallocated
 ```
 
 This reads the filesystem's allocation map (currently supported for FAT, exFAT,
@@ -661,8 +666,8 @@ passes), each row tagged `named` or `carved` with its path and SHA-256. It is
 directly verifiable:
 
 ```sh
-filerecovery recover card.img -o recovered --report recovered/manifest.csv
-filerecovery verify recovered/manifest.csv --base recovered
+unearth recover card.img -o recovered --report recovered/manifest.csv
+unearth verify recovered/manifest.csv --base recovered
 ```
 
 `--summary <FILE>` writes a one-object run summary (counts, bytes, timing).
@@ -670,20 +675,20 @@ filerecovery verify recovered/manifest.csv --base recovered
 ### Carve a disk image (filesystem-agnostic)
 
 ```sh
-filerecovery scan card.img -o recovered
+unearth scan card.img -o recovered
 ```
 
 ### Carve a block device (needs root to read it)
 
 ```sh
-sudo filerecovery scan /dev/mmcblk0 -o recovered     # SD card
-sudo filerecovery scan /dev/sdb     -o recovered     # USB stick / disk
+sudo unearth scan /dev/mmcblk0 -o recovered     # SD card
+sudo unearth scan /dev/sdb     -o recovered     # USB stick / disk
 ```
 
 ### Carve only specific types
 
 ```sh
-filerecovery scan card.img -o recovered --type jpg --type png
+unearth scan card.img -o recovered --type jpg --type png
 ```
 
 `--type` also accepts a *category* to select a whole class at once —
@@ -691,7 +696,7 @@ filerecovery scan card.img -o recovered --type jpg --type png
 `system`:
 
 ```sh
-filerecovery scan card.img -o recovered --type image
+unearth scan card.img -o recovered --type image
 ```
 
 `scan` options:
@@ -731,9 +736,9 @@ is interrupted, `--resume` continues from where it stopped (reusing the prior
 run's tally and dedup set) instead of rescanning from the start:
 
 ```sh
-filerecovery scan /dev/sdb -o recovered --checkpoint scan.ckpt
+unearth scan /dev/sdb -o recovered --checkpoint scan.ckpt
 # interrupted? continue where it left off:
-filerecovery scan /dev/sdb -o recovered --checkpoint scan.ckpt --resume
+unearth scan /dev/sdb -o recovered --checkpoint scan.ckpt --resume
 ```
 
 The `--report` manifest lists one row per carved file: output name, type,
@@ -906,7 +911,7 @@ alongside the per-file manifest.
 | ole    | Compound File (OLE2) — doc/xls/ppt/msg/msi       | FAT walk to last used sector |
 | pst    | Outlook data file (PST/OST, Unicode)             | ibFileEof field in header   |
 
-Run `filerecovery list-types` to see what your build supports.
+Run `unearth list-types` to see what your build supports.
 
 Compound files (`.ole`) are refined to their real extension — `.doc`, `.xls`,
 `.ppt` (legacy Office), `.msg` (Outlook message), or `.msi` (Windows Installer)

@@ -5,8 +5,8 @@ mod common;
 
 use std::io::Cursor;
 
-use filerecovery::json::{self, Json};
-use filerecovery::mcp;
+use unearth::json::{self, Json};
+use unearth::mcp;
 
 /// Feed newline-delimited JSON-RPC requests through the server and return the
 /// parsed responses (in order).
@@ -72,7 +72,7 @@ fn full_session_initializes_and_scans() {
             .get("name")
             .unwrap()
             .as_str(),
-        Some("filerecovery")
+        Some("unearth")
     );
 
     // `scan` starts a background job and returns a job_id.
@@ -115,7 +115,7 @@ fn full_session_initializes_and_scans() {
     let files = scan.get("files").unwrap().as_array().unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].get("type").unwrap().as_str(), Some("jpg"));
-    let expected = filerecovery::hash::to_hex(&filerecovery::hash::digest(&jpeg));
+    let expected = unearth::hash::to_hex(&unearth::hash::digest(&jpeg));
     assert_eq!(
         files[0].get("sha256").unwrap().as_str(),
         Some(expected.as_str())
@@ -270,7 +270,7 @@ fn list_volumes_and_undelete_tools() {
     let files = undelete.get("files").unwrap().as_array().unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].get("path").unwrap().as_str(), Some("notes.txt"));
-    let expected = filerecovery::hash::to_hex(&filerecovery::hash::digest(b"hello mcp"));
+    let expected = unearth::hash::to_hex(&unearth::hash::digest(b"hello mcp"));
     assert_eq!(
         files[0].get("sha256").unwrap().as_str(),
         Some(expected.as_str())

@@ -3,8 +3,8 @@
 
 mod common;
 
-use filerecovery::recover;
-use filerecovery::source::Source;
+use unearth::recover;
+use unearth::source::Source;
 
 const MIB: usize = 1024 * 1024;
 
@@ -49,7 +49,7 @@ fn undelete_scan_recovers_from_a_lost_partition() {
     let out = tmp.path().join("out");
     std::fs::write(&path, &img).unwrap();
 
-    let result = std::process::Command::new(env!("CARGO_BIN_EXE_filerecovery"))
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_unearth"))
         .args([
             "undelete",
             path.to_str().unwrap(),
@@ -82,7 +82,7 @@ fn info_scan_cli_reports_a_lost_partition() {
     let path = tmp.path().join("nopart.img");
     std::fs::write(&path, &img).unwrap();
 
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_filerecovery"))
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_unearth"))
         .args(["info", path.to_str().unwrap(), "--scan", "--json"])
         .output()
         .unwrap();

@@ -4,8 +4,8 @@
 
 use std::process::Command;
 
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::source::Source;
+use unearth::recover::{self, RecoverOptions};
+use unearth::source::Source;
 
 const VRS_OFFSET: usize = 16 * 2048;
 const VSD_SIZE: usize = 2048;
@@ -51,7 +51,7 @@ fn info_cli_lists_a_udf_volume() {
     let img = tmp.path().join("disc.img");
     std::fs::write(&img, udf_image()).unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_filerecovery"))
+    let out = Command::new(env!("CARGO_BIN_EXE_unearth"))
         .args(["info", img.to_str().unwrap()])
         .output()
         .unwrap();

@@ -3,9 +3,9 @@
 //! non-aligned offset; with `align = 512` only the aligned one is recovered,
 //! with `align = 1` both are.
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// A minimal but valid PNG (signature + IHDR + IEND).
 fn png() -> Vec<u8> {

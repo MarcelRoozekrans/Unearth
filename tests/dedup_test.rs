@@ -3,9 +3,9 @@
 
 use std::io::Write;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// Filler that never contains `0xFF`, so it plants no stray JPEG framing.
 fn filler(seed: u64, n: usize) -> Vec<u8> {

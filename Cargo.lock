@@ -313,19 +313,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
-name = "filerecovery"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "clap",
- "clap_complete",
- "criterion",
- "dhat",
- "indicatif",
- "tempfile",
-]
-
-[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -777,6 +764,19 @@ checksum = "be4d6b5f19ff7664e8c98d03e2139cb510db9b0a60b55f8e8709b689d939b6bc"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "unearth"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "clap_complete",
+ "criterion",
+ "dhat",
+ "indicatif",
+ "tempfile",
 ]
 
 [[package]]

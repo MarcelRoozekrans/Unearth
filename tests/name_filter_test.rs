@@ -3,8 +3,8 @@
 
 mod common;
 
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::source::Source;
+use unearth::recover::{self, RecoverOptions};
+use unearth::source::Source;
 
 fn source_of(name: &str) -> (tempfile::TempDir, Source) {
     let img = common::ext_volume(name, b"payload bytes");

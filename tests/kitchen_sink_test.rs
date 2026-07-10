@@ -14,10 +14,10 @@ mod common;
 use std::collections::BTreeMap;
 use std::io::Write;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::recover::{self, RecoverOptions};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// Deterministic filler that never contains `0xFF` or two bytes that form a
 /// footer/magic, so payloads can't carry stray signatures of their own.
@@ -345,10 +345,10 @@ fn carves_every_extent_strategy_in_one_pass() {
     // Every manifest digest matches the SHA-256 of an original file.
     let mut digests: std::collections::HashSet<String> = files
         .iter()
-        .map(|(_, b)| filerecovery::hash::to_hex(&filerecovery::hash::digest(b)))
+        .map(|(_, b)| unearth::hash::to_hex(&unearth::hash::digest(b)))
         .collect();
     for f in &stats.files {
-        let hex = filerecovery::hash::to_hex(&f.sha256);
+        let hex = unearth::hash::to_hex(&f.sha256);
         assert!(
             digests.remove(&hex),
             "manifest digest {hex} not an original"

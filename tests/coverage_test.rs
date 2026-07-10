@@ -3,8 +3,8 @@
 
 mod common;
 
-use filerecovery::recover::{self, RecoverOptions};
-use filerecovery::source::Source;
+use unearth::recover::{self, RecoverOptions};
+use unearth::source::Source;
 
 fn recover_one(disk: &[u8], expected_name: &str, expected: &[u8], expected_fs: &str) {
     let tmp = tempfile::tempdir().unwrap();

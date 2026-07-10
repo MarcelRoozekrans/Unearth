@@ -1,7 +1,7 @@
 ---
 name: custom-carver
 description: >-
-  Author a custom carver for the filerecovery MCP `scan` tool so it can recover
+  Author a custom carver for the unearth MCP `scan` tool so it can recover
   a file type it doesn't support natively. Use when someone wants to carve or
   recover files of an unknown, proprietary, or unsupported format from a disk
   image or device, and you have (or can obtain) at least one intact sample file
@@ -11,9 +11,9 @@ description: >-
   emits a wrong-length file.
 ---
 
-# Authoring a custom carver for `filerecovery`
+# Authoring a custom carver for `unearth`
 
-`filerecovery`'s MCP `scan` tool accepts a `custom_carvers` array so you can
+`unearth`'s MCP `scan` tool accepts a `custom_carvers` array so you can
 recover a file type it doesn't know natively, for that scan only. Each entry is
 a **magic number** plus a **declarative rule for how long each match is**. This
 skill is the procedure for authoring one correctly.

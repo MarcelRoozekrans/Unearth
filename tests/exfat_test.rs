@@ -2,9 +2,9 @@
 //! it (clearing the InUse bits), and verify recovery restores its full name and
 //! contents.
 
-use filerecovery::exfat;
-use filerecovery::recover;
-use filerecovery::source::Source;
+use unearth::exfat;
+use unearth::recover;
+use unearth::source::Source;
 
 const BPS_SHIFT: u8 = 9; // 512-byte sectors
 const SPC_SHIFT: u8 = 0; // 1 sector per cluster => 512-byte clusters
@@ -124,7 +124,7 @@ fn recovers_deleted_exfat_file() {
         .recover_deleted(
             &source,
             &out_dir,
-            &filerecovery::recover::RecoverOptions::default(),
+            &unearth::recover::RecoverOptions::default(),
         )
         .unwrap();
     assert_eq!(stats.recovered, 1, "should recover the deleted file");
@@ -210,7 +210,7 @@ fn recovers_file_in_subdirectory() {
         .recover_deleted(
             &source,
             &out_dir,
-            &filerecovery::recover::RecoverOptions::default(),
+            &unearth::recover::RecoverOptions::default(),
         )
         .unwrap();
     assert_eq!(stats.recovered, 1);

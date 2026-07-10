@@ -7,9 +7,9 @@
 
 use std::io::Write;
 
-use filerecovery::carver::{self, CarveOptions, NoProgress};
-use filerecovery::signatures;
-use filerecovery::source::Source;
+use unearth::carver::{self, CarveOptions, NoProgress};
+use unearth::signatures;
+use unearth::source::Source;
 
 /// Wrap `payload` in a ZIP with a self-consistent End-of-Central-Directory
 /// record (central directory of size 0 located at the EOCD offset, so

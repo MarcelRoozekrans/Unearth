@@ -3,8 +3,8 @@
 
 mod common;
 
-use filerecovery::source::Source;
-use filerecovery::{ext4, fat, recover};
+use unearth::source::Source;
+use unearth::{ext4, fat, recover};
 
 fn source_of(bytes: &[u8]) -> (tempfile::TempDir, Source) {
     let tmp = tempfile::tempdir().unwrap();
