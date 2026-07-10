@@ -6,6 +6,19 @@ on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 
 ## [Unreleased]
 
+### Performance
+
+- **~2× faster signature scanning.** The carver now gates every scan position
+  through a 65536-bit two-byte-prefix set before walking a candidate bucket, so
+  a position whose first two bytes don't begin any magic is rejected with a
+  single bitset lookup instead of comparing against the dozen-plus signatures
+  that can share a common leading byte (`f`, `0xFF`, `R`, `0x00`, `M`). On the
+  micro-benchmarks this **doubled pure matching throughput (≈82 → ≈175 MiB/s)**
+  and sped the end-to-end carve (I/O + hashing included) by **~22%** — recovering
+  the slowdown that accrued as the signature table grew past 180 entries. Results
+  are identical; a one-byte magic marks all 256 prefixes for its byte so the gate
+  never hides a match. A `scan/noise` benchmark now guards this hot loop.
+
 ### Changed
 
 - **Renamed the project from `filerecovery` to `unearth`.** The generic name

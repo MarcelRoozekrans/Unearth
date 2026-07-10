@@ -3014,6 +3014,14 @@ pub struct SignatureIndex {
     /// For each possible leading byte, the signatures whose magic starts with
     /// it. Most slots are empty, keeping per-byte work tiny.
     by_first_byte: [Vec<&'static Signature>; 256],
+    /// A 65536-bit set (one bit per two-byte magic prefix) that gates the hot
+    /// scan loop: for a byte position whose first two bytes are not the prefix
+    /// of any magic, one bitset lookup rejects it without walking a `by_first_byte`
+    /// bucket. Buckets for common leading bytes (`f`, `0xFF`, `R`, `0x00`, `M`)
+    /// hold a dozen signatures each, so this skips almost all of that comparison
+    /// work on real data. A one-byte magic marks all 256 prefixes for its byte,
+    /// so the gate never hides a valid match.
+    prefix_bits: Box<[u64]>,
     /// Largest number of bytes we must inspect from the magic position to
     /// confirm any magic *and* its secondary tag.
     pub max_lookahead: usize,
@@ -3023,19 +3031,32 @@ impl SignatureIndex {
     pub fn build(active: &[&'static Signature]) -> Self {
         // `Vec` is not `Copy`, so build the array element by element.
         let by_first_byte: [Vec<&'static Signature>; 256] = std::array::from_fn(|_| Vec::new());
+        // 65536 bits = 1024 u64 words = 8 KiB, small enough to stay L1-resident.
+        let mut prefix_bits = vec![0u64; 1024];
+        let mut mark = |p: usize| prefix_bits[p >> 6] |= 1u64 << (p & 63);
         let mut idx = SignatureIndex {
             by_first_byte,
+            prefix_bits: Box::new([]),
             max_lookahead: 0,
         };
         for sig in active {
             let first = sig.magic[0] as usize;
             idx.by_first_byte[first].push(sig);
+            if sig.magic.len() >= 2 {
+                mark((first << 8) | sig.magic[1] as usize);
+            } else {
+                // A one-byte magic can be followed by any byte; mark them all.
+                for b1 in 0..256 {
+                    mark((first << 8) | b1);
+                }
+            }
             let reach = match sig.secondary {
                 Some((off, tag)) => sig.magic.len().max(off + tag.len()),
                 None => sig.magic.len(),
             };
             idx.max_lookahead = idx.max_lookahead.max(reach);
         }
+        idx.prefix_bits = prefix_bits.into_boxed_slice();
         idx
     }
 
@@ -3043,8 +3064,18 @@ impl SignatureIndex {
     /// bytes starting at `window`. `window` must begin at the on-disk position
     /// of a candidate magic.
     pub fn match_at(&self, window: &[u8]) -> Option<&'static Signature> {
-        let first = *window.first()? as usize;
-        for sig in &self.by_first_byte[first] {
+        let &first = window.first()?;
+        // Fast reject: if the two-byte prefix at this position isn't the start of
+        // any magic, there is nothing to compare. (Windows shorter than two bytes
+        // only occur at the very end of the scan; fall through to the bucket,
+        // which is where the lone one-byte magic is confirmed.)
+        if window.len() >= 2 {
+            let p = ((first as usize) << 8) | window[1] as usize;
+            if self.prefix_bits[p >> 6] & (1u64 << (p & 63)) == 0 {
+                return None;
+            }
+        }
+        for sig in &self.by_first_byte[first as usize] {
             if window.len() < sig.magic.len() || &window[..sig.magic.len()] != sig.magic {
                 continue;
             }
