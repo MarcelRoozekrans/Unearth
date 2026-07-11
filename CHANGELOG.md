@@ -6,6 +6,14 @@ on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-11
+
+The tool becomes extensible and easier to reach for: an AI agent can inject its
+own carvers over MCP, everything installs in one command (and ships as a Claude
+Code plugin), the signature scanner is roughly twice as fast, and the project is
+renamed to **unearth** to reflect that it is now a full recovery & disk-forensics
+toolkit rather than a file carver alone.
+
 ### Performance
 
 - **~2× faster signature scanning.** The carver now gates every scan position
@@ -1072,7 +1080,8 @@ the source.
 - Initial release: signature-based file carving (`scan`) with structural
   validation, content dedup, and recovery manifests.
 
-[Unreleased]: https://github.com/MarcelRoozekrans/unearth/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/MarcelRoozekrans/unearth/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/MarcelRoozekrans/unearth/releases/tag/v0.4.0
 [0.3.0]: https://github.com/MarcelRoozekrans/unearth/releases/tag/v0.3.0
 [0.2.0]: https://github.com/MarcelRoozekrans/unearth/releases/tag/v0.2.0
 [0.1.0]: https://github.com/MarcelRoozekrans/unearth/releases/tag/v0.1.0
