@@ -6,6 +6,13 @@ on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 
 ## [Unreleased]
 
+### Performance
+
+- The `exr`, `qoi`, and `rpm` length finders now reuse the carver's shared
+  scratch buffer instead of allocating a fresh 64–128 KiB scan buffer on every
+  match, extending the 0.4.0 buffer-reuse work to the remaining finders that
+  still allocated per call.
+
 ## [0.4.0] - 2026-07-11
 
 The tool becomes extensible and easier to reach for: an AI agent can inject its
