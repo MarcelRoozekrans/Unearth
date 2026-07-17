@@ -617,11 +617,11 @@ fn file_length(
         Extent::Glb => Ok(glb_length(source, file_start, limit)?),
         Extent::Erofs => Ok(erofs_length(source, file_start, limit)?),
         Extent::Ktx1 => Ok(ktx1_length(source, file_start, limit)?),
-        Extent::Exr => Ok(exr_length(source, file_start, limit)?),
+        Extent::Exr => Ok(exr_length(source, file_start, limit, footer_buf)?),
         Extent::Mcap => Ok(mcap_length(source, file_start, limit)?),
         Extent::Bsp => Ok(bsp_length(source, file_start, limit)?),
-        Extent::Qoi => Ok(qoi_length(source, file_start, limit)?),
-        Extent::Rpm => Ok(rpm_length(source, file_start, limit)?),
+        Extent::Qoi => Ok(qoi_length(source, file_start, limit, footer_buf)?),
+        Extent::Rpm => Ok(rpm_length(source, file_start, limit, footer_buf)?),
         Extent::Farbfeld => Ok(farbfeld_length(source, file_start, limit)?),
         Extent::Y4m => Ok(y4m_length(source, file_start, limit)?),
         Extent::Pvr => Ok(pvr_length(source, file_start, limit)?),
@@ -3897,7 +3897,12 @@ fn ktx1_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u6
 /// `dataSize` field (after a 4-byte `y` coordinate) gives the file end. Only
 /// single-part scanline images are handled; the tiled (`0x200`), deep
 /// (`0x800`), and multi-part (`0x1000`) flags in the version word cause a skip.
-fn exr_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+fn exr_length(
+    source: &Source,
+    file_start: u64,
+    limit: u64,
+    buf: &mut Vec<u8>,
+) -> Result<Option<u64>> {
     let mut head = [0u8; 8];
     if source.read_at(file_start, &mut head)? < 8 || head[0..4] != [0x76, 0x2F, 0x31, 0x01] {
         return Ok(None);
@@ -3911,8 +3916,8 @@ fn exr_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     // Parse the attribute list only far enough to find where the header ends.
-    let mut buf = vec![0u8; 64 * 1024];
-    let n = source.read_at(file_start, &mut buf)?;
+    buf.resize(64 * 1024, 0);
+    let n = source.read_at(file_start, &mut buf[..])?;
     let find_nul = |from: usize| -> Option<usize> {
         buf[from..n].iter().position(|&b| b == 0).map(|i| from + i)
     };
@@ -4065,7 +4070,12 @@ fn bsp_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
 /// locates the end without searching for the marker (which can appear in pixel
 /// data); the trailing marker is then verified. Bytes are consumed through a
 /// sliding window so large images need no full-file buffer.
-fn qoi_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+fn qoi_length(
+    source: &Source,
+    file_start: u64,
+    limit: u64,
+    buf: &mut Vec<u8>,
+) -> Result<Option<u64>> {
     let mut hdr = [0u8; 14];
     if source.read_at(file_start, &mut hdr)? < 14 || &hdr[0..4] != b"qoif" {
         return Ok(None);
@@ -4078,7 +4088,7 @@ fn qoi_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         return Ok(None);
     }
     let total_pixels = width.saturating_mul(height);
-    let mut buf = vec![0u8; 64 * 1024];
+    buf.resize(64 * 1024, 0);
     let mut win_start = 14u64;
     let mut win_len = 0usize;
     let mut parse = 14u64;
@@ -4087,7 +4097,7 @@ fn qoi_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
         // Keep at least a full 5-byte chunk buffered ahead of the cursor.
         if parse < win_start || parse + 5 > win_start + win_len as u64 {
             win_start = parse;
-            win_len = source.read_at(file_start + parse, &mut buf)?;
+            win_len = source.read_at(file_start + parse, &mut buf[..])?;
         }
         let idx = (parse - win_start) as usize;
         if idx >= win_len {
@@ -4134,10 +4144,15 @@ fn qoi_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64
 /// The signature's `RPMSIGTAG_SIZE` (1000, `INT32`) or `RPMSIGTAG_LONGSIZE`
 /// (270, `INT64`) tag holds the combined size of the main header and payload,
 /// so the file length is `96 + padded signature header + that size`.
-fn rpm_length(source: &Source, file_start: u64, limit: u64) -> Result<Option<u64>> {
+fn rpm_length(
+    source: &Source,
+    file_start: u64,
+    limit: u64,
+    buf: &mut Vec<u8>,
+) -> Result<Option<u64>> {
     const LEAD: usize = 96;
-    let mut buf = vec![0u8; 128 * 1024];
-    let n = source.read_at(file_start, &mut buf)?;
+    buf.resize(128 * 1024, 0);
+    let n = source.read_at(file_start, &mut buf[..])?;
     if n < LEAD + 16 || buf[0..4] != [0xED, 0xAB, 0xEE, 0xDB] {
         return Ok(None);
     }
@@ -7813,23 +7828,35 @@ mod tests {
         // Three scanline chunks.
         let v = exr(&[32, 16, 8]);
         let (_t, src) = source_of(&v);
-        assert_eq!(exr_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+        assert_eq!(
+            exr_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(v.len() as u64)
+        );
         // A single chunk.
         let v = exr(&[100]);
         let (_t, src) = source_of(&v);
-        assert_eq!(exr_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+        assert_eq!(
+            exr_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(v.len() as u64)
+        );
     }
 
     #[test]
     fn exr_length_rejects_bad_magic_and_multipart() {
         let z = vec![0u8; 32];
         let (_t, src) = source_of(&z);
-        assert_eq!(exr_length(&src, 0, src.size).unwrap(), None);
+        assert_eq!(
+            exr_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            None
+        );
         // The multi-part flag (0x1000) selects a different chunk layout: skip.
         let mut v = exr(&[16]);
         v[5] |= 0x10;
         let (_t, src) = source_of(&v);
-        assert_eq!(exr_length(&src, 0, src.size).unwrap(), None);
+        assert_eq!(
+            exr_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            None
+        );
     }
 
     const MCAP_MAGIC: [u8; 8] = [0x89, 0x4D, 0x43, 0x41, 0x50, 0x30, 0x0D, 0x0A];
@@ -7934,12 +7961,18 @@ mod tests {
         let v = qoi(2, 2, &ops);
         assert_eq!(v.len() as u64, 14 + 16 + 8);
         let (_t, src) = source_of(&v);
-        assert_eq!(qoi_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+        assert_eq!(
+            qoi_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(v.len() as u64)
+        );
         // 10x1 image as one RGB chunk plus a QOI_OP_RUN of 9 pixels.
         let ops = [0xFE, 4, 5, 6, 0xC0 | 8];
         let v = qoi(10, 1, &ops);
         let (_t, src) = source_of(&v);
-        assert_eq!(qoi_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+        assert_eq!(
+            qoi_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(v.len() as u64)
+        );
     }
 
     #[test]
@@ -7952,13 +7985,19 @@ mod tests {
         let v = qoi(20_000, 1, &ops);
         assert!(v.len() > 64 * 1024);
         let (_t, src) = source_of(&v);
-        assert_eq!(qoi_length(&src, 0, src.size).unwrap(), Some(v.len() as u64));
+        assert_eq!(
+            qoi_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(v.len() as u64)
+        );
     }
 
     #[test]
     fn qoi_length_rejects_bad_magic_and_marker() {
         let (_t, src) = source_of(&[0u8; 14]);
-        assert_eq!(qoi_length(&src, 0, src.size).unwrap(), None);
+        assert_eq!(
+            qoi_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            None
+        );
         // Correct pixel count but a corrupted end marker.
         let mut ops = Vec::new();
         for _ in 0..4 {
@@ -7967,7 +8006,10 @@ mod tests {
         let mut v = qoi(2, 2, &ops);
         *v.last_mut().unwrap() = 0;
         let (_t, src) = source_of(&v);
-        assert_eq!(qoi_length(&src, 0, src.size).unwrap(), None);
+        assert_eq!(
+            qoi_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            None
+        );
     }
 
     /// Build an RPM package: a 96-byte lead, a signature header carrying a
@@ -8000,17 +8042,26 @@ mod tests {
         let v = rpm(1000, 100);
         assert_eq!(v.len() as u64, 96 + 40 + 100);
         let (_t, src) = source_of(&v);
-        assert_eq!(rpm_length(&src, 0, src.size).unwrap(), Some(96 + 40 + 100));
+        assert_eq!(
+            rpm_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            Some(96 + 40 + 100)
+        );
     }
 
     #[test]
     fn rpm_length_rejects_bad_magic_and_missing_size_tag() {
         let (_t, src) = source_of(&[0u8; 128]);
-        assert_eq!(rpm_length(&src, 0, src.size).unwrap(), None);
+        assert_eq!(
+            rpm_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            None
+        );
         // A signature header without the size tag cannot be sized.
         let v = rpm(1234, 100);
         let (_t, src) = source_of(&v);
-        assert_eq!(rpm_length(&src, 0, src.size).unwrap(), None);
+        assert_eq!(
+            rpm_length(&src, 0, src.size, &mut Vec::new()).unwrap(),
+            None
+        );
     }
 
     /// Build a farbfeld image of the given dimensions (header plus 8 bytes per

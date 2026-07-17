@@ -752,6 +752,9 @@ alongside the per-file manifest.
 
 ## Supported file types (`scan` / carving)
 
+Need a type that isn't listed? The MCP `scan` tool can take runtime-injected
+carvers for one-off formats — see [Inject custom carvers](#inject-custom-carvers).
+
 | Ext    | Type                                            | How the end is found        |
 |--------|-------------------------------------------------|-----------------------------|
 | jpg    | JPEG image                                       | `FF D9`, nesting-aware      |
