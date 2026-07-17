@@ -11,7 +11,16 @@ keywords = ["recovery", "forensics", "carving", "undelete", "data-recovery"]
 categories = ["command-line-utilities", "filesystem"]
 # Keep the published crate to the Rust sources and docs; the Claude Code plugin,
 # skills, installer, and CI live in the repo but aren't part of the package.
-exclude = [".github", ".claude-plugin", "skills", ".mcp.json", "install.sh"]
+exclude = [
+    ".github",
+    ".claude-plugin",
+    "skills",
+    ".mcp.json",
+    "install.sh",
+    "release-please-config.json",
+    ".release-please-manifest.json",
+    "RELEASING.md",
+]
 
 # cargo-binstall: fetch the prebuilt binary the release workflow attaches to each
 # GitHub Release (asset name: unearth-v<version>-<target>.<ext>) instead of

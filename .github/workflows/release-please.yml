@@ -1,0 +1,39 @@
+# Automated releases from Conventional Commits (https://www.conventionalcommits.org).
+#
+# On every push to main, release-please maintains a rolling "release PR" that
+# accumulates the next version's changelog and version bumps (Cargo.toml,
+# Cargo.lock, the Claude Code plugin manifests). Merging that PR creates the
+# v* tag and the GitHub Release; this workflow then dispatches release.yml to
+# build and attach the prebuilt binaries (a tag pushed with the default
+# GITHUB_TOKEN does not trigger tag workflows on its own — workflow_dispatch
+# is exempt from that restriction).
+name: release-please
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  release-please:
+    name: Release PR / tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Build release binaries
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh workflow run release.yml
+          --repo "$GITHUB_REPOSITORY"
+          --ref "${{ steps.release.outputs.tag_name }}"
