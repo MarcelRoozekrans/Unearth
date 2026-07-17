@@ -1,10 +1,13 @@
 name: Release
 
 # Build release binaries and attach them to a GitHub Release whenever a version
-# tag (e.g. v0.1.0) is pushed.
+# tag (e.g. v0.1.0) is pushed. Also dispatchable on a tag ref: release-please
+# pushes its tags with the default GITHUB_TOKEN, which does not fire tag
+# workflows, so its workflow dispatches this one explicitly.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -81,3 +84,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$GITHUB_REF_NAME" "$ASSET" --clobber
+
+  # Publish the crate when a CARGO_REGISTRY_TOKEN repository secret is set
+  # (crates.io API token with publish scope); otherwise skip with a pointer to
+  # the manual step in RELEASING.md.
+  publish-crate:
+    name: Publish to crates.io
+    needs: create-release
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        run: cargo publish --locked
+      - name: Skip (no CARGO_REGISTRY_TOKEN secret)
+        if: env.CARGO_REGISTRY_TOKEN == ''
+        run: echo "CARGO_REGISTRY_TOKEN is not configured; publish manually per RELEASING.md."
