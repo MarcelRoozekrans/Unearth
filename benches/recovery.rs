@@ -12,9 +12,10 @@
 //! companion `examples/heap_profile.rs` (dhat) covers allocation/memory, the
 //! way dotMemory complements dotnet-benchmark.
 
+use std::hint::black_box;
 use std::io::Write;
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 
 use unearth::carver::{self, CarveOptions, NoProgress};
 use unearth::recover::{self, RecoverOptions};
