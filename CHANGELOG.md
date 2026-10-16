@@ -4,6 +4,13 @@ All notable changes to `unearth` are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.1](https://github.com/MarcelRoozekrans/Unearth/compare/unearth-v0.4.0...unearth-v0.4.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **deps:** update rust crate indicatif to 0.18 ([#294](https://github.com/MarcelRoozekrans/Unearth/issues/294)) ([2d9fcf1](https://github.com/MarcelRoozekrans/Unearth/commit/2d9fcf1712adb4461f1e654f8289407598856959))
+
 ## [Unreleased]
 
 ### Performance
