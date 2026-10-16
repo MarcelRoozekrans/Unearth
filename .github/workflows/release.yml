@@ -1,9 +1,9 @@
 name: Release
 
 # Build release binaries and attach them to a GitHub Release whenever a version
-# tag (e.g. v0.1.0) is pushed. Also dispatchable on a tag ref: release-please
-# pushes its tags with the default GITHUB_TOKEN, which does not fire tag
-# workflows, so its workflow dispatches this one explicitly.
+# tag (e.g. v0.1.0) is pushed. release-please pushes its tags with the release
+# bot GitHub App's token, so they start this workflow. Also dispatchable on a
+# tag ref, to rebuild a release by hand.
 on:
   push:
     tags: ["v*"]
