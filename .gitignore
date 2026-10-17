@@ -11,3 +11,6 @@ dhat-heap.json
 
 # Screenshots and page snapshots the Playwright MCP server writes into the working directory.
 .playwright-mcp/
+
+# Coverage report written by cargo llvm-cov in CI
+lcov.info
