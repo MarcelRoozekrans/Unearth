@@ -1,5 +1,7 @@
 # unearth
 
+[![codecov](https://codecov.io/gh/MarcelRoozekrans/Unearth/graph/badge.svg)](https://codecov.io/gh/MarcelRoozekrans/Unearth)
+
 `unearth` is a dependency-light, **read-only** data-recovery and disk-forensics
 toolkit in pure Rust. It brings back deleted and lost files — by
 **filesystem-aware undelete** and by **signature carving** of 150+ formats — and
