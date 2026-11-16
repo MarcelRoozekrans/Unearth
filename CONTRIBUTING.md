@@ -8,10 +8,11 @@ workflow and the most common contribution: teaching the carver a new file type.
 ```sh
 cargo fmt                                   # format
 cargo clippy --all-targets -- -D warnings   # lint (warnings are errors in CI)
+cargo clippy --features dhat-heap --example heap_profile -- -D warnings   # the feature-gated profiling harness
 cargo test                                  # unit + integration tests
 ```
 
-CI (`.github/workflows/ci.yml`) runs all three; please make sure they pass
+CI (`.github/workflows/ci.yml`) runs all of these; please make sure they pass
 locally before opening a PR. See [ARCHITECTURE.md](ARCHITECTURE.md) for the
 module map and [PERFORMANCE.md](PERFORMANCE.md) for the heap-profiling harness.
 
@@ -95,7 +96,8 @@ CLI.
 
 ## Adding filesystem support (undelete)
 
-Each backend (`fat`, `exfat`, `ntfs`, `ext4`) exposes the same shape —
+Each backend (for example `fat`, `exfat`, `ntfs`, `ext4`; the full list is the `Volume` enum in
+`src/recover.rs`) exposes the same shape —
 `Volume::parse(src, offset)` and `Volume::recover_deleted(src, out, opts)` — and
 is wired into `recover::Volume` and `recover::try_parse_volume`. Recovered files
 are written through `hash::HashingWriter` so the manifest gets a SHA-256. Build

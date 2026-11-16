@@ -27,6 +27,7 @@ device or image is always accessed **read-only**.
 | `ext4`            | ext2/3/4 undelete, including jbd2 journal recovery. |
 | `hfsplus`          | HFS+/HFSX undelete by scanning catalog B-tree leaf-node free space for stale file records (the catalog-slack analogue of ext directory-slack recovery). |
 | `apfs`             | APFS container **detection** only (for `info`/`list_volumes`); deleted objects are reclaimed by the copy-on-write design, so metadata undelete is not tractable — carving is the fallback. |
+| other backends     | `btrfs`, `refs`, `xfs`, `f2fs`, `reiserfs`, `jfs`, `nilfs2`, `gfs2`, `ocfs2`, `minix`, `bcachefs`, `befs`, `ufs`, `erofs`, `cramfs`, `romfs`, `hfs`, `udf`, `iso9660`, `swap` and the `lvm`, `mdraid` and `encrypted` containers: each a `Volume` variant in `recover`, the same shape as the backends above. `partition` and `custom` hold partition-table parsing and runtime custom carvers. |
 | `times`            | Timestamp conversions (Unix / FILETIME / DOS) and applying them to recovered files. |
 
 ## Two recovery strategies
